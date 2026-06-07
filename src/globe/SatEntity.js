@@ -51,11 +51,12 @@ export class SatEntity {
 
     const origin = eciToCartesian3(r.eciPos, r.gmst);
 
-    const nowMs = date.getTime();
-    const wallMs = Date.now();
-    // Rate-limit by wall-clock time so high playback speeds don't recompute every frame
-    if ((Math.abs(nowMs - this._lastOrbitMs) > 5000 || !this._cachedOrbit)
-        && wallMs - this._lastOrbitWall > 500) {
+    const nowMs    = date.getTime();
+    const wallMs   = Date.now();
+    const simDelta = Math.abs(nowMs - this._lastOrbitMs);
+    // Recompute if sim time moved AND (wall-clock throttle passed OR it's a big scrub jump)
+    if ((simDelta > 5000 || !this._cachedOrbit)
+        && (wallMs - this._lastOrbitWall > 500 || simDelta > 600_000)) {
       const pts = this._computeOrbit(date);
       if (pts) { this._cachedOrbit = pts; this._lastOrbitMs = nowMs; this._lastOrbitWall = wallMs; }
     }

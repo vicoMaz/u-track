@@ -35,11 +35,11 @@ export class SatMarker {
 
     this.marker.setLatLng([result.lat, result.lon]);
 
-    // Recompute track when sim-time jumps, but cap at once per 500 ms wall-clock
-    // to avoid a GPU/GC storm at high playback speeds
-    const nowMs  = date.getTime();
-    const wallMs = Date.now();
-    if (Math.abs(nowMs - this._lastTrackMs) > 5000 && wallMs - this._lastTrackWall > 500) {
+    const nowMs    = date.getTime();
+    const wallMs   = Date.now();
+    const simDelta = Math.abs(nowMs - this._lastTrackMs);
+    // Recompute if sim time moved AND (wall-clock throttle passed OR it's a big scrub jump)
+    if (simDelta > 5000 && (wallMs - this._lastTrackWall > 500 || simDelta > 600_000)) {
       this._updateTrack(date);
       this._lastTrackMs   = nowMs;
       this._lastTrackWall = wallMs;
