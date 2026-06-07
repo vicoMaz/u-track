@@ -127,26 +127,12 @@ export class SatEntity {
         this._xArrow   = this._addArrow(() => this._xPos,   Cesium.Color.RED);
       this._yArrow   = this._addArrow(() => this._yPos,   Cesium.Color.LIME);
       this._zArrow   = this._addArrow(() => this._zPos,   Cesium.Color.DODGERBLUE);
-      // Sun arrow: colour + label text react to eclipse state each frame
-      const sunColor = new Cesium.CallbackProperty(
-        () => this._inEclipse ? Cesium.Color.fromCssColorString('#444') : Cesium.Color.YELLOW, false
-      );
-      this._sunArrow = this._add({
-        polyline: {
-          positions: new Cesium.CallbackProperty(() => this._sunPos, false),
-          width: 4,
-          material: new Cesium.PolylineArrowMaterialProperty(sunColor),
-          arcType: Cesium.ArcType.NONE,
-        },
-      });
+      this._sunArrow = this._addArrow(() => this._sunPos, Cesium.Color.YELLOW);
 
       this._xLabel   = this._addLabel(() => this._xPos[1],   'X',   Cesium.Color.RED);
       this._yLabel   = this._addLabel(() => this._yPos[1],   'Y',   Cesium.Color.LIME);
       this._zLabel   = this._addLabel(() => this._zPos[1],   'Z',   Cesium.Color.DODGERBLUE);
-      this._sunLabel = this._addDynamicLabel(() => this._sunPos[1],
-        () => this._inEclipse ? 'ECLIPSE' : 'Sun',
-        () => this._inEclipse ? Cesium.Color.fromCssColorString('#888') : Cesium.Color.YELLOW
-      );
+      this._sunLabel = this._addLabel(() => this._sunPos[1], 'Sun', Cesium.Color.YELLOW);
       this._setLabelsVisible(false);
     }
   }
@@ -259,23 +245,6 @@ export class SatEntity {
         text,
         font: 'bold 12px sans-serif',
         fillColor: color,
-        outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 2,
-        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-        pixelOffset: new Cesium.Cartesian2(6, -6),
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        scale: 0.9,
-      },
-    });
-  }
-
-  _addDynamicLabel(posFn, textFn, colorFn) {
-    return this._add({
-      position: new Cesium.CallbackProperty(posFn, false),
-      label: {
-        text:      new Cesium.CallbackProperty(textFn,  false),
-        fillColor: new Cesium.CallbackProperty(colorFn, false),
-        font: 'bold 12px sans-serif',
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 2,
         style: Cesium.LabelStyle.FILL_AND_OUTLINE,

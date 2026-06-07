@@ -11,10 +11,9 @@ const altEl      = document.getElementById('sat-info-alt');
 const badgeEl    = document.getElementById('sat-time-badge');
 const orbitDot   = document.getElementById('orbit-dot');
 const orbitText  = document.getElementById('orbit-text');
-const attDot     = document.getElementById('att-dot');
-const attText    = document.getElementById('att-text');
-const eclipseDot = document.getElementById('eclipse-dot');
-const eclipseText = document.getElementById('eclipse-text');
+const attDot      = document.getElementById('att-dot');
+const attText     = document.getElementById('att-text');
+const eclipseIcon = document.getElementById('eclipse-icon');
 
 const LIVE_THRESHOLD_MS = 2 * 60 * 1000;
 
@@ -101,16 +100,10 @@ function update() {
     attText.textContent = 'Default Sun Pointing, No Telemetry Available';
   }
 
-  // Eclipse row
-  const sun      = sunDirectionECI(store.currentTime);
-  const eclipse  = pos.eciPos ? isInEclipse(pos.eciPos, sun) : false;
-  if (eclipse) {
-    eclipseDot.style.color  = '#555';
-    eclipseText.textContent = 'Eclipse — Earth shadow';
-  } else {
-    eclipseDot.style.color  = '#ffbe0b';
-    eclipseText.textContent = 'Sunlit';
-  }
+  // Eclipse icon next to satellite name
+  const sun     = sunDirectionECI(store.currentTime);
+  const eclipse = pos.eciPos ? isInEclipse(pos.eciPos, sun) : false;
+  eclipseIcon.textContent = eclipse ? '🌑' : '☀️';
 }
 
 export function initSatInfo() {
