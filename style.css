@@ -64,25 +64,24 @@ html, body {
 
 /* ── Logo ───────────────────────────────────────────── */
 #app-logo {
-  width: 220px;
-  padding: 8px 12px;
-  display: flex;
-  align-items: center;
-  background: rgba(255,255,255,0.06);
-  border: 1px solid #2a2a3a;
-  border-radius: 8px;
-  backdrop-filter: blur(6px);
-}
-#app-logo img {
-  width: 130px;
-  height: auto;
+  height: 22px;
+  width: auto;
   display: block;
+  flex-shrink: 0;
+}
+
+.tab-bar-sep {
+  width: 1px;
+  height: 18px;
+  background: #2a2a3a;
+  margin: 0 6px;
+  flex-shrink: 0;
 }
 
 /* ── Side Panel Container ───────────────────────────── */
 #side-panel {
   position: fixed;
-  top: 36px; left: 10px;
+  top: 44px; left: 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
