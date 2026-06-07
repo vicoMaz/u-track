@@ -1,0 +1,503 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #0a0a0f;
+  color: #e0e0e0;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px;
+}
+
+#app {
+  width: 100%; height: 100%;
+  position: relative;
+}
+
+/* ── Views ─────────────────────────────────────────── */
+.view {
+  position: absolute;
+  top: 36px;
+  right: 0;
+  bottom: 52px;
+  left: 0;
+  display: none;
+  overflow: hidden;
+}
+.view.active { display: block; }
+
+/* ── Tab bar ────────────────────────────────────────── */
+#tab-bar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 36px;
+  background: #12121a;
+  border-bottom: 1px solid #2a2a3a;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  z-index: 9999;
+}
+
+.tab-btn {
+  background: transparent;
+  border: none;
+  color: #888;
+  padding: 6px 16px;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 12px;
+  transition: all 0.15s;
+}
+.tab-btn:hover { background: #1e1e2e; color: #ccc; }
+.tab-btn.active { background: #1e1e2e; color: #fff; border-bottom: 2px solid #00d4ff; }
+
+.api-docs-btn {
+  margin-left: auto;
+  text-decoration: none;
+  color: #666;
+  border: 1px solid #2a2a3a;
+  border-radius: 4px;
+}
+.api-docs-btn:hover { color: #00d4ff; border-color: #00d4ff44; }
+
+/* ── Side Panel Container ───────────────────────────── */
+#side-panel {
+  position: fixed;
+  top: 44px; left: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 10000;
+}
+
+.panel {
+  width: 220px;
+  background: rgba(14, 14, 22, 0.92);
+  border: 1px solid #2a2a3a;
+  border-radius: 8px;
+  backdrop-filter: blur(6px);
+  transition: width 0.2s;
+}
+
+.panel.collapsed { width: fit-content; overflow: hidden; }
+.panel.collapsed .panel-body { display: none; }
+.panel.collapsed .panel-toggle { transform: rotate(180deg); }
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid #2a2a3a;
+  font-weight: 600;
+  font-size: 12px;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.panel-toggle {
+  background: none; border: none; color: #888; cursor: pointer; font-size: 12px;
+  transition: transform 0.2s;
+  padding: 4px 6px;
+  flex-shrink: 0;
+}
+.panel-toggle:hover { color: #ccc; }
+
+#gs-footprint-all-btn {
+  background: none;
+  border: 1px solid #2a2a3a;
+  border-radius: 4px;
+  color: #555;
+  font-size: 11px;
+  padding: 2px 7px;
+  cursor: pointer;
+  margin-left: auto;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+#gs-footprint-all-btn:hover { color: #aaa; border-color: #444; }
+#gs-footprint-all-btn.active { color: #ff9f43; border-color: #ff9f43; }
+
+.panel-body {
+  padding: 10px;
+  max-height: calc(50vh - 80px);
+  overflow-y: auto;
+}
+
+.add-sat-form { display: flex; flex-direction: column; gap: 6px; }
+
+.add-sat-form input {
+  background: #1a1a28;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #ddd;
+  padding: 5px 8px;
+  font-size: 12px;
+  outline: none;
+}
+.add-sat-form input:focus { border-color: #00d4ff; }
+
+#add-sat-btn {
+  background: #00d4ff22;
+  border: 1px solid #00d4ff55;
+  border-radius: 4px;
+  color: #00d4ff;
+  padding: 5px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s;
+}
+#add-sat-btn:hover { background: #00d4ff33; }
+
+#sat-list { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+
+.sat-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  background: #1a1a28;
+  border-radius: 4px;
+  border-left: 3px solid var(--sat-color, #00d4ff);
+}
+
+.sat-item .sat-name {
+  flex: 1; font-size: 11px; color: #ccc;
+  cursor: pointer;
+}
+.sat-item .sat-name:hover { color: #fff; text-decoration: underline; }
+
+/* Active tracking indicator */
+.sat-item.tracking { background: #1e2038; }
+.sat-item.tracking .sat-name { color: var(--sat-color); font-weight: 600; }
+
+.sat-item .sat-norad { font-size: 10px; color: #666; }
+.sat-item .remove-btn {
+  background: none; border: none; color: #555; cursor: pointer; font-size: 14px;
+  line-height: 1;
+}
+.sat-item .remove-btn:hover { color: #ff3860; }
+
+.sat-loading { font-size: 10px; color: #888; font-style: italic; }
+.sat-error { font-size: 10px; color: #ff3860; }
+
+/* ── Ground stations ──────────────────────────────────── */
+.add-gs-form { display: flex; flex-direction: column; gap: 6px; }
+
+.add-gs-form input {
+  background: #1a1a28;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #ddd;
+  padding: 5px 8px;
+  font-size: 12px;
+  outline: none;
+  width: 100%;
+}
+.add-gs-form input:focus { border-color: #ff9f43; }
+
+.gs-coords { display: flex; gap: 6px; }
+.gs-coords input { flex: 1; min-width: 0; }
+
+#add-gs-btn {
+  background: #ff9f4322;
+  border: 1px solid #ff9f4355;
+  border-radius: 4px;
+  color: #ff9f43;
+  padding: 5px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s;
+}
+#add-gs-btn:hover { background: #ff9f4333; }
+
+#gs-list { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+
+.gs-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  background: #1a1a28;
+  border-radius: 4px;
+  border-left: 3px solid var(--gs-color, #ff9f43);
+}
+.gs-item .gs-name { flex: 1; font-size: 11px; color: #ccc; }
+.gs-item .gs-coords-display { font-size: 10px; color: #666; white-space: nowrap; }
+.gs-item .remove-btn {
+  background: none; border: none; color: #555; cursor: pointer; font-size: 14px; line-height: 1;
+}
+.gs-item .remove-btn:hover { color: #ff3860; }
+
+/* Footprint toggle switch */
+.footprint-toggle {
+  position: relative;
+  display: inline-block;
+  width: 26px;
+  height: 14px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.footprint-toggle input { display: none; }
+.toggle-track {
+  position: absolute;
+  inset: 0;
+  background: #2a2a3a;
+  border-radius: 7px;
+  transition: background 0.15s;
+}
+.toggle-track::after {
+  content: '';
+  position: absolute;
+  left: 2px; top: 2px;
+  width: 10px; height: 10px;
+  background: #555;
+  border-radius: 50%;
+  transition: transform 0.15s, background 0.15s;
+}
+.footprint-toggle input:checked + .toggle-track { background: #ff9f4344; }
+.footprint-toggle input:checked + .toggle-track::after {
+  transform: translateX(12px);
+  background: #ff9f43;
+}
+
+/* ── Time Player ────────────────────────────────────── */
+#time-player {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: 48px;
+  background: rgba(10, 10, 18, 0.97);
+  border-top: 1px solid #2a2a3a;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  z-index: 9999;
+}
+
+/* Primary date/time field — the single simulated time display */
+#date-input {
+  background: #0d1520;
+  border: 1px solid #00d4ff55;
+  border-radius: 4px;
+  color: #00d4ff;
+  padding: 4px 8px;
+  font-size: 13px;
+  font-family: 'Courier New', monospace;
+  outline: none;
+  flex-shrink: 0;
+  color-scheme: dark;
+  cursor: pointer;
+  width: 188px;
+}
+#date-input:focus { border-color: #00d4ff; background: #111a28; }
+
+.tp-utc-label {
+  font-size: 10px;
+  color: #00d4ff66;
+  flex-shrink: 0;
+  letter-spacing: 0.05em;
+}
+
+/* Vertical separator */
+.tp-sep {
+  width: 1px;
+  height: 24px;
+  background: #2a2a3a;
+  flex-shrink: 0;
+  margin: 0 2px;
+}
+
+#now-btn {
+  background: #1a1a28;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #888;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 11px;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+#now-btn:hover, #now-btn.active { border-color: #00d4ff; color: #00d4ff; }
+
+#play-btn {
+  background: #1a1a28;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #ccc;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 14px;
+  flex-shrink: 0;
+  min-width: 32px;
+  transition: all 0.15s;
+}
+#play-btn:hover { border-color: #00d4ff; }
+#play-btn.playing { border-color: #00ff9d; color: #00ff9d; }
+
+#speed-select {
+  background: #1a1a28;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #aaa;
+  padding: 4px 4px;
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Step buttons */
+.step-btn {
+  background: #1a1a28;
+  border: 1px solid #2a2a3a;
+  border-radius: 4px;
+  color: #666;
+  padding: 3px 7px;
+  cursor: pointer;
+  font-size: 11px;
+  flex-shrink: 0;
+  transition: all 0.12s;
+  font-variant-numeric: tabular-nums;
+}
+.step-btn:hover { border-color: #00d4ff; color: #00d4ff; }
+
+#time-scrub {
+  flex: 1;
+  min-width: 80px;
+  accent-color: #00d4ff;
+  cursor: pointer;
+}
+
+/* Small label + number field pairs */
+.tp-label {
+  color: #555;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.tp-num-field {
+  width: 44px;
+  background: #1a1a28;
+  border: 1px solid #2a2a3a;
+  border-radius: 4px;
+  color: #aaa;
+  padding: 3px 4px;
+  font-size: 11px;
+  text-align: center;
+  outline: none;
+  flex-shrink: 0;
+}
+.tp-num-field:focus { border-color: #00d4ff44; }
+
+/* ── Satellite info card ────────────────────────────── */
+#sat-info {
+  position: fixed;
+  bottom: 72px; /* above time player + Leaflet attribution */
+  right: 14px;
+  background: rgba(10, 10, 20, 0.88);
+  border: 1px solid var(--sat-color, #00d4ff);
+  border-radius: 8px;
+  padding: 10px 14px;
+  z-index: 900;
+  min-width: 160px;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 2px 16px rgba(0,0,0,0.5);
+  transition: opacity 0.2s;
+}
+#sat-info.hidden { display: none; }
+
+.sat-info-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  gap: 8px;
+}
+
+#sat-info-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sat-color, #00d4ff);
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Live / Past / Future badge */
+.time-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.badge-live {
+  color: #ff4444;
+  border: 1px solid #ff444466;
+  animation: pulse-live 1.4s ease-in-out infinite;
+}
+.badge-past   { color: #888; border: 1px solid #333; }
+.badge-future { color: #c77dff; border: 1px solid #c77dff55; }
+
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+
+.sat-info-divider {
+  height: 1px;
+  background: #2a2a3a;
+  margin: 8px 0;
+}
+
+/* Data source rows */
+.data-src-row {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.data-dot {
+  font-size: 10px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.data-src-text { color: #666; }
+.data-src-label {
+  color: #555;
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  margin-right: 3px;
+}
+#orbit-text, #att-text { color: #888; font-style: italic; }
+
+.sat-info-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.sat-info-label {
+  color: #555;
+  flex-shrink: 0;
+}
+.sat-info-row span:last-child {
+  color: #ccc;
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  text-align: right;
+}
+
+/* ── Leaflet overrides ──────────────────────────────── */
+.leaflet-container { background: #0d0d18 !important; }
+.leaflet-tile-pane { opacity: 0.7; }

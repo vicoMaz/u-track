@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Satellite Tracker</title>
+    <script>
+      window.CESIUM_BASE_URL = 'https://unpkg.com/cesium@1.114.0/Build/Cesium/';
+    </script>
+    <script src="https://unpkg.com/cesium@1.114.0/Build/Cesium/Cesium.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/cesium@1.114.0/Build/Cesium/Widgets/widgets.css" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <!-- Side Panel Container (stacks panels vertically) -->
+      <div id="side-panel">
+
+        <!-- Satellites Panel -->
+        <div id="sat-panel" class="panel">
+          <div class="panel-header">
+            <span>Satellites</span>
+            <button id="sat-toggle" class="panel-toggle" title="Collapse">◀</button>
+          </div>
+          <div class="panel-body">
+            <div class="add-sat-form">
+              <input id="norad-input" type="text" placeholder="NORAD ID (e.g. 25544)" maxlength="10" />
+              <input id="name-input" type="text" placeholder="Name (optional)" maxlength="30" />
+              <button id="add-sat-btn">Add</button>
+            </div>
+            <div id="sat-list"></div>
+          </div>
+        </div>
+
+        <!-- Ground Stations Panel -->
+        <div id="gs-panel" class="panel">
+          <div class="panel-header">
+            <span>Ground Stations</span>
+            <button id="gs-footprint-all-btn" title="Toggle all footprints">◎ All</button>
+            <button id="gs-toggle" class="panel-toggle" title="Collapse">◀</button>
+          </div>
+          <div class="panel-body">
+            <div class="add-gs-form">
+              <input id="gs-name-input" type="text" placeholder="Name (optional)" maxlength="30" />
+              <div class="gs-coords">
+                <input id="gs-lat-input" type="number" placeholder="Lat" min="-90" max="90" step="any" />
+                <input id="gs-lon-input" type="number" placeholder="Lon" min="-180" max="180" step="any" />
+              </div>
+              <button id="add-gs-btn">Add</button>
+            </div>
+            <div id="gs-list"></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Tab bar -->
+      <div id="tab-bar">
+        <button class="tab-btn active" data-tab="globe">Globe (3D)</button>
+        <button class="tab-btn" data-tab="map">Planisphere (2D)</button>
+        <a href="/api-docs.html" target="_blank" class="tab-btn api-docs-btn">API Docs ↗</a>
+      </div>
+
+      <!-- Views -->
+      <div id="globe-view" class="view active"></div>
+      <div id="map-view" class="view"></div>
+
+      <!-- Satellite info card -->
+      <div id="sat-info" class="hidden">
+        <div class="sat-info-header">
+          <div id="sat-info-name"></div>
+          <div id="sat-time-badge" class="time-badge"></div>
+        </div>
+        <div class="sat-info-row"><span class="sat-info-label">NORAD</span><span id="sat-info-norad"></span></div>
+        <div class="sat-info-row"><span class="sat-info-label">Lat</span><span id="sat-info-lat"></span></div>
+        <div class="sat-info-row"><span class="sat-info-label">Lon</span><span id="sat-info-lon"></span></div>
+        <div class="sat-info-row"><span class="sat-info-label">Alt</span><span id="sat-info-alt"></span></div>
+
+        <div class="sat-info-divider"></div>
+
+        <div class="data-src-row">
+          <span class="data-dot" id="orbit-dot">●</span>
+          <span class="data-src-text"><span class="data-src-label">ORBIT</span> <span id="orbit-text"></span></span>
+        </div>
+        <div class="data-src-row">
+          <span class="data-dot" id="att-dot">○</span>
+          <span class="data-src-text"><span class="data-src-label">ATTITUDE</span> <span id="att-text"></span></span>
+        </div>
+      </div>
+
+      <!-- Time Player -->
+      <div id="time-player">
+
+        <!-- Date display / jump input -->
+        <input id="date-input" type="text" placeholder="DD-MM-YYYY HH:MM:SS" title="Simulated UTC — edit and press Enter to jump" />
+        <span class="tp-utc-label">UTC</span>
+
+        <div class="tp-sep"></div>
+
+        <!-- Playback controls -->
+        <button id="now-btn" title="Jump to now">NOW</button>
+        <button id="play-btn" title="Play / Pause">▶</button>
+        <select id="speed-select" title="Simulation speed">
+          <option value="1"   selected>1×</option>
+          <option value="10">10×</option>
+          <option value="60">60×</option>
+          <option value="600">600×</option>
+          <option value="3600">1h/s</option>
+        </select>
+
+        <div class="tp-sep"></div>
+
+        <!-- Timeline scrub with step buttons -->
+        <button class="step-btn" data-step="-86400" title="Back 1 day">−1d</button>
+        <button class="step-btn" data-step="-3600"  title="Back 1 hour">−1h</button>
+        <input id="time-scrub" type="range" min="-604800" max="604800" value="0" step="60" title="Drag to scrub ±7 days" />
+        <button class="step-btn" data-step="3600"   title="Forward 1 hour">+1h</button>
+        <button class="step-btn" data-step="86400"  title="Forward 1 day">+1d</button>
+
+        <div class="tp-sep"></div>
+
+        <!-- Scale & Altitude -->
+        <label class="tp-label">Scale</label>
+        <input id="scale-slider" type="range" min="1" max="1000" value="500" step="1" style="width:80px;accent-color:#c77dff" />
+        <input id="scale-field" type="number" min="1" max="1000" value="500" step="1" class="tp-num-field" style="color:#c77dff" />
+
+        <label class="tp-label" style="margin-left:4px">Alt</label>
+        <input id="orbit-alt-slider" type="range" min="400" max="700" value="550" step="10" style="width:65px;accent-color:#4a90d9" />
+        <input id="orbit-alt-field" type="number" min="400" max="700" value="550" step="10" class="tp-num-field" />
+        <span class="tp-label">km</span>
+
+      </div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
