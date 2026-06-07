@@ -76,7 +76,7 @@ async function addSatellite() {
     const color = nextColor();
     const name  = nameInput.value.trim() || tleName || `SAT-${noradId}`;
 
-    store.addSatellite({ id, noradId, name, color, satrec });
+    store.addSatellite({ id, noradId, name, color, satrec, model: '12U' });
     persistSatellite(name, line1, line2);
     noradInput.value = '';
     nameInput.value  = '';

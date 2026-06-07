@@ -8,7 +8,10 @@ const ORBIT_STEPS = 120;
 const ARROW_LEN_KM = 640;
 const MODEL_BASE_SCALE = 800;
 
-const MODEL_URI = '/models/12UV1.gltf';
+const MODEL_URIS = {
+  '12U': '/models/12UV1.gltf',
+  'FF':  '/models/FFV1.gltf',
+};
 
 // Module-level scratch objects — reused every frame, never allocated in hot path
 const _scratchM3  = new Cesium.Matrix3();
@@ -87,7 +90,7 @@ export class SatEntity {
       position:    this._posProp,
       orientation: this._orientProp,
       model: {
-        uri: MODEL_URI,
+        uri: MODEL_URIS[this.sat.model] ?? MODEL_URIS['12U'],
         scale: scaleCb,
         minimumPixelSize: 12,
         silhouetteColor: col,

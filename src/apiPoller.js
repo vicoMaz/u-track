@@ -19,7 +19,8 @@ function parseSatEntry(item) {
     const name  = item.name || tleName || `SAT-${noradId}`;
     const id    = `sat-api-${++satIdCounter}`;
     const color = PALETTE[store.satellites.length % PALETTE.length];
-    return { id, noradId, name, color, satrec };
+    const model = item.model === 'FF' ? 'FF' : '12U';
+    return { id, noradId, name, color, satrec, model };
   } catch { return null; }
 }
 

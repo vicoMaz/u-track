@@ -181,6 +181,7 @@ const SPEC = {
           noradId:  { type: 'string', readOnly: true },
           name:     { type: 'string' },
           tle:      { type: 'string', description: 'Two- or three-line TLE, lines separated by \\n' },
+          model:    { type: 'string', enum: ['12U', 'FF'], default: '12U', description: '3-D model to display' },
         },
       },
       Station: {
@@ -230,8 +231,9 @@ export function createApiMiddleware() {
       if (!line1 || !line2)
         return send(res, 400, { error: 'TLE must contain a valid line 1 and line 2' });
       const noradId = line1.substring(2, 7).trim();
+      const model   = body.model === 'FF' ? 'FF' : '12U'; // default 12U
       if (!satellites.some(s => s.noradId === noradId)) {
-        const entry = { noradId, name: body.name || null, tle };
+        const entry = { noradId, name: body.name || null, tle, model };
         satellites.push(entry);
         pendingSatellites.push(entry);
       }
