@@ -4,7 +4,16 @@ const TLE_URL = (noradId) =>
   `https://celestrak.org/NORAD/elements/gp.php?CATNR=${noradId}&FORMAT=TLE`;
 
 export async function fetchTLE(noradId) {
-  const res = await fetch(TLE_URL(noradId));
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 10_000);
+  let res;
+  try {
+    res = await fetch(TLE_URL(noradId), { signal: ac.signal });
+  } catch (e) {
+    throw new Error(e.name === 'AbortError' ? 'Celestrak request timed out (10 s)' : e.message);
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const text = (await res.text()).trim();
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);

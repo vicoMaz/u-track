@@ -27,7 +27,12 @@ export const store = {
   },
 
   removeSatellite(id) {
+    const sat = this.satellites.find(s => s.id === id);
     this.satellites = this.satellites.filter(s => s.id !== id);
+    if (sat && this.attitudes[sat.noradId]) {
+      delete this.attitudes[sat.noradId];
+      this.notify('attitudes');
+    }
     this.notify('satellites');
   },
 

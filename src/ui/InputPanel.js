@@ -43,6 +43,16 @@ async function addSatellite() {
 
   const noradId = noradInput.value.trim();
   if (!noradId) return;
+  if (!/^\d{1,9}$/.test(noradId)) {
+    noradInput.style.borderColor = '#ff3860';
+    setTimeout(() => (noradInput.style.borderColor = ''), 1500);
+    return;
+  }
+  if (store.satellites.some(s => s.noradId === noradId)) {
+    noradInput.style.borderColor = '#ffbe0b';
+    setTimeout(() => (noradInput.style.borderColor = ''), 1500);
+    return;
+  }
 
   addBtn.disabled = true;
   addBtn.textContent = '…';
@@ -138,9 +148,12 @@ async function addGroundStation() {
 
   persistStation(name, shortName, lat, lon, localId).then(serverId => {
     if (serverId !== localId) {
-      // Update the id in the store so deletes use the server id
+      // Atomically swap the id so all subscribers (map, list, delete buttons) stay consistent
       const gs = store.groundStations.find(g => g.id === localId);
-      if (gs) gs.id = serverId;
+      if (gs) {
+        gs.id = serverId;
+        store.notify('groundStations');
+      }
     }
   });
 

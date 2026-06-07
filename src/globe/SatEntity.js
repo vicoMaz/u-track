@@ -27,6 +27,7 @@ export class SatEntity {
     this._orientProp = null;
     this._cachedOrbit  = null;
     this._lastOrbitMs  = -Infinity;
+    this._lastOrbitWall = -Infinity;
     this._xPos   = null;
     this._yPos   = null;
     this._zPos   = null;
@@ -40,11 +41,12 @@ export class SatEntity {
     const origin = eciToCartesian3(r.eciPos, r.gmst);
 
     const nowMs = date.getTime();
-    // Use abs() so scrubbing backward also triggers a recompute.
-    // 5 s threshold keeps the trace visually centred even at high playback speeds.
-    if (Math.abs(nowMs - this._lastOrbitMs) > 5000 || !this._cachedOrbit) {
+    const wallMs = Date.now();
+    // Rate-limit by wall-clock time so high playback speeds don't recompute every frame
+    if ((Math.abs(nowMs - this._lastOrbitMs) > 5000 || !this._cachedOrbit)
+        && wallMs - this._lastOrbitWall > 500) {
       const pts = this._computeOrbit(date);
-      if (pts) { this._cachedOrbit = pts; this._lastOrbitMs = nowMs; }
+      if (pts) { this._cachedOrbit = pts; this._lastOrbitMs = nowMs; this._lastOrbitWall = wallMs; }
     }
 
     if (!this._bodyEntity) {
@@ -125,21 +127,24 @@ export class SatEntity {
   // Outside the table span → fall back to Default Sun Pointing.
   _computeOrientation(r, date) {
     const att = store.attitudes[this.sat.noradId];
-    if (att?.entries?.length) {
+    if (att?.entries?.length >= 2) {
       const entries = att.entries;
       const tNow = date.getTime();
       const tMin = entries[0].t;
       const tMax = entries[entries.length - 1].t;
 
       if (tNow >= tMin && tNow <= tMax) {
-        // Find bracketing pair
+        // Find last entry with t <= tNow (correct bound covers all intervals)
         let lo = 0;
-        for (let i = 1; i < entries.length - 1; i++) {
+        for (let i = 1; i < entries.length; i++) {
           if (entries[i].t <= tNow) lo = i; else break;
         }
+        lo = Math.min(lo, entries.length - 2); // clamp for tNow === tMax edge
         const e0 = entries[lo];
         const e1 = entries[lo + 1];
-        const t  = (tNow - e0.t) / (e1.t - e0.t);
+        const dt = e1.t - e0.t;
+        if (dt === 0) return new Cesium.Quaternion(e0.q.x, e0.q.y, e0.q.z, e0.q.w);
+        const t  = Math.max(0, Math.min(1, (tNow - e0.t) / dt));
         const q0 = new Cesium.Quaternion(e0.q.x, e0.q.y, e0.q.z, e0.q.w);
         const q1 = new Cesium.Quaternion(e1.q.x, e1.q.y, e1.q.z, e1.q.w);
         return Cesium.Quaternion.slerp(q0, q1, t, new Cesium.Quaternion());

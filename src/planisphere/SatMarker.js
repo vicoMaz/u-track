@@ -9,7 +9,8 @@ export class SatMarker {
     this.sat = sat;
     this.color = sat.color;
     this._visible = false;
-    this._lastTrackMs = -Infinity;
+    this._lastTrackMs   = -Infinity;
+    this._lastTrackWall = -Infinity;
 
     this.marker = L.circleMarker([0, 0], {
       radius: 6,
@@ -34,11 +35,14 @@ export class SatMarker {
 
     this.marker.setLatLng([result.lat, result.lon]);
 
-    // Recompute track when time jumps in either direction
-    const nowMs = date.getTime();
-    if (Math.abs(nowMs - this._lastTrackMs) > 5000) {
+    // Recompute track when sim-time jumps, but cap at once per 500 ms wall-clock
+    // to avoid a GPU/GC storm at high playback speeds
+    const nowMs  = date.getTime();
+    const wallMs = Date.now();
+    if (Math.abs(nowMs - this._lastTrackMs) > 5000 && wallMs - this._lastTrackWall > 500) {
       this._updateTrack(date);
-      this._lastTrackMs = nowMs;
+      this._lastTrackMs   = nowMs;
+      this._lastTrackWall = wallMs;
     }
   }
 

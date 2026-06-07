@@ -17,6 +17,10 @@ const gsMarkers  = new Map(); // gsId  → GroundStation2D
 const R_EARTH = 6371;
 
 export function initMap() {
+  if (!document.getElementById('map-view')) {
+    console.error('[MapView] #map-view element not found — skipping init');
+    return;
+  }
   map = L.map('map-view', {
     center: [0, 0],
     zoom: 2,
@@ -245,4 +249,5 @@ function updateMarkers() {
 
 export function invalidateMapSize() {
   if (map && _fitWorld) _fitWorld();
+  else console.warn('[MapView] invalidateMapSize called before map was initialized');
 }

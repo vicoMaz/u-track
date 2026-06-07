@@ -298,10 +298,13 @@ export function createApiMiddleware() {
       const parsed = entries
         .map(e => ({ t: new Date(e.timestamp).getTime(), q: e.quaternion }))
         .filter(e => isFinite(e.t))
-        .sort((a, b) => a.t - b.t);
+        .sort((a, b) => a.t - b.t)
+        .filter((e, i, a) => i === 0 || e.t !== a[i - 1].t); // drop duplicate timestamps
       const record = { noradId: String(noradId), source, entries: parsed };
       attitudes[record.noradId] = record;
-      pendingAttitudes.push(record);
+      // Upsert into feed queue — keep only latest per noradId to prevent unbounded growth
+      const qi = pendingAttitudes.findIndex(a => a.noradId === record.noradId);
+      if (qi !== -1) pendingAttitudes[qi] = record; else pendingAttitudes.push(record);
       return send(res, 201, { ok: true, noradId: record.noradId, entries: parsed.length });
     }
 
@@ -311,7 +314,9 @@ export function createApiMiddleware() {
       const noradId = attDel[1];
       const had = !!attitudes[noradId];
       delete attitudes[noradId];
-      pendingAttitudes.push({ noradId, quaternion: null }); // null = cleared
+      const sentinel = { noradId, quaternion: null };
+      const qi = pendingAttitudes.findIndex(a => a.noradId === noradId);
+      if (qi !== -1) pendingAttitudes[qi] = sentinel; else pendingAttitudes.push(sentinel);
       return send(res, 200, { deleted: had ? 1 : 0 });
     }
 
