@@ -34,9 +34,9 @@ export class SatMarker {
 
     this.marker.setLatLng([result.lat, result.lon]);
 
-    // Recompute track at most once per 5 simulated seconds
+    // Recompute track when time jumps in either direction
     const nowMs = date.getTime();
-    if (nowMs - this._lastTrackMs > 5000) {
+    if (Math.abs(nowMs - this._lastTrackMs) > 5000) {
       this._updateTrack(date);
       this._lastTrackMs = nowMs;
     }
