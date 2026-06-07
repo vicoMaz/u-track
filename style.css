@@ -434,7 +434,13 @@ html, body {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 7px;
-  gap: 8px;
+  gap: 4px;
+}
+
+#eclipse-icon {
+  font-size: 11px;
+  flex-shrink: 0;
+  margin-right: auto; /* pushes badge to the far right */
 }
 
 #sat-info-name {

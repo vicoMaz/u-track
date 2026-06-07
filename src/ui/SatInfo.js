@@ -103,7 +103,7 @@ function update() {
   // Eclipse icon next to satellite name
   const sun     = sunDirectionECI(store.currentTime);
   const eclipse = pos.eciPos ? isInEclipse(pos.eciPos, sun) : false;
-  eclipseIcon.textContent = eclipse ? '🌑' : '☀️';
+  eclipseIcon.textContent = eclipse ? '🌙' : '☀️';
 }
 
 export function initSatInfo() {
