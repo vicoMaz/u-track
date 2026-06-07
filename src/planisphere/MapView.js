@@ -47,11 +47,15 @@ export function initMap() {
   nightCtx = nightCanvas.getContext('2d');
 
   // ── Home / fit-world function ───────────────────────────────────────────────
-  // Clip to ±70 lat / full lon: avoids Mercator polar stretching and fills
-  // landscape screens much better than the full ±85° Mercator world.
+  // Calculate zoom so the full 360° longitude fills the visible width
+  // (container minus the 240 px sidebar). This always gives a seamless
+  // edge-to-edge planisphere regardless of screen aspect ratio.
+  const SIDEBAR_W = 240;
   _fitWorld = () => {
     map.invalidateSize({ animate: false });
-    map.fitBounds([[-70, -180], [75, 180]], { padding: [0, 0], animate: false });
+    const availW = Math.max(200, map.getSize().x - SIDEBAR_W);
+    const z = Math.log2(availW / 256);
+    map.setView([20, 0], z, { animate: false });
     _drawNight(store.currentTime, true);
   };
 

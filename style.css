@@ -26,6 +26,10 @@ html, body {
 }
 .view.active { display: block; }
 
+/* Map planisphere — ocean background so uncovered polar strips blend in */
+#map-view { background: #0d1b2a; }
+.leaflet-container { background: #0d1b2a !important; }
+
 /* ── Tab bar ────────────────────────────────────────── */
 #tab-bar {
   position: fixed;
