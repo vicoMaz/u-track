@@ -1,4 +1,20 @@
-const J2000_MS = Date.UTC(2000, 0, 1, 12, 0, 0);
+const J2000_MS   = Date.UTC(2000, 0, 1, 12, 0, 0);
+const R_EARTH_KM = 6371;
+
+/**
+ * Returns true when the satellite (eciPos in km) is in Earth's umbra.
+ * sunDir must be the unit ECI vector toward the Sun.
+ */
+export function isInEclipse(eciPosKm, sunDir) {
+  const rMag = Math.sqrt(eciPosKm.x ** 2 + eciPosKm.y ** 2 + eciPosKm.z ** 2);
+  if (rMag < R_EARTH_KM) return false;
+  // Cosine of angle between satellite position and sun direction
+  const cosA = (eciPosKm.x * sunDir.x + eciPosKm.y * sunDir.y + eciPosKm.z * sunDir.z) / rMag;
+  if (cosA >= 0) return false; // satellite on the sun side — no shadow possible
+  // Perpendicular distance from satellite to the Earth-sun axis
+  const perp = rMag * Math.sqrt(Math.max(0, 1 - cosA * cosA));
+  return perp < R_EARTH_KM;
+}
 const DEG      = Math.PI / 180;
 const EPSILON  = 23.439 * DEG;         // obliquity (constant for our precision)
 const COS_EPS  = Math.cos(EPSILON);

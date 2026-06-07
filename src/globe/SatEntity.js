@@ -1,5 +1,5 @@
 import { propagate, eciToCartesian3 } from '../tle.js';
-import { sunDirectionECI } from '../sunVector.js';
+import { sunDirectionECI, isInEclipse } from '../sunVector.js';
 import { store } from '../store.js';
 
 /* global Cesium */
@@ -32,6 +32,7 @@ export class SatEntity {
     this._cachedOrbit  = null;
     this._lastOrbitMs  = -Infinity;
     this._lastOrbitWall = -Infinity;
+    this._inEclipse = false; // updated each frame; drives sun arrow colour + label
     // Preallocated tip Cartesian3 objects — mutated in place, no per-frame allocation
     this._xTip   = new Cesium.Cartesian3();
     this._yTip   = new Cesium.Cartesian3();
@@ -126,12 +127,26 @@ export class SatEntity {
         this._xArrow   = this._addArrow(() => this._xPos,   Cesium.Color.RED);
       this._yArrow   = this._addArrow(() => this._yPos,   Cesium.Color.LIME);
       this._zArrow   = this._addArrow(() => this._zPos,   Cesium.Color.DODGERBLUE);
-      this._sunArrow = this._addArrow(() => this._sunPos, Cesium.Color.YELLOW);
+      // Sun arrow: colour + label text react to eclipse state each frame
+      const sunColor = new Cesium.CallbackProperty(
+        () => this._inEclipse ? Cesium.Color.fromCssColorString('#444') : Cesium.Color.YELLOW, false
+      );
+      this._sunArrow = this._add({
+        polyline: {
+          positions: new Cesium.CallbackProperty(() => this._sunPos, false),
+          width: 4,
+          material: new Cesium.PolylineArrowMaterialProperty(sunColor),
+          arcType: Cesium.ArcType.NONE,
+        },
+      });
 
       this._xLabel   = this._addLabel(() => this._xPos[1],   'X',   Cesium.Color.RED);
       this._yLabel   = this._addLabel(() => this._yPos[1],   'Y',   Cesium.Color.LIME);
       this._zLabel   = this._addLabel(() => this._zPos[1],   'Z',   Cesium.Color.DODGERBLUE);
-      this._sunLabel = this._addLabel(() => this._sunPos[1], 'Sun', Cesium.Color.YELLOW);
+      this._sunLabel = this._addDynamicLabel(() => this._sunPos[1],
+        () => this._inEclipse ? 'ECLIPSE' : 'Sun',
+        () => this._inEclipse ? Cesium.Color.fromCssColorString('#888') : Cesium.Color.YELLOW
+      );
       this._setLabelsVisible(false);
     }
   }
@@ -230,6 +245,7 @@ export class SatEntity {
 
     const { eciPos, gmst } = r;
     const sun = sunDirectionECI(date); // cached — free second call
+    this._inEclipse = isInEclipse(eciPos, sun);
     const sl = ARROW_LEN_KM;
     const sunEci = { x: eciPos.x + sun.x*sl, y: eciPos.y + sun.y*sl, z: eciPos.z + sun.z*sl };
     const sunEcef = eciToCartesian3(sunEci, gmst);
@@ -243,6 +259,23 @@ export class SatEntity {
         text,
         font: 'bold 12px sans-serif',
         fillColor: color,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 2,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        pixelOffset: new Cesium.Cartesian2(6, -6),
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        scale: 0.9,
+      },
+    });
+  }
+
+  _addDynamicLabel(posFn, textFn, colorFn) {
+    return this._add({
+      position: new Cesium.CallbackProperty(posFn, false),
+      label: {
+        text:      new Cesium.CallbackProperty(textFn,  false),
+        fillColor: new Cesium.CallbackProperty(colorFn, false),
+        font: 'bold 12px sans-serif',
         outlineColor: Cesium.Color.BLACK,
         outlineWidth: 2,
         style: Cesium.LabelStyle.FILL_AND_OUTLINE,

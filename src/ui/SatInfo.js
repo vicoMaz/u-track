@@ -1,5 +1,6 @@
 import { store } from '../store.js';
 import { propagate } from '../tle.js';
+import { sunDirectionECI, isInEclipse } from '../sunVector.js';
 
 const card       = document.getElementById('sat-info');
 const nameEl     = document.getElementById('sat-info-name');
@@ -12,6 +13,8 @@ const orbitDot   = document.getElementById('orbit-dot');
 const orbitText  = document.getElementById('orbit-text');
 const attDot     = document.getElementById('att-dot');
 const attText    = document.getElementById('att-text');
+const eclipseDot = document.getElementById('eclipse-dot');
+const eclipseText = document.getElementById('eclipse-text');
 
 const LIVE_THRESHOLD_MS = 2 * 60 * 1000;
 
@@ -96,6 +99,17 @@ function update() {
   } else {
     attDot.style.color  = DOT_GREY;
     attText.textContent = 'Default Sun Pointing, No Telemetry Available';
+  }
+
+  // Eclipse row
+  const sun      = sunDirectionECI(store.currentTime);
+  const eclipse  = pos.eciPos ? isInEclipse(pos.eciPos, sun) : false;
+  if (eclipse) {
+    eclipseDot.style.color  = '#555';
+    eclipseText.textContent = 'Eclipse — Earth shadow';
+  } else {
+    eclipseDot.style.color  = '#ffbe0b';
+    eclipseText.textContent = 'Sunlit';
   }
 }
 
