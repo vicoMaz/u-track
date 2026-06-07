@@ -202,6 +202,8 @@ export class SatEntity {
 
   _updateArrows(origin, r, date, q) {
     if (!this._xPos) return;
+    // Update the base of every arrow to the current satellite position
+    this._xPos[0] = this._yPos[0] = this._zPos[0] = this._sunPos[0] = origin;
     this._computeArrowTips(origin, r, date, q);
   }
 
