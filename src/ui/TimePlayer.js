@@ -77,9 +77,9 @@ export function initTimePlayer() {
   playBtn.addEventListener('click', () => playing ? stopPlay() : startPlay());
 
   nowBtn.addEventListener('click', () => {
-    stopPlay();
     scrubOffsetSec = 0;
     applyTime();
+    if (!playing) startPlay();
   });
 
   speedSel.addEventListener('change', () => { speed = Number(speedSel.value); });
