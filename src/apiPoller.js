@@ -67,8 +67,19 @@ export function startApiPoller() {
       const res = await fetch('/api/feed');
       if (res.ok) {
         const { satellites, stations, attitudes = [] } = await res.json();
-        for (const item of attitudes) {
-          store.setAttitude(item.noradId, item.entries ? item : null);
+        for (const notif of attitudes) {
+          if (notif.cleared) {
+            store.setAttitude(notif.noradId, null);
+          } else {
+            // Fetch the full table — the feed only carries a lightweight notification
+            fetch(`/api/attitude`)
+              .then(r => r.ok ? r.json() : [])
+              .then(atts => {
+                const full = atts.find(a => a.noradId === notif.noradId);
+                store.setAttitude(notif.noradId, full ?? null);
+              })
+              .catch(() => {});
+          }
         }
         for (const item of satellites) {
           const sat = parseSatEntry(item);

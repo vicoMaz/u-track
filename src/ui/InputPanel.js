@@ -192,15 +192,12 @@ export function initInputPanel() {
   });
 
   store.subscribe((key) => {
+    if (key === 'satellites' || key === 'trackedSatId') renderSatList();
     if (key === 'groundStations') {
+      renderGsList();
       const allOn = store.groundStations.length > 0 && store.groundStations.every(g => g.showFootprint);
       allBtn.classList.toggle('active', allOn);
     }
-  });
-
-  store.subscribe((key) => {
-    if (key === 'satellites' || key === 'trackedSatId') renderSatList();
-    if (key === 'groundStations') renderGsList();
   });
 
   renderSatList();

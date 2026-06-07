@@ -4,6 +4,8 @@ export const store = {
   satellites: [],      // { id, noradId, name, color, satrec }
   groundStations: [],  // { id, name, lat, lon, color, showFootprint }
   attitudes: {},       // { [noradId]: { source, entries:[{t(ms), q:{x,y,z,w}}] } }
+  positions: {},       // { [noradId]: last propagated result } — written by SatEntity, read by SatInfo
+  _satById: new Map(), // id → sat, for O(1) lookups
   satScale: 500,
   orbitAlt: 550,       // km — shared by night shadow + GS footprint
   trackedSatId: null,
@@ -23,17 +25,26 @@ export const store = {
 
   addSatellite(sat) {
     this.satellites.push(sat);
+    this._satById.set(sat.id, sat);
     this.notify('satellites');
   },
 
   removeSatellite(id) {
-    const sat = this.satellites.find(s => s.id === id);
+    const sat = this._satById.get(id);
     this.satellites = this.satellites.filter(s => s.id !== id);
-    if (sat && this.attitudes[sat.noradId]) {
-      delete this.attitudes[sat.noradId];
-      this.notify('attitudes');
+    this._satById.delete(id);
+    if (sat) {
+      delete this.positions[sat.noradId];
+      if (this.attitudes[sat.noradId]) {
+        delete this.attitudes[sat.noradId];
+        this.notify('attitudes');
+      }
     }
     this.notify('satellites');
+  },
+
+  get trackedSat() {
+    return this._satById.get(this.trackedSatId) ?? null;
   },
 
   addGroundStation(gs) {

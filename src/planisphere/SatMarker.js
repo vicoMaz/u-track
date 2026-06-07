@@ -47,18 +47,17 @@ export class SatMarker {
   }
 
   _updateTrack(date) {
-    for (const line of this.trackLines) line.remove();
-    this.trackLines = [];
-
     const { no: meanMotion } = this.sat.satrec;
     if (!meanMotion || meanMotion <= 0) return;
     const periodMin = (2 * Math.PI) / meanMotion;
-    const stepMin = periodMin / TRACK_POINTS;
+    const stepMin   = periodMin / TRACK_POINTS;
+    const t0        = date.getTime() - (TRACK_POINTS / 2) * stepMin * 60000;
 
     const points = [];
+    const d = new Date(); // reused — avoids 200 Date allocations per recompute
     for (let i = 0; i <= TRACK_POINTS; i++) {
-      const t = new Date(date.getTime() + (i - TRACK_POINTS / 2) * stepMin * 60000);
-      const r = propagate(this.sat.satrec, t);
+      d.setTime(t0 + i * stepMin * 60000);
+      const r = propagate(this.sat.satrec, d);
       if (r) points.push([r.lat, r.lon]);
     }
 
@@ -74,15 +73,13 @@ export class SatMarker {
     }
     if (seg.length) segments.push(seg);
 
-    for (const s of segments) {
-      if (s.length < 2) continue;
-      const line = L.polyline(s, {
-        color: this.color,
-        weight: 1.5,
-        opacity: 0.6,
-      }).addTo(this.map);
-      this.trackLines.push(line);
-    }
+    // Reuse existing polyline objects — update latlngs in place, avoiding DOM mutations
+    const needed = segments.filter(s => s.length >= 2);
+    while (this.trackLines.length < needed.length)
+      this.trackLines.push(L.polyline([], { color: this.color, weight: 1.5, opacity: 0.6 }).addTo(this.map));
+    while (this.trackLines.length > needed.length)
+      this.trackLines.pop().remove();
+    needed.forEach((s, i) => this.trackLines[i].setLatLngs(s));
   }
 
   destroy() {

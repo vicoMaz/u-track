@@ -10,6 +10,10 @@ const MODEL_BASE_SCALE = 800;
 
 const MODEL_URI = '/models/12UV1.gltf';
 
+// Module-level scratch objects — reused every frame, never allocated in hot path
+const _scratchM3  = new Cesium.Matrix3();
+const _scratchCol = new Cesium.Cartesian3();
+
 export class SatEntity {
   constructor(viewer, sat) {
     this.viewer = viewer;
@@ -28,7 +32,13 @@ export class SatEntity {
     this._cachedOrbit  = null;
     this._lastOrbitMs  = -Infinity;
     this._lastOrbitWall = -Infinity;
-    this._xPos   = null;
+    // Preallocated tip Cartesian3 objects — mutated in place, no per-frame allocation
+    this._xTip   = new Cesium.Cartesian3();
+    this._yTip   = new Cesium.Cartesian3();
+    this._zTip   = new Cesium.Cartesian3();
+    this._sunTip = new Cesium.Cartesian3();
+    // Stable two-element arrays whose [1] element is the tip above (reference never changes)
+    this._xPos   = null; // set to [origin, this._xTip] in _build
     this._yPos   = null;
     this._zPos   = null;
     this._sunPos = null;
@@ -37,6 +47,7 @@ export class SatEntity {
   update(date) {
     const r = propagate(this.sat.satrec, date);
     if (!r) return;
+    store.positions[this.sat.noradId] = r; // share with SatInfo — avoids double propagation
 
     const origin = eciToCartesian3(r.eciPos, r.gmst);
 
@@ -53,9 +64,10 @@ export class SatEntity {
       if (!this._cachedOrbit) return;
       this._build(origin, r, date);
     } else {
+      const q = this._computeOrientation(r, date); // compute once, reuse for arrows
       this._posProp.setValue(origin);
-      this._orientProp.setValue(this._computeOrientation(r, date));
-      this._updateArrows(origin, r, date);
+      this._orientProp.setValue(q);
+      this._updateArrows(origin, r, date, q);
     }
   }
 
@@ -101,13 +113,14 @@ export class SatEntity {
       },
     });
 
-    // ECI-frame arrows
-    const arrows = this._computeArrowTips(origin, r, date);
-    if (arrows) {
-      this._xPos   = [origin, arrows.x];
-      this._yPos   = [origin, arrows.y];
-      this._zPos   = [origin, arrows.z];
-      this._sunPos = [origin, arrows.sun];
+    // ECI-frame arrows — stable arrays; tip Cartesian3s are mutated in place each frame
+    const initQ = this._computeOrientation(r, date);
+    this._computeArrowTips(origin, r, date, initQ);
+    {
+      this._xPos   = [origin, this._xTip];
+      this._yPos   = [origin, this._yTip];
+      this._zPos   = [origin, this._zTip];
+      this._sunPos = [origin, this._sunTip];
 
         this._xArrow   = this._addArrow(() => this._xPos,   Cesium.Color.RED);
       this._yArrow   = this._addArrow(() => this._yPos,   Cesium.Color.LIME);
@@ -186,44 +199,38 @@ export class SatEntity {
     return Cesium.Quaternion.fromRotationMatrix(m);
   }
 
-_updateArrows(origin, r, date) {
+  _updateArrows(origin, r, date, q) {
     if (!this._xPos) return;
-    const arrows = this._computeArrowTips(origin, r, date);
-    if (!arrows) return;
-    this._xPos   = [origin, arrows.x];
-    this._yPos   = [origin, arrows.y];
-    this._zPos   = [origin, arrows.z];
-    this._sunPos = [origin, arrows.sun];
+    this._computeArrowTips(origin, r, date, q);
   }
 
-  // Arrow tips for the satellite body axes (+X, +Y, +Z).
-  // Derived directly from the model's orientation quaternion — guaranteed in sync.
-  _computeArrowTips(origin, r, date) {
-    const q = this._computeOrientation(r, date);
-    const m = Cesium.Matrix3.fromQuaternion(q, new Cesium.Matrix3());
-    const len = ARROW_LEN_KM * 1000; // km → metres (Cesium world units)
+  // Arrow tips mutated in-place into preallocated Cartesian3 objects (no allocations).
+  _computeArrowTips(origin, r, date, q) {
+    Cesium.Matrix3.fromQuaternion(q, _scratchM3);
+    const len = ARROW_LEN_KM * 1000;
 
-    const col = (i) => Cesium.Matrix3.getColumn(m, i, new Cesium.Cartesian3());
-    const tip = (axis) => new Cesium.Cartesian3(
-      origin.x + axis.x * len,
-      origin.y + axis.y * len,
-      origin.z + axis.z * len,
-    );
+    function tipInto(out, cx, cy, cz) {
+      out.x = origin.x + cx * len;
+      out.y = origin.y + cy * len;
+      out.z = origin.z + cz * len;
+    }
 
-    // Arrow → body column mapping (adjust to match the physical model axes)
-    // Currently: red(X)=col2, green(Y)=col1, blue(Z)=col0
+    // col(i) negated inline — avoids Cartesian3 allocation per column
+    Cesium.Matrix3.getColumn(_scratchM3, 2, _scratchCol);
+    tipInto(this._xTip, -_scratchCol.x, -_scratchCol.y, -_scratchCol.z);
+
+    Cesium.Matrix3.getColumn(_scratchM3, 1, _scratchCol);
+    tipInto(this._yTip, -_scratchCol.x, -_scratchCol.y, -_scratchCol.z);
+
+    Cesium.Matrix3.getColumn(_scratchM3, 0, _scratchCol);
+    tipInto(this._zTip, -_scratchCol.x, -_scratchCol.y, -_scratchCol.z);
+
     const { eciPos, gmst } = r;
-    const sun = sunDirectionECI(date);
-    const sunLen = ARROW_LEN_KM;
-    return {
-      x:   tip(neg(col(2))),
-      y:   tip(neg(col(1))),
-      z:   tip(neg(col(0))),
-      sun: eciToCartesian3(
-        { x: eciPos.x + sun.x*sunLen, y: eciPos.y + sun.y*sunLen, z: eciPos.z + sun.z*sunLen },
-        gmst
-      ),
-    };
+    const sun = sunDirectionECI(date); // cached — free second call
+    const sl = ARROW_LEN_KM;
+    const sunEci = { x: eciPos.x + sun.x*sl, y: eciPos.y + sun.y*sl, z: eciPos.z + sun.z*sl };
+    const sunEcef = eciToCartesian3(sunEci, gmst);
+    this._sunTip.x = sunEcef.x; this._sunTip.y = sunEcef.y; this._sunTip.z = sunEcef.z;
   }
 
   _addLabel(posFn, text, color) {
@@ -267,8 +274,10 @@ _updateArrows(origin, r, date) {
     const stepMs = periodMs / ORBIT_STEPS;
     const t0 = date.getTime() - periodMs / 2;
     const pts = [];
+    const d = new Date(); // reused — avoids 120 Date allocations per recompute
     for (let i = 0; i <= ORBIT_STEPS; i++) {
-      const r = propagate(this.sat.satrec, new Date(t0 + i * stepMs));
+      d.setTime(t0 + i * stepMs);
+      const r = propagate(this.sat.satrec, d);
       if (!r) continue;
       pts.push(eciToCartesian3(r.eciPos, r.gmst));
     }

@@ -11,6 +11,9 @@ let nightCanvas = null;
 let nightCtx   = null;
 let _lastDrawMs = 0;
 let _fitWorld  = null;
+// Cached per-pixel arrays — reallocated only on canvas resize
+let _nightLats = null, _nightLons = null, _nightImg = null;
+let _nightW = 0, _nightH = 0;
 const markers    = new Map(); // satId → SatMarker
 const gsMarkers  = new Map(); // gsId  → GroundStation2D
 
@@ -83,7 +86,8 @@ export function initMap() {
   new HomeControl().addTo(map);
 
   // Redraw night canvas whenever the map view changes (pan or zoom)
-  map.on('move zoom', () => _drawNight(store.currentTime, true));
+  // Also invalidate lat/lon cache since pixel→coord mapping changed
+  map.on('move zoom', () => { _nightW = 0; _drawNight(store.currentTime, true); });
 
   const container = document.getElementById('map-view');
   map.whenReady(() => {
@@ -159,17 +163,20 @@ function _drawNight(date, force = false) {
   const sinSunLat = Math.sin(sunLat);
   const cosSunLat = Math.cos(sunLat);
 
-  // Precompute lat for each canvas row, lon for each column (Mercator is separable)
-  const lats = new Float64Array(h);
-  const lons = new Float64Array(w);
-  for (let py = 0; py < h; py++) {
-    lats[py] = map.containerPointToLatLng([0, py * SCALE]).lat * Math.PI / 180;
+  // Reallocate lat/lon arrays and ImageData only when canvas dimensions change
+  if (w !== _nightW || h !== _nightH) {
+    _nightLats = new Float64Array(h);
+    _nightLons = new Float64Array(w);
+    _nightImg  = nightCtx.createImageData(w, h);
+    _nightW = w; _nightH = h;
+    for (let py = 0; py < h; py++)
+      _nightLats[py] = map.containerPointToLatLng([0, py * SCALE]).lat * Math.PI / 180;
+    for (let px = 0; px < w; px++)
+      _nightLons[px] = map.containerPointToLatLng([px * SCALE, 0]).lng * Math.PI / 180;
   }
-  for (let px = 0; px < w; px++) {
-    lons[px] = map.containerPointToLatLng([px * SCALE, 0]).lng * Math.PI / 180;
-  }
-
-  const img  = nightCtx.createImageData(w, h);
+  const lats = _nightLats;
+  const lons = _nightLons;
+  const img  = _nightImg;
   const data = img.data;
 
   const umbraThreshold = Math.PI - Math.asin(R_EARTH / (R_EARTH + store.orbitAlt));
@@ -178,6 +185,10 @@ function _drawNight(date, force = false) {
   const SHADOW_A = 165;
   const HALF_PI  = Math.PI / 2;
   const BLEND    = 0.04;
+  const DAY_COS  = Math.sin(BLEND); // cosD > this → full daylight, skip acos
+
+  // Clear only — reused ImageData retains previous frame's bytes otherwise
+  data.fill(0);
 
   for (let py = 0; py < h; py++) {
     const sinLat = Math.sin(lats[py]);
@@ -186,9 +197,10 @@ function _drawNight(date, force = false) {
 
     for (let px = 0; px < w; px++) {
       const cosD = sinSunLat * sinLat + cosSunLat * cosLat * Math.cos(lons[px] - sunLon);
-      const d    = Math.acos(Math.max(-1, Math.min(1, cosD)));
+      if (cosD > DAY_COS) continue; // full daylight — skip acos entirely (~50% of pixels)
 
-      if (d <= HALF_PI - BLEND) continue; // full daylight — skip
+      const d = Math.acos(Math.max(-1, Math.min(1, cosD)));
+      if (d <= HALF_PI - BLEND) continue;
 
       const nightT  = Math.min(1, (d - (HALF_PI - BLEND)) / (2 * BLEND));
       const shadowT = d > umbraThreshold - BLEND

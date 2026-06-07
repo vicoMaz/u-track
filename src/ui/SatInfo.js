@@ -38,10 +38,11 @@ function fmt(n, dec = 2) {
 }
 
 function update() {
-  const sat = store.satellites.find(s => s.id === store.trackedSatId);
+  const sat = store.trackedSat; // O(1) Map lookup
   if (!sat) { card.classList.add('hidden'); return; }
 
-  const pos = propagate(sat.satrec, store.currentTime);
+  // Use position already computed by SatEntity this tick; fall back to own propagation
+  const pos = store.positions[sat.noradId] ?? propagate(sat.satrec, store.currentTime);
   if (!pos) { card.classList.add('hidden'); return; }
 
   card.classList.remove('hidden');

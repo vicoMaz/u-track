@@ -24,7 +24,7 @@ function readBody(req) {
 }
 
 function send(res, status, data) {
-  const body = JSON.stringify(data, null, 2);
+  const body = JSON.stringify(data);
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
@@ -327,10 +327,17 @@ export function createApiMiddleware() {
 
     // GET /api/feed
     if (path === '/api/feed' && method === 'GET') {
+      // Attitudes sent as lightweight notifications — client fetches full table via GET /api/attitude
+      const attNotifs = pendingAttitudes.splice(0).map(a => ({
+        noradId: a.noradId,
+        source:  a.source,
+        cleared: !a.entries,          // true = client should delete this attitude
+        count:   a.entries?.length ?? 0,
+      }));
       return send(res, 200, {
         satellites: pendingSatellites.splice(0),
         stations:   pendingStations.splice(0),
-        attitudes:  pendingAttitudes.splice(0),
+        attitudes:  attNotifs,
       });
     }
 
