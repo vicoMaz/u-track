@@ -160,7 +160,33 @@ html, body {
 }
 .add-sat-form input:focus { border-color: #00d4ff; }
 
+.add-sat-form .btn-row {
+  display: flex;
+  gap: 5px;
+}
+
+.model-toggle {
+  background: #1e1e2e;
+  border: 1px solid #2a2a3a;
+  border-radius: 4px;
+  color: #888;
+  padding: 5px 7px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.model-toggle:hover { border-color: #00d4ff55; color: #aaa; }
+.model-toggle.ff-active {
+  border-color: #c77dff55;
+  color: #c77dff;
+  background: #c77dff11;
+}
+
 #add-sat-btn {
+  flex: 1;
   background: #00d4ff22;
   border: 1px solid #00d4ff55;
   border-radius: 4px;

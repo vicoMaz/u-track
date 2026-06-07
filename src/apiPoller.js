@@ -98,12 +98,12 @@ export function startApiPoller() {
 }
 
 // Called by InputPanel when the user adds via the UI form
-export async function persistSatellite(name, line1, line2) {
+export async function persistSatellite(name, line1, line2, model = '12U') {
   try {
     await fetch('/api/satellites', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, tle: `${line1}\n${line2}` }),
+      body: JSON.stringify({ name, tle: `${line1}\n${line2}`, model }),
     });
   } catch { /* non-fatal */ }
 }

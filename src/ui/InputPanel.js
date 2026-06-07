@@ -36,6 +36,14 @@ function renderSatList() {
   });
 }
 
+const modelToggle = document.getElementById('model-toggle');
+let selectedModel = '12U';
+modelToggle.addEventListener('click', () => {
+  selectedModel = selectedModel === '12U' ? 'FF' : '12U';
+  modelToggle.textContent = selectedModel;
+  modelToggle.classList.toggle('ff-active', selectedModel === 'FF');
+});
+
 async function addSatellite() {
   const noradInput = document.getElementById('norad-input');
   const nameInput = document.getElementById('name-input');
@@ -76,8 +84,8 @@ async function addSatellite() {
     const color = nextColor();
     const name  = nameInput.value.trim() || tleName || `SAT-${noradId}`;
 
-    store.addSatellite({ id, noradId, name, color, satrec, model: '12U' });
-    persistSatellite(name, line1, line2);
+    store.addSatellite({ id, noradId, name, color, satrec, model: selectedModel });
+    persistSatellite(name, line1, line2, selectedModel);
     noradInput.value = '';
     nameInput.value  = '';
   } catch (err) {
