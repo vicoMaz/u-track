@@ -62,10 +62,27 @@ html, body {
 }
 .api-docs-btn:hover { color: #00d4ff; border-color: #00d4ff44; }
 
+/* ── Logo ───────────────────────────────────────────── */
+#app-logo {
+  width: 220px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid #2a2a3a;
+  border-radius: 8px;
+  backdrop-filter: blur(6px);
+}
+#app-logo img {
+  width: 130px;
+  height: auto;
+  display: block;
+}
+
 /* ── Side Panel Container ───────────────────────────── */
 #side-panel {
   position: fixed;
-  top: 44px; left: 10px;
+  top: 36px; left: 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;

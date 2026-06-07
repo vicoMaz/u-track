@@ -39,7 +39,7 @@ function send(res, status, data) {
 const SPEC = {
   openapi: '3.0.0',
   info: {
-    title: 'Satellite Tracker API',
+    title: 'u-track API',
     version: '1.0.0',
     description:
       'Inject satellites and ground stations into the live tracker. ' +
