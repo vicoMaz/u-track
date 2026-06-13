@@ -13,6 +13,14 @@ const MODEL_URIS = {
   'FF':  '/models/FFV1.gltf',
 };
 
+// FF model rotation bias: 90° around X, 180° around Z (body-frame, post-multiplied).
+const _r = d => (d * Math.PI) / 180;
+const _ffBias = (() => {
+  const qx  = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_X, _r(90),  new Cesium.Quaternion());
+  const qz  = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, _r(180), new Cesium.Quaternion());
+  return Cesium.Quaternion.multiply(qx, qz, new Cesium.Quaternion());
+})();
+
 // Module-level scratch objects — reused every frame, never allocated in hot path
 const _scratchM3  = new Cesium.Matrix3();
 const _scratchCol = new Cesium.Cartesian3();
@@ -71,7 +79,7 @@ export class SatEntity {
     } else {
       const q = this._computeOrientation(r, date); // compute once, reuse for arrows
       this._posProp.setValue(origin);
-      this._orientProp.setValue(q);
+      this._orientProp.setValue(this._modelOrientation(q));
       this._updateArrows(origin, r, date, q);
     }
   }
@@ -80,7 +88,7 @@ export class SatEntity {
     const col = this.cesiumColor;
 
     this._posProp    = new Cesium.ConstantPositionProperty(origin);
-    this._orientProp = new Cesium.ConstantProperty(this._computeOrientation(r, date));
+    this._orientProp = new Cesium.ConstantProperty(this._modelOrientation(this._computeOrientation(r, date)));
 
     const scaleCb = new Cesium.CallbackProperty(
       () => store.satScale * MODEL_BASE_SCALE, false
@@ -202,6 +210,12 @@ export class SatEntity {
     Cesium.Matrix3.setColumn(m, 2, toEcef(zECI), m);
 
     return Cesium.Quaternion.fromRotationMatrix(m);
+  }
+
+  // Body-frame bias applied only to the rendered model, not to the reference arrows.
+  _modelOrientation(q) {
+    if (this.sat.model !== 'FF') return q;
+    return Cesium.Quaternion.multiply(q, _ffBias, new Cesium.Quaternion());
   }
 
   _updateArrows(origin, r, date, q) {

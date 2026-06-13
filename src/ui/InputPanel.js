@@ -1,5 +1,5 @@
 import { store, PALETTE, GS_PALETTE } from '../store.js';
-import { fetchTLE, propagate } from '../tle.js';
+import { fetchTLE, parseTLE, propagate } from '../tle.js';
 import { persistSatellite, persistStation, deleteServerSatellite, deleteServerStation } from '../apiPoller.js';
 
 function nextColor() {
@@ -38,25 +38,56 @@ function renderSatList() {
 
 const modelToggle = document.getElementById('model-toggle');
 let selectedModel = '12U';
+let pendingTLE = null;   // holds parsed TLE after paste, waiting for Add click
 modelToggle.addEventListener('click', () => {
   selectedModel = selectedModel === '12U' ? 'FF' : '12U';
   modelToggle.textContent = selectedModel;
   modelToggle.classList.toggle('ff-active', selectedModel === 'FF');
 });
 
+// Shared finalisation after TLE is resolved (either fetched or parsed directly)
+async function finaliseSatellite({ satrec, noradId, tleName, line1, line2, statusEl }) {
+  const nameInput = document.getElementById('name-input');
+
+  const testResult = propagate(satrec, store.currentTime);
+  if (!testResult) {
+    throw new Error(`Cannot propagate NORAD ${noradId} — object may have decayed or re-entered.`);
+  }
+
+  statusEl.remove();
+
+  const id    = `sat-${Date.now()}`;
+  const color = nextColor();
+  const name  = nameInput.value.trim() || tleName || `SAT-${noradId}`;
+
+  store.addSatellite({ id, noradId, name, color, satrec, model: selectedModel });
+  persistSatellite(name, line1, line2, selectedModel);
+  document.getElementById('norad-input').value = '';
+  nameInput.value = '';
+}
+
 async function addSatellite() {
   const noradInput = document.getElementById('norad-input');
-  const nameInput = document.getElementById('name-input');
-  const addBtn = document.getElementById('add-sat-btn');
+  const addBtn     = document.getElementById('add-sat-btn');
 
-  const noradId = noradInput.value.trim();
-  if (!noradId) return;
-  if (!/^\d{1,9}$/.test(noradId)) {
+  // TLE was pasted — use the cached parse result instead of fetching
+  if (pendingTLE) {
+    const tle = pendingTLE;
+    pendingTLE = null;
+    noradInput.style.borderColor = '';
+    await addSatelliteFromTLE(tle);
+    return;
+  }
+
+  const raw = noradInput.value.trim();
+  if (!raw) return;
+
+  if (!/^\d{1,9}$/.test(raw)) {
     noradInput.style.borderColor = '#ff3860';
     setTimeout(() => (noradInput.style.borderColor = ''), 1500);
     return;
   }
-  if (store.satellites.some(s => s.noradId === noradId)) {
+  if (store.satellites.some(s => s.noradId === raw)) {
     noradInput.style.borderColor = '#ffbe0b';
     setTimeout(() => (noradInput.style.borderColor = ''), 1500);
     return;
@@ -67,27 +98,40 @@ async function addSatellite() {
 
   const statusEl = document.createElement('div');
   statusEl.className = 'sat-loading';
-  statusEl.textContent = `Fetching ${noradId}…`;
+  statusEl.textContent = `Fetching ${raw}…`;
   document.getElementById('sat-list').prepend(statusEl);
 
   try {
-    const { satrec, name: tleName, line1, line2 } = await fetchTLE(noradId);
+    const { satrec, name: tleName, line1, line2 } = await fetchTLE(raw);
+    await finaliseSatellite({ satrec, noradId: raw, tleName, line1, line2, statusEl });
+  } catch (err) {
+    statusEl.className = 'sat-error';
+    statusEl.textContent = `Error: ${err.message}`;
+    setTimeout(() => statusEl.remove(), 4000);
+  } finally {
+    addBtn.disabled = false;
+    addBtn.textContent = 'Add';
+  }
+}
 
-    const testResult = propagate(satrec, store.currentTime);
-    if (!testResult) {
-      throw new Error(`Cannot propagate NORAD ${noradId} — object may have decayed or re-entered. Try 25544 (ISS).`);
+async function addSatelliteFromTLE(parsed) {
+  const addBtn     = document.getElementById('add-sat-btn');
+  const noradInput = document.getElementById('norad-input');
+  addBtn.disabled  = true;
+  addBtn.textContent = '…';
+  noradInput.value = '';
+
+  const statusEl = document.createElement('div');
+  statusEl.className = 'sat-loading';
+  statusEl.textContent = 'Adding satellite…';
+  document.getElementById('sat-list').prepend(statusEl);
+
+  try {
+    const { satrec, name: tleName, noradId, line1, line2 } = parsed;
+    if (store.satellites.some(s => s.noradId === noradId)) {
+      throw new Error(`NORAD ${noradId} is already in the list.`);
     }
-
-    statusEl.remove();
-
-    const id    = `sat-${Date.now()}`;
-    const color = nextColor();
-    const name  = nameInput.value.trim() || tleName || `SAT-${noradId}`;
-
-    store.addSatellite({ id, noradId, name, color, satrec, model: selectedModel });
-    persistSatellite(name, line1, line2, selectedModel);
-    noradInput.value = '';
-    nameInput.value  = '';
+    await finaliseSatellite({ satrec, noradId, tleName, line1, line2, statusEl });
   } catch (err) {
     statusEl.className = 'sat-error';
     statusEl.textContent = `Error: ${err.message}`;
@@ -174,8 +218,32 @@ async function addGroundStation() {
 
 export function initInputPanel() {
   document.getElementById('add-sat-btn').addEventListener('click', addSatellite);
-  document.getElementById('norad-input').addEventListener('keydown', e => {
+  const noradInput = document.getElementById('norad-input');
+  noradInput.addEventListener('keydown', e => {
     if (e.key === 'Enter') addSatellite();
+  });
+  // Intercept paste: if it looks like a TLE, parse it and wait for Add click
+  noradInput.addEventListener('paste', e => {
+    const text = e.clipboardData.getData('text');
+    if (/^[12] /m.test(text) && text.includes('\n')) {
+      e.preventDefault();
+      try {
+        pendingTLE = parseTLE(text);
+        noradInput.value = pendingTLE.noradId;
+        noradInput.style.borderColor = '#c77dff';
+        const nameInput = document.getElementById('name-input');
+        if (!nameInput.value.trim() && pendingTLE.name) nameInput.value = pendingTLE.name;
+      } catch (err) {
+        pendingTLE = null;
+        noradInput.style.borderColor = '#ff3860';
+        setTimeout(() => (noradInput.style.borderColor = ''), 1500);
+      }
+    }
+  });
+
+  // Typing in the NORAD field clears any pending TLE
+  noradInput.addEventListener('input', () => {
+    if (pendingTLE) { pendingTLE = null; noradInput.style.borderColor = ''; }
   });
 
   document.getElementById('add-gs-btn').addEventListener('click', addGroundStation);

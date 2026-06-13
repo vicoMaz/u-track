@@ -24,7 +24,7 @@
           </div>
           <div class="panel-body">
             <div class="add-sat-form">
-              <input id="norad-input" type="text" placeholder="NORAD ID (e.g. 25544)" maxlength="10" />
+              <input id="norad-input" type="text" placeholder="NORAD ID or paste TLE" />
               <input id="name-input" type="text" placeholder="Name (optional)" maxlength="30" />
               <div class="btn-row">
                 <button id="model-toggle" class="model-toggle" title="Select 3D model">12U</button>
@@ -63,12 +63,87 @@
         <div class="tab-bar-sep"></div>
         <button class="tab-btn active" data-tab="globe">Globe (3D)</button>
         <button class="tab-btn" data-tab="map">Planisphere (2D)</button>
+        <button class="tab-btn" data-tab="tools">Tools</button>
         <a href="/api-docs.html" target="_blank" class="tab-btn api-docs-btn">API Docs ↗</a>
       </div>
 
       <!-- Views -->
       <div id="globe-view" class="view active"></div>
       <div id="map-view" class="view"></div>
+
+      <!-- Tools view -->
+      <div id="tools-view" class="view">
+
+        <!-- Tools subtab bar -->
+        <div class="tools-subtab-bar">
+          <button class="tools-subtab active" data-subtab="staplan">Staplan Explorer</button>
+        </div>
+
+        <!-- Staplan Explorer -->
+        <div class="tools-subtab-content active" id="tools-subtab-staplan">
+
+          <!-- Satellite staplan uploaders -->
+          <div class="csc-card">
+            <div class="csc-card-title">Staplans per Satellite</div>
+            <div id="csc-uploaders" class="csc-uploaders-row"></div>
+          </div>
+
+          <!-- All passes -->
+          <div class="csc-card csc-flex1">
+            <div class="csc-card-title-row">
+              <div class="csc-card-title">All Passes — select with Yes / No</div>
+              <button id="csc-download-btn" class="csc-download-btn">↓ Download Staplan</button>
+            </div>
+            <div class="csc-table-scroll">
+              <table class="csc-table">
+                <thead>
+                  <tr>
+                    <th>Sat.</th>
+                    <th>Station</th>
+                    <th>AOS (0°)</th>
+                    <th>AOS (5°)</th>
+                    <th>LOS (5°)</th>
+                    <th>LOS (0°)</th>
+                    <th>5-5 Duration</th>
+                    <th class="eclipse-th">Eclipse</th>
+                    <th class="eclipse-th-actions">
+                      <button id="csc-deselect-btn" class="csc-deselect-btn">Deselect All</button>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody id="csc-pass-table"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Desired timetable -->
+          <div class="csc-card csc-timetable-card">
+            <div class="csc-card-title-row">
+              <div class="csc-card-title">Desired Timetable</div>
+              <button id="csc-copy-btn" class="csc-copy-btn">Copy</button>
+            </div>
+            <div class="csc-table-scroll">
+              <table class="csc-table">
+                <thead>
+                  <tr>
+                    <th>Pass #</th>
+                    <th>Sat.</th>
+                    <th>Station</th>
+                    <th>AOS (0°)</th>
+                    <th>AOS (5°)</th>
+                    <th>LOS (5°)</th>
+                    <th>LOS (0°)</th>
+                    <th>5-5 Duration</th>
+                    <th class="eclipse-th">Eclipse</th>
+                  </tr>
+                </thead>
+                <tbody id="csc-timetable"></tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+      </div>
 
       <!-- Satellite info card -->
       <div id="sat-info" class="hidden">

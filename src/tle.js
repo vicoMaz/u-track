@@ -39,6 +39,27 @@ export async function fetchTLE(noradId) {
 }
 
 /**
+ * Parse a raw TLE string (2-line or 3-line with name) without fetching.
+ * Returns { satrec, name, noradId, line1, line2 } or throws.
+ */
+export function parseTLE(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const line1 = lines.find(l => l.startsWith('1 ') && l.length >= 60);
+  const line2 = lines.find(l => l.startsWith('2 ') && l.length >= 60);
+  if (!line1 || !line2) throw new Error('Could not find valid TLE lines (need lines starting with "1 " and "2 ")');
+
+  const nameIdx = lines.indexOf(line1) - 1;
+  const name = (nameIdx >= 0 && !lines[nameIdx].startsWith('1 ') && !lines[nameIdx].startsWith('2 '))
+    ? lines[nameIdx]
+    : null;
+
+  const noradId = line2.substring(2, 7).trim();
+  const satrec  = satellite.twoline2satrec(line1, line2);
+  if (satrec.error !== 0) throw new Error(`SGP4 initialisation error ${satrec.error}`);
+  return { satrec, name, noradId, line1, line2 };
+}
+
+/**
  * Propagate satellite to date.
  * Returns { lat, lon, alt, eciPos, eciVel } or null on error.
  */
