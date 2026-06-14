@@ -81,6 +81,11 @@ function syncEntities() {
     }
   }
 
+  // Apply user visibility
+  for (const sat of store.satellites) {
+    entities.get(sat.id)?.setVisible(sat.visible !== false);
+  }
+
   // Auto-track: if the tracked sat was deleted, pick the first remaining one.
   // But respect an explicit user untrack (trackedSatId === null && _manualUntrack).
   const ids = store.satellites.map(s => s.id);
@@ -110,9 +115,11 @@ function syncGSEntities() {
   for (const [id, ent] of gsEntities) {
     if (!currentIds.has(id)) { ent.destroy(); gsEntities.delete(id); }
   }
-  // Sync footprint visibility (Entity.show is a plain boolean, not a Property)
   for (const gs of store.groundStations) {
-    gsEntities.get(gs.id)?.updateFootprint(gs.showFootprint);
+    const ent = gsEntities.get(gs.id);
+    if (!ent) continue;
+    ent.setVisible(gs.visible !== false);
+    if (gs.visible !== false) ent.updateFootprint(gs.showFootprint);
   }
 }
 

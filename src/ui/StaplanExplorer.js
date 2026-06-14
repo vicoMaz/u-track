@@ -7,15 +7,19 @@ import { sunDirectionECI, isInEclipse } from '../sunVector.js';
 // pass: { id, satName, station, aos0, aos5|undefined, los5|undefined, los0, selected }
 let staplans = {};
 
+const SPARKLINE_FORMULA = `=SPARKLINE({IF(H14>=0;H14;ABS(H14));1-ABS(H14)};{"charttype"\\"bar";"max"\\1;"color1"\\IF(H14>=0;"#0000FF";"#FFFF00");"color2"\\IF(H14>=0;"#FFFF00";"#0000FF")})`;
+
 const ECLIPSE_TOOLTIP_HTML = `
   <div class="eclipse-tooltip-title">Eclipse field (−1 to +1)</div>
   <div class="eclipse-tooltip-row"><span class="etip-key"> 1</span> Full eclipse — entire pass in shadow</div>
   <div class="eclipse-tooltip-row"><span class="etip-key"> 0</span> Full sun — no eclipse</div>
   <div class="eclipse-tooltip-row"><span class="etip-key">+X</span> Starts in eclipse, exits to sun after X of the pass</div>
   <div class="eclipse-tooltip-row"><span class="etip-key">−X</span> Starts in sun, enters eclipse in the last X of the pass</div>
+  <div class="eclipse-tooltip-row etip-note">Computed over the full AOS 0° → LOS 0° duration</div>
   <div class="eclipse-tooltip-divider"></div>
   <div class="eclipse-tooltip-label">Excel bar chart formula (replace H14 with your cell):</div>
-  <div class="eclipse-tooltip-formula">=SPARKLINE({IF(H14&gt;=0;H14;ABS(H14));1-ABS(H14)};{"charttype"\\\"bar";"max"\\1;"color1"\\IF(H14&gt;=0;"#0000FF";"#FFFF00");"color2"\\IF(H14&gt;=0;"#FFFF00";"#0000FF")})</div>
+  <div class="eclipse-tooltip-formula">${SPARKLINE_FORMULA.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>
+  <div class="eclipse-tooltip-copy-hint">Click the column header to copy formula</div>
 `;
 
 export function initStaplanExplorer() {
@@ -28,7 +32,7 @@ export function initStaplanExplorer() {
   document.querySelectorAll('.eclipse-th').forEach(th => {
     th.addEventListener('mouseenter', () => {
       const r = th.getBoundingClientRect();
-      const TIP_W = 340, TIP_H = 210;
+      const TIP_W = 340, TIP_H = 230;
       const left = Math.min(r.right - TIP_W, window.innerWidth - TIP_W - 8);
       const fitsBelow = r.bottom + TIP_H + 6 < window.innerHeight;
       floatTip.style.left = `${Math.max(8, left)}px`;
@@ -38,6 +42,12 @@ export function initStaplanExplorer() {
       floatTip.classList.add('visible');
     });
     th.addEventListener('mouseleave', () => floatTip.classList.remove('visible'));
+    th.addEventListener('click', () => {
+      navigator.clipboard.writeText(SPARKLINE_FORMULA).then(() => {
+        th.classList.add('eclipse-th-copied');
+        setTimeout(() => th.classList.remove('eclipse-th-copied'), 1500);
+      });
+    });
   });
 
   document.querySelectorAll('.tools-subtab').forEach(btn => {
@@ -323,19 +333,16 @@ function renderPassTable() {
         </div>
       </td>
       <td>
-        <div class="eclipse-actions-cell">
-          <button class="csc-yes${p.selected ? ' active' : ''}" data-id="${p.id}">Yes</button>
-          <button class="csc-no${!p.selected ? ' active' : ''}"  data-id="${p.id}">No</button>
-        </div>
+        <label class="csc-toggle" title="${p.selected ? 'Selected — click to deselect' : 'Not selected — click to select'}">
+          <input type="checkbox" class="csc-toggle-input" data-id="${p.id}"${p.selected ? ' checked' : ''}>
+          <span class="csc-toggle-track"><span class="csc-toggle-thumb"></span></span>
+        </label>
       </td>
     </tr>
   `).join('');
 
-  tbody.querySelectorAll('.csc-yes').forEach(btn => {
-    btn.addEventListener('click', () => setSelected(btn.dataset.id, true));
-  });
-  tbody.querySelectorAll('.csc-no').forEach(btn => {
-    btn.addEventListener('click', () => setSelected(btn.dataset.id, false));
+  tbody.querySelectorAll('.csc-toggle-input').forEach(cb => {
+    cb.addEventListener('change', () => setSelected(cb.dataset.id, cb.checked));
   });
 }
 
@@ -383,17 +390,22 @@ function copyTimetable() {
   const selected = allPasses().filter(p => p.selected);
   if (selected.length === 0) return;
 
-  const headers = ['Sat.', 'Station', 'AOS (0°)', 'AOS (5°)', 'LOS (5°)', 'LOS (0°)', '5-5 Duration', 'Eclipse'];
-  const rows = selected.map(p => [
-    p.satName,
-    abbrev(p.station),
-    fmtDate(p.aos0),
-    fmtDate(p.aos5),
-    fmtDate(p.los5),
-    fmtDate(p.los0),
-    fmtDur(p.aos5, p.los5),
-    p.eclipse ?? '',
-  ]);
+  const headers = ['Pass #', 'Sat.', 'Station', 'AOS (0°)', 'AOS (5°)', 'LOS (5°)', 'LOS (0°)', '5-5 Duration', 'Eclipse'];
+  const passCountBySat = {};
+  const rows = selected.map(p => {
+    passCountBySat[p.satName] = (passCountBySat[p.satName] || 0) + 1;
+    return [
+      `#${passCountBySat[p.satName]}`,
+      p.satName,
+      abbrev(p.station),
+      fmtDate(p.aos0),
+      fmtDate(p.aos5),
+      fmtDate(p.los5),
+      fmtDate(p.los0),
+      fmtDur(p.aos5, p.los5),
+      p.eclipse ?? '',
+    ];
+  });
 
   const tsv = [headers, ...rows].map(r => r.join('\t')).join('\n');
   navigator.clipboard.writeText(tsv).then(() => {

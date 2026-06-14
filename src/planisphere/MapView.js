@@ -27,11 +27,9 @@ export function initMap() {
   map = L.map('map-view', {
     center: [0, 0],
     zoom: 2,
-    zoomSnap: 0,          // fractional zoom so home view fills width exactly
+    zoomSnap: 0,
     worldCopyJump: false,
-    zoomControl: false,   // add manually on the right side
-    maxBounds: [[-90, -180], [90, 180]],
-    maxBoundsViscosity: 1.0,
+    zoomControl: false,
   });
 
   // Zoom control on the right so it doesn't overlap the satellite panel
@@ -39,8 +37,7 @@ export function initMap() {
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     attribution: '© OpenStreetMap contributors',
-    noWrap: true,
-    bounds: [[-90, -180], [90, 180]], // suppress out-of-bounds tile requests
+    noWrap: false,
   }).addTo(map);
 
   // Night shadow sits between tile layer (z 200) and overlay layer (z 400)
@@ -57,12 +54,13 @@ export function initMap() {
   // Calculate zoom so the full 360° longitude fills the visible width
   // (container minus the 240 px sidebar). This always gives a seamless
   // edge-to-edge planisphere regardless of screen aspect ratio.
-  const SIDEBAR_W = 240;
   _fitWorld = () => {
     map.invalidateSize({ animate: false });
-    const availW = Math.max(200, map.getSize().x - SIDEBAR_W);
-    const z = Math.log2(availW / 256);
-    map.setView([20, 0], z, { animate: false });
+    // Fit zoom so the full latitude range fills the viewport height.
+    // Tiles repeat east-west so the full width is always covered.
+    const z = Math.log2(map.getSize().y / 256);
+    map.setMinZoom(z);
+    map.setView([0, 0], z, { animate: false });
     _drawNight(store.currentTime, true);
   };
 
@@ -236,7 +234,9 @@ function syncGSMarkers() {
 function _updateGSFootprints() {
   for (const gs of store.groundStations) {
     const m = gsMarkers.get(gs.id);
-    if (m) m.updateFootprint(store.orbitAlt, gs.showFootprint);
+    if (!m) continue;
+    m.setVisible(gs.visible !== false);
+    if (gs.visible !== false) m.updateFootprint(store.orbitAlt, gs.showFootprint);
   }
 }
 
@@ -246,6 +246,7 @@ function syncMarkers() {
   const currentIds = new Set(store.satellites.map(s => s.id));
   for (const sat of store.satellites) {
     if (!markers.has(sat.id)) markers.set(sat.id, new SatMarker(map, sat));
+    markers.get(sat.id)?.setVisible(sat.visible !== false);
   }
   for (const [id, m] of markers) {
     if (!currentIds.has(id)) { m.destroy(); markers.delete(id); }

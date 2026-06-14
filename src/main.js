@@ -5,22 +5,41 @@ import { initMap, invalidateMapSize } from './planisphere/MapView.js';
 import { loadInitialState, startApiPoller } from './apiPoller.js';
 import { initSatInfo } from './ui/SatInfo.js';
 import { initStaplanExplorer } from './ui/StaplanExplorer.js';
+import { initOrbitInspector }   from './ui/OrbitInspector.js';
+import { initChadOps }          from './ui/ChadOps.js';
+import { initWeeklySchedule }   from './ui/WeeklySchedule.js';
+import { initNavClocks }        from './ui/NavClocks.js';
 
-// Tab switching — only wire up elements that declare a data-tab target
-const tabBtns = document.querySelectorAll('[data-tab]');
-const views = document.querySelectorAll('.view');
+// Tab switching
+const tabBtns   = document.querySelectorAll('[data-tab]');
+const views      = document.querySelectorAll('.view');
+const sidePanel  = document.getElementById('side-panel');
 
-const sidePanel = document.getElementById('side-panel');
+// Tracking starts active
+document.body.classList.add('tracking-active');
 
 tabBtns.forEach(btn => {
   btn.addEventListener('click', () => {
-    const target = btn.dataset.tab;
-    const isTools = target === 'tools';
+    const target      = btn.dataset.tab;
+    const hideSide    = target === 'tools' || target === 'chadops' || target === 'settings';
+    const isTracking  = target === 'tracking';
     tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === target));
-    views.forEach(v => v.classList.toggle('active', v.id === `${target}-view`));
-    sidePanel.style.display = isTools ? 'none' : '';
-    document.body.classList.toggle('tools-active', isTools);
-    if (target === 'map') invalidateMapSize();
+    views.forEach(v   => v.classList.toggle('active', v.id === `${target}-view`));
+    sidePanel.style.display = hideSide ? 'none' : '';
+    document.body.classList.toggle('tools-active',    hideSide);
+    document.body.classList.toggle('tracking-active', isTracking);
+  });
+});
+
+// Tracking internal subtabs (3D / 2D)
+const trackSubtabBtns = document.querySelectorAll('[data-tracksubtab]');
+const trackContents    = document.querySelectorAll('.track-subtab-content');
+trackSubtabBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    const sub = btn.dataset.tracksubtab;
+    trackSubtabBtns.forEach(b => b.classList.toggle('active', b.dataset.tracksubtab === sub));
+    trackContents.forEach(c  => c.classList.toggle('active', c.id === `${sub}-view`));
+    if (sub === 'map') invalidateMapSize();
   });
 });
 
@@ -31,4 +50,20 @@ initGlobe();
 initMap();
 initSatInfo();
 initStaplanExplorer();
+initOrbitInspector();
+initChadOps();
+initWeeklySchedule();
+initNavClocks();
+
+// chadOps internal subtab switching
+const coSubtabBtns     = document.querySelectorAll('[data-cosubtab]');
+const coSubtabContents = document.querySelectorAll('.co-subtab-content');
+coSubtabBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    const target = btn.dataset.cosubtab;
+    coSubtabBtns.forEach(b => b.classList.toggle('active', b.dataset.cosubtab === target));
+    coSubtabContents.forEach(c => c.classList.toggle('active', c.id === `co-subtab-${target}`));
+  });
+});
+
 loadInitialState().then(() => startApiPoller());

@@ -24,9 +24,14 @@ export const store = {
   },
 
   addSatellite(sat) {
-    this.satellites.push(sat);
-    this._satById.set(sat.id, sat);
+    this.satellites.push({ visible: true, ...sat });
+    this._satById.set(sat.id, this.satellites[this.satellites.length - 1]);
     this.notify('satellites');
+  },
+
+  toggleSatVisibility(id) {
+    const sat = this._satById.get(id);
+    if (sat) { sat.visible = !sat.visible; this.notify('satellites'); }
   },
 
   removeSatellite(id) {
@@ -48,8 +53,13 @@ export const store = {
   },
 
   addGroundStation(gs) {
-    this.groundStations.push({ showFootprint: false, ...gs });
+    this.groundStations.push({ visible: true, showFootprint: false, ...gs });
     this.notify('groundStations');
+  },
+
+  toggleGSVisibility(id) {
+    const gs = this.groundStations.find(g => g.id === id);
+    if (gs) { gs.visible = !gs.visible; this.notify('groundStations'); }
   },
 
   removeGroundStation(id) {

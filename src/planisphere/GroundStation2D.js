@@ -155,6 +155,16 @@ export class GroundStation2D {
       .addTo(this._map);
   }
 
+  setVisible(v) {
+    if (v) {
+      if (!this._map.hasLayer(this._marker)) this._marker.addTo(this._map);
+    } else {
+      this._marker.remove();
+      for (const p of this._footprints) p.remove();
+      this._footprints = [];
+    }
+  }
+
   updateFootprint(orbitAlt, show) {
     for (const p of this._footprints) p.remove();
     this._footprints = [];

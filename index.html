@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>u-track</title>
+    <title>chadOps</title>
     <script>
       window.CESIUM_BASE_URL = 'https://unpkg.com/cesium@1.114.0/Build/Cesium/';
     </script>
@@ -16,26 +16,18 @@
       <!-- Side Panel Container (stacks panels vertically) -->
       <div id="side-panel">
 
-        <!-- Satellites Panel -->
+        <!-- Satellites Panel (visibility only) -->
         <div id="sat-panel" class="panel">
           <div class="panel-header">
             <span>Satellites</span>
             <button id="sat-toggle" class="panel-toggle" title="Collapse">◀</button>
           </div>
           <div class="panel-body">
-            <div class="add-sat-form">
-              <input id="norad-input" type="text" placeholder="NORAD ID or paste TLE" />
-              <input id="name-input" type="text" placeholder="Name (optional)" maxlength="30" />
-              <div class="btn-row">
-                <button id="model-toggle" class="model-toggle" title="Select 3D model">12U</button>
-                <button id="add-sat-btn">Add</button>
-              </div>
-            </div>
             <div id="sat-list"></div>
           </div>
         </div>
 
-        <!-- Ground Stations Panel -->
+        <!-- Ground Stations Panel (visibility only) -->
         <div id="gs-panel" class="panel">
           <div class="panel-header">
             <span>Ground Stations</span>
@@ -43,14 +35,6 @@
             <button id="gs-toggle" class="panel-toggle" title="Collapse">◀</button>
           </div>
           <div class="panel-body">
-            <div class="add-gs-form">
-              <input id="gs-name-input" type="text" placeholder="Name (optional)" maxlength="30" />
-              <div class="gs-coords">
-                <input id="gs-lat-input" type="number" placeholder="Lat" min="-90" max="90" step="any" />
-                <input id="gs-lon-input" type="number" placeholder="Lon" min="-180" max="180" step="any" />
-              </div>
-              <button id="add-gs-btn">Add</button>
-            </div>
             <div id="gs-list"></div>
           </div>
         </div>
@@ -59,17 +43,45 @@
 
       <!-- Tab bar -->
       <div id="tab-bar">
-        <img id="app-logo" src="/logo-u-space.png" alt="U/SPACE u-track" />
+        <img id="app-logo" src="/logo-u-space.png" alt="chadOps" />
         <div class="tab-bar-sep"></div>
-        <button class="tab-btn active" data-tab="globe">Globe (3D)</button>
-        <button class="tab-btn" data-tab="map">Planisphere (2D)</button>
+        <button class="tab-btn" data-tab="chadops">Ops</button>
+        <div class="tab-bar-sep"></div>
+        <button class="tab-btn active" data-tab="tracking">Tracking</button>
         <button class="tab-btn" data-tab="tools">Tools</button>
+        <button class="tab-btn" data-tab="settings">Settings</button>
+        <div id="nav-clocks">
+          <div class="nc-box nc-box-utc">
+            <span class="nc-label nc-label-utc">UTC</span>
+            <span class="nc-time nc-time-utc" id="nc-utc">--:--:--</span>
+            <span class="nc-date" id="nc-date-utc">----·--·--</span>
+          </div>
+          <div class="nc-box">
+            <span class="nc-label">Toulouse <span id="nc-tls-offset" class="nc-offset"></span></span>
+            <span class="nc-time" id="nc-tls">--:--:--</span>
+            <span class="nc-date" id="nc-date-tls">----·--·--</span>
+          </div>
+          <div class="nc-box nc-compound">
+            <span class="nc-label">TAI</span>
+            <span class="nc-stime" id="nc-tai-time">--:--:--</span>
+            <span class="nc-count" id="nc-tai-sec">—</span>
+            <span class="nc-label">GNSS</span>
+            <span class="nc-stime" id="nc-gnss-time">--:--:--</span>
+            <span class="nc-count" id="nc-gnss-info">—</span>
+          </div>
+        </div>
         <a href="/api-docs.html" target="_blank" class="tab-btn api-docs-btn">API Docs ↗</a>
       </div>
 
-      <!-- Views -->
-      <div id="globe-view" class="view active"></div>
-      <div id="map-view" class="view"></div>
+      <!-- Tracking view -->
+      <div id="tracking-view" class="view active">
+        <div class="track-subtab-bar">
+          <button class="track-subtab active" data-tracksubtab="globe">3D Globe</button>
+          <button class="track-subtab" data-tracksubtab="map">2D Planisphere</button>
+        </div>
+        <div id="globe-view" class="track-subtab-content active"></div>
+        <div id="map-view" class="track-subtab-content"></div>
+      </div>
 
       <!-- Tools view -->
       <div id="tools-view" class="view">
@@ -77,6 +89,7 @@
         <!-- Tools subtab bar -->
         <div class="tools-subtab-bar">
           <button class="tools-subtab active" data-subtab="staplan">Staplan Explorer</button>
+          <button class="tools-subtab" data-subtab="orbit">Orbit Inspector</button>
         </div>
 
         <!-- Staplan Explorer -->
@@ -105,7 +118,7 @@
                     <th>LOS (5°)</th>
                     <th>LOS (0°)</th>
                     <th>5-5 Duration</th>
-                    <th class="eclipse-th">Eclipse</th>
+                    <th class="eclipse-th">Eclipse <span class="eclipse-info-icon">ⓘ</span></th>
                     <th class="eclipse-th-actions">
                       <button id="csc-deselect-btn" class="csc-deselect-btn">Deselect All</button>
                     </th>
@@ -134,12 +147,104 @@
                     <th>LOS (5°)</th>
                     <th>LOS (0°)</th>
                     <th>5-5 Duration</th>
-                    <th class="eclipse-th">Eclipse</th>
+                    <th class="eclipse-th">Eclipse <span class="eclipse-info-icon">ⓘ</span></th>
                   </tr>
                 </thead>
                 <tbody id="csc-timetable"></tbody>
               </table>
             </div>
+          </div>
+
+        </div>
+
+        <!-- Orbit Inspector -->
+        <div class="tools-subtab-content" id="tools-subtab-orbit">
+          <div class="oi-topbar">
+            <label class="oi-sat-label">Satellite</label>
+            <select id="oi-sat-select" class="oi-sat-select"></select>
+          </div>
+          <div id="oi-content" class="oi-scroll"></div>
+        </div>
+
+      </div>
+
+      <!-- chadOps view -->
+      <div id="chadops-view" class="view">
+
+        <!-- chadOps subtab bar -->
+        <div class="co-subtab-bar">
+          <button class="co-subtab active" data-cosubtab="fleet">Fleet</button>
+          <button class="co-subtab" data-cosubtab="schedule">Weekly Schedule</button>
+        </div>
+
+        <!-- Fleet subtab -->
+        <div class="co-subtab-content active" id="co-subtab-fleet">
+          <div class="co-container">
+            <div class="co-header">
+              <span class="co-title">chadOps</span>
+              <span class="co-subtitle">Operational Status</span>
+            </div>
+            <div class="co-table-wrap">
+              <table class="co-table">
+                <thead>
+                  <tr>
+                    <th class="co-th">Satellite</th>
+                    <th class="co-th">Last Contact</th>
+                    <th class="co-th">Mode</th>
+                    <th class="co-th">Battery</th>
+                    <th class="co-th co-th-passes" id="co-passes-th" style="cursor:default">Passes <span class="co-passes-info">ⓘ</span>&nbsp;<span class="co-th-dim">7 past · 3 upcoming</span></th>
+                    <th class="co-th">Eclipse / Orbit</th>
+                    <th class="co-th">Missions</th>
+                    <th class="co-th">Ground Alerts</th>
+                    <th class="co-th">Board Alerts</th>
+                    <th class="co-th">Links</th>
+                  </tr>
+                </thead>
+                <tbody id="co-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Schedule subtab -->
+        <div class="co-subtab-content" id="co-subtab-schedule">
+          <div id="co-sched-content" class="co-sched-section"></div>
+        </div>
+
+      </div>
+
+      <!-- Settings view -->
+      <div id="settings-view" class="view">
+        <div class="st-container">
+
+          <!-- Satellites section -->
+          <div class="st-section">
+            <div class="st-section-title">Satellites</div>
+            <div class="st-card">
+              <div class="st-card-label">Add Satellite</div>
+              <input id="norad-input" type="text" placeholder="NORAD ID or paste TLE" />
+              <input id="name-input" type="text" placeholder="Name (optional)" maxlength="30" />
+              <div class="btn-row">
+                <button id="model-toggle" class="model-toggle" title="Select 3D model">12U</button>
+                <button id="add-sat-btn">Add</button>
+              </div>
+            </div>
+            <div id="st-sat-list" class="st-list"></div>
+          </div>
+
+          <!-- Ground Stations section -->
+          <div class="st-section">
+            <div class="st-section-title">Ground Stations</div>
+            <div class="st-card">
+              <div class="st-card-label">Add Ground Station</div>
+              <input id="gs-name-input" type="text" placeholder="Name (optional)" maxlength="30" />
+              <div class="gs-coords">
+                <input id="gs-lat-input" type="number" placeholder="Lat" min="-90" max="90" step="any" />
+                <input id="gs-lon-input" type="number" placeholder="Lon" min="-180" max="180" step="any" />
+              </div>
+              <button id="add-gs-btn">Add</button>
+            </div>
+            <div id="st-gs-list" class="st-list"></div>
           </div>
 
         </div>

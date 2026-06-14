@@ -317,6 +317,7 @@ export class SatEntity {
     if (this._sunLabel) this._sunLabel.show = visible;
   }
 
+  setVisible(v) { for (const e of this._entities) e.show = v; }
   ownsEntity(e) { return this._entities.includes(e); }
   getTrackEntity() { return this._bodyEntity; }
 

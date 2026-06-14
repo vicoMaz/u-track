@@ -66,6 +66,11 @@ export class GroundStation {
     this._entities.push(this._footprintEntity);
   }
 
+  setVisible(v) {
+    if (this._entities[0]) this._entities[0].show = v;
+    if (!v && this._footprintEntity) this._footprintEntity.show = false;
+  }
+
   updateFootprint(show) {
     if (this._footprintEntity) this._footprintEntity.show = show;
   }

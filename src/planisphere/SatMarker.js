@@ -24,7 +24,20 @@ export class SatMarker {
     this.trackLines = [];
   }
 
+  setVisible(v) {
+    this._hidden = !v;
+    if (!v) {
+      this.marker.remove();
+      for (const l of this.trackLines) l.remove();
+      this.trackLines     = [];
+      this._visible       = false;
+      this._lastTrackMs   = -Infinity;
+      this._lastTrackWall = -Infinity;
+    }
+  }
+
   update(date) {
+    if (this._hidden) return;
     const result = propagate(this.sat.satrec, date);
     if (!result) return;
 
