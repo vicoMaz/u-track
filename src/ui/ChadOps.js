@@ -49,10 +49,10 @@ function _generateDummy(sat) {
   const modeSafety    = rng() > 0.15 ? 'NOMINAL' : 'SAFE';
   const modeMission   = `MK${Math.floor(rng() * 5) + 1}`;
 
-  // Past passes: oldest first, spaced 2–5 h (7 passes, start ~50h back)
+  // Past passes: oldest first, spaced 2–5 h (17 passes, start ~80h back)
   const passes = [];
-  let t = now - 50 * 3600000;
-  for (let i = 0; i < 7; i++) {
+  let t = now - 80 * 3600000;
+  for (let i = 0; i < 17; i++) {
     t += Math.floor(rng() * 3 * 3600000 + 2 * 3600000);
     const success  = rng() > 0.25;
     const numProcs = Math.floor(rng() * 3) + 1;
@@ -197,17 +197,15 @@ function _linkBadge(label, url) {
 const _STATUS_CLS = { SCHEDULED: 'co-dot-scheduled', OPEN: 'co-dot-open', PENDING_MISSION: 'co-dot-pending' };
 
 function _passDots(passes) {
-  const pastHtml = passes.map((p, i) => {
-    if (p.future) return '';
+  const html = passes.map((p, i) => {
+    if (p.future) {
+      const cls = _STATUS_CLS[p.status] ?? 'co-dot-scheduled';
+      return `<span class="co-dot co-dot-future ${cls}" data-idx="${i}">○</span>`;
+    }
     const cls = p.success ? 'co-dot-success' : 'co-dot-fail';
     return `<span class="co-dot ${cls}" data-idx="${i}">●</span>`;
   }).join('');
-  const futureHtml = passes.map((p, i) => {
-    if (!p.future) return '';
-    const cls = _STATUS_CLS[p.status] ?? 'co-dot-scheduled';
-    return `<span class="co-dot co-dot-future ${cls}" data-idx="${i}">○</span>`;
-  }).join('');
-  return `<div class="co-dots">${pastHtml}<span class="co-dot-sep"></span>${futureHtml}</div>`;
+  return `<div class="co-dots-grid">${html}</div>`;
 }
 
 function _fmtDuration(ms) {
@@ -335,7 +333,6 @@ function _rowHTML(sat, d, now, eclipse) {
     <td class="co-batt-cell">${battCell}</td>
     <td class="co-passes-cell" data-sat-id="${sat.id}">${_passDots(d.passes)}</td>
     <td>${orbitCell}</td>
-    <td class="co-missions-cell">${missionCell}</td>
     <td class="co-alerts-cell">${_alertBadge(d.groundAlerts)}</td>
     <td class="co-alerts-cell">${_evtBadge(tm?.events)}</td>
     <td class="co-links-cell">${_linkBadge('SCC', satBaseUrl(sat.noradId) ? `http://${satBaseUrl(sat.noradId)}:15000/` : null)}${_linkBadge('Grafana', _grafanaUrl(satBaseUrl(sat.noradId)))}</td>
@@ -450,7 +447,7 @@ export function initChadOps() {
     const sunDir  = sunDirectionECI(nowDate);
 
     if (!store.satellites.length) {
-      tbody.innerHTML = `<tr><td colspan="10" class="co-empty">No satellites loaded — add one to begin.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="co-empty">No satellites loaded — add one to begin.</td></tr>`;
       return;
     }
 

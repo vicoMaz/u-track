@@ -1651,14 +1651,14 @@ body.tools-active #sat-info { display: none !important; }
 .co-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: 14px;
   white-space: nowrap;
 }
 
 .co-th {
-  padding: 6px 12px;
+  padding: 5px 10px;
   text-align: left;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 600;
   color: #555;
   text-transform: uppercase;
@@ -1683,7 +1683,7 @@ body.tools-active #sat-info { display: none !important; }
 .co-row:hover { background: #111122; }
 
 .co-row td {
-  padding: 9px 12px;
+  padding: 7px 10px;
   vertical-align: middle;
 }
 
@@ -1823,19 +1823,21 @@ body.tools-active #sat-info { display: none !important; }
 /* ── Pass dots ─────────────────────────────────────────────────── */
 .co-passes-cell { min-width: 160px; }
 
-.co-dots {
-  display: flex;
-  align-items: center;
-  gap: 5px;
+.co-dots-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 3px 4px;
+  width: fit-content;
 }
 
 .co-dot {
-  font-size: 14px;
+  font-size: 9px;
   cursor: pointer;
-  transition: transform 0.1s;
+  transition: transform 0.12s;
   line-height: 1;
+  text-align: center;
 }
-.co-dot:hover { transform: scale(1.5); }
+.co-dot:hover { transform: scale(1.8); }
 
 .co-dot-success   { color: #44dd88; }
 .co-dot-fail      { color: #ff4466; }
@@ -1844,13 +1846,8 @@ body.tools-active #sat-info { display: none !important; }
 .co-dot-open      { color: #44aadd; }
 .co-dot-pending   { color: #cc9933; }
 
-.co-dot-sep {
-  display: inline-block;
-  width: 1px;
-  height: 10px;
-  background: #1a1a28;
-  margin: 0 4px;
-}
+/* legend dots stay readable */
+.co-legend-row .co-dot { font-size: 13px; }
 
 /* ── Tooltip ───────────────────────────────────────────────────── */
 .co-tooltip {
