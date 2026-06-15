@@ -222,13 +222,10 @@ function _tooltipContent(pass) {
     const cls   = _STATUS_CLS[pass.status] ?? 'co-dot-scheduled';
     return hdr + `<div class="co-tt-future-status ${cls}">○ ${label}</div>`;
   }
-  const res = pass.success
-    ? '<div class="co-tt-result co-tt-ok">● Pass succeeded</div>'
-    : '<div class="co-tt-result co-tt-fail">✗ Pass failed</div>';
   const procs = pass.procedures.map(pr =>
     `<div class="co-tt-proc ${pr.success ? 'co-tt-ok' : 'co-tt-fail'}">${pr.success ? '●' : '✗'} ${pr.name}</div>`
   ).join('');
-  return hdr + res + (procs ? `<div class="co-tt-procs">${procs}</div>` : '');
+  return hdr + (procs ? `<div class="co-tt-procs">${procs}</div>` : '');
 }
 
 // ── Ping cell ────────────────────────────────────────────────────

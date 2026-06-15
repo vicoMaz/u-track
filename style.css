@@ -1826,12 +1826,12 @@ body.tools-active #sat-info { display: none !important; }
 .co-dots-grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 3px 4px;
+  gap: 1px 8px;
   width: fit-content;
 }
 
 .co-dot {
-  font-size: 9px;
+  font-size: 13px;
   cursor: pointer;
   transition: transform 0.12s;
   line-height: 1;
