@@ -628,17 +628,42 @@ body.tools-active #sat-info { display: none !important; }
 
 .st-container {
   display: flex;
-  gap: 24px;
-  padding: 24px;
-  max-width: 860px;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 24px;
+  max-width: 900px;
+}
+
+/* Full-width connection bar at the top */
+.st-connection-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 14px;
+  background: #0e0e18;
+  border: 1px solid #1e1e2e;
+  border-radius: 8px;
+}
+.st-connection-bar .st-section-title {
+  border: none;
+  padding: 0;
+  margin: 0;
+  white-space: nowrap;
+}
+
+/* Two-column row for Satellites + GS */
+.st-sections-row {
+  display: flex;
+  gap: 20px;
   align-items: flex-start;
 }
 
 .st-section {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .st-section-title {
@@ -673,16 +698,12 @@ body.tools-active #sat-info { display: none !important; }
 .st-ping-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
-.st-ping-row .st-card-label { margin-bottom: 0; }
-.st-ping-row input { width: 56px; }
-.st-unit { font-size: 10px; color: #445566; }
-.st-tip-icon {
-  font-size: 11px;
-  color: #334455;
-  cursor: default;
-}
+.st-ping-row .st-card-label { margin-bottom: 0; white-space: nowrap; }
+.st-ping-row input { width: 52px; padding: 3px 6px; }
+.st-unit { font-size: 10px; color: #445566; white-space: nowrap; }
+.st-tip-icon { font-size: 11px; color: #334455; cursor: default; }
 
 .st-card input {
   background: #1a1a28;
@@ -694,6 +715,19 @@ body.tools-active #sat-info { display: none !important; }
   font-family: inherit;
   outline: none;
   width: 100%;
+  box-sizing: border-box;
+}
+/* Connection bar has its own compact input — don't inherit card width */
+.st-connection-bar input {
+  background: #1a1a28;
+  border: 1px solid #2a2a3a;
+  border-radius: 4px;
+  color: #ccc;
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  width: 52px;
+  padding: 3px 6px;
 }
 .st-card input:focus { border-color: #5566aa; }
 .st-card input::placeholder { color: #445; }
@@ -744,37 +778,44 @@ body.tools-active #sat-info { display: none !important; }
   padding: 7px 10px;
 }
 
-.st-color-dot {
-  display: none; /* color shown via left border */
-}
+.st-color-dot { display: none; }
 
-.st-item-name {
+.st-item-info {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.st-item-name {
   font-size: 12px;
   color: #ccc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-
 .st-item-meta {
   font-size: 10px;
-  color: #556;
-  font-variant-numeric: tabular-nums;
+  color: #445;
+  white-space: nowrap;
 }
 
 .st-field-baseurl {
-  width: 130px;
+  width: 108px;
+  flex-shrink: 0;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 3px;
-  color: #667788;
+  color: #556677;
   font-size: 10px;
   font-family: 'Courier New', monospace;
-  padding: 2px 5px;
+  padding: 2px 4px;
   outline: none;
   transition: border-color 0.15s, color 0.15s;
 }
-.st-field-baseurl::placeholder { color: #2a3a4a; }
+.st-field-baseurl::placeholder { color: #253040; }
 .st-field-baseurl:hover { border-color: #2a3a4a; color: #99aabb; }
-.st-field-baseurl:focus { border-color: #3a5a7a; color: #ccc; background: #12121e; }
+.st-field-baseurl:focus { border-color: #3a5a7a; color: #ccc; background: #0d0d1a; }
 
 .st-item .remove-btn {
   background: none;

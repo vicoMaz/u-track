@@ -18,19 +18,20 @@ export function getPingElapsedSec(satId) {
 
 // ── IP helpers ────────────────────────────────────────────────────
 
-export function satBaseUrl(satId) {
-  return localStorage.getItem(`sat-baseurl-${satId}`) ?? '';
+// Keyed by noradId so the IP persists across page reloads (local sat IDs are time-based)
+export function satBaseUrl(noradId) {
+  return localStorage.getItem(`sat-baseurl-${noradId}`) ?? '';
 }
 
-export function setSatBaseUrl(satId, ip) {
-  if (ip) localStorage.setItem(`sat-baseurl-${satId}`, ip);
-  else     localStorage.removeItem(`sat-baseurl-${satId}`);
+export function setSatBaseUrl(noradId, ip) {
+  if (ip) localStorage.setItem(`sat-baseurl-${noradId}`, ip);
+  else     localStorage.removeItem(`sat-baseurl-${noradId}`);
 }
 
 // ── Ping logic ────────────────────────────────────────────────────
 
 async function _ping(sat) {
-  const ip = satBaseUrl(sat.id);
+  const ip = satBaseUrl(sat.noradId);
   if (!ip) {
     _lastPingMs[sat.id] = Date.now();
     store.setPingStatus(sat.id, 'unconfigured');

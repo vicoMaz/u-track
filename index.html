@@ -216,59 +216,62 @@
       <div id="settings-view" class="view">
         <div class="st-container">
 
-          <!-- Connection section -->
-          <div class="st-section">
-            <div class="st-section-title">Connection</div>
-            <div class="st-card">
-              <div class="st-ping-row">
-                <label class="st-card-label" for="ping-interval-input">Refresh interval</label>
-                <input id="ping-interval-input" type="number" min="5" max="300" step="5" value="20" />
-                <span class="st-unit">s</span>
-                <span class="st-tip-icon" title="Interval in seconds between server pings and all outgoing API requests (battery, mode, orbit…). Applies to all satellites.">ⓘ</span>
-              </div>
+          <!-- Connection (full-width, top) -->
+          <div class="st-connection-bar">
+            <span class="st-section-title">Connection</span>
+            <div class="st-ping-row">
+              <label class="st-card-label" for="ping-interval-input">Refresh interval</label>
+              <input id="ping-interval-input" type="number" min="5" max="300" step="5" value="20" />
+              <span class="st-unit">s</span>
+              <span class="st-tip-icon" title="Seconds between server pings and all outgoing API requests (battery, mode, orbit…). Applies to all satellites.">ⓘ</span>
             </div>
           </div>
 
-          <!-- Satellites section -->
-          <div class="st-section">
-            <div class="st-section-title">Satellites</div>
-            <div class="st-card">
-              <div class="st-card-label">Add Satellite</div>
-              <input id="norad-input" type="text" placeholder="NORAD ID or paste TLE" />
-              <input id="name-input" type="text" placeholder="Name (optional)" maxlength="30" />
-              <div class="btn-row">
-                <button id="model-toggle" class="model-toggle" title="Select 3D model">12U</button>
-                <button id="add-sat-btn">Add</button>
-              </div>
-            </div>
-            <div id="st-sat-list" class="st-list"></div>
-          </div>
+          <!-- Satellites + GS side by side -->
+          <div class="st-sections-row">
 
-          <!-- Ground Stations section -->
-          <div class="st-section">
-            <div class="st-section-title">Ground Stations</div>
-            <div class="st-card">
-              <div class="st-card-label">Add Ground Station</div>
-              <input id="gs-name-input" type="text" placeholder="Name (optional)" maxlength="30" />
-              <div class="gs-coords">
-                <input id="gs-lat-input" type="number" placeholder="Lat" min="-90" max="90" step="any" />
-                <input id="gs-lon-input" type="number" placeholder="Lon" min="-180" max="180" step="any" />
+            <!-- Satellites section -->
+            <div class="st-section">
+              <div class="st-section-title">Satellites</div>
+              <div class="st-card">
+                <div class="st-card-label">Add Satellite</div>
+                <input id="norad-input" type="text" placeholder="NORAD ID or paste TLE" />
+                <input id="name-input" type="text" placeholder="Name (optional)" maxlength="30" />
+                <div class="btn-row">
+                  <button id="model-toggle" class="model-toggle" title="Select 3D model">12U</button>
+                  <button id="add-sat-btn">Add</button>
+                </div>
               </div>
-              <button id="add-gs-btn">Add</button>
-              <div class="gs-import-wrap">
-                <button id="gs-import-btn" class="gs-import-btn">↑ Import JSON</button>
-                <input type="file" id="gs-import-file" accept=".json" style="display:none">
-                <div class="gs-import-tip">
-                  <div class="gs-import-tip-title">Expected JSON format</div>
-                  <pre class="gs-import-tip-code">[
+              <div id="st-sat-list" class="st-list"></div>
+            </div>
+
+            <!-- Ground Stations section -->
+            <div class="st-section">
+              <div class="st-section-title">Ground Stations</div>
+              <div class="st-card">
+                <div class="st-card-label">Add Ground Station</div>
+                <input id="gs-name-input" type="text" placeholder="Name (optional)" maxlength="30" />
+                <div class="gs-coords">
+                  <input id="gs-lat-input" type="number" placeholder="Lat" min="-90" max="90" step="any" />
+                  <input id="gs-lon-input" type="number" placeholder="Lon" min="-180" max="180" step="any" />
+                </div>
+                <button id="add-gs-btn">Add</button>
+                <div class="gs-import-wrap">
+                  <button id="gs-import-btn" class="gs-import-btn">↑ Import JSON</button>
+                  <input type="file" id="gs-import-file" accept=".json" style="display:none">
+                  <div class="gs-import-tip">
+                    <div class="gs-import-tip-title">Expected JSON format</div>
+                    <pre class="gs-import-tip-code">[
   { "name": "Toulouse", "lat": 43.60, "lon": 1.44 },
   { "name": "Kourou",   "lat":  5.17, "lon": -52.68 }
 ]</pre>
-                  <div class="gs-import-tip-note">name is optional · lat/lon in decimal degrees</div>
+                    <div class="gs-import-tip-note">name is optional · lat/lon in decimal degrees</div>
+                  </div>
                 </div>
               </div>
+              <div id="st-gs-list" class="st-list"></div>
             </div>
-            <div id="st-gs-list" class="st-list"></div>
+
           </div>
 
         </div>

@@ -125,14 +125,15 @@ function renderSettingsSatList() {
     item.className = 'st-item';
     item.style.setProperty('--sat-color', sat.color);
     item.innerHTML = `
-      <span class="st-color-dot" style="background:${sat.color}"></span>
-      <span class="st-item-name">${sat.name}</span>
-      <span class="st-item-meta">#${sat.noradId} · ${sat.model ?? '12U'}</span>
-      <input class="st-field-baseurl" value="${satBaseUrl(sat.id)}" placeholder="Server IP" title="API server IP — e.g. 172.17.206.1">
+      <div class="st-item-info">
+        <span class="st-item-name">${sat.name}</span>
+        <span class="st-item-meta">#${sat.noradId} · ${sat.model ?? '12U'}</span>
+      </div>
+      <input class="st-field-baseurl" value="${satBaseUrl(sat.noradId)}" placeholder="Server IP" title="API server IP — e.g. 172.17.206.1">
       <button class="remove-btn" data-id="${sat.id}" data-norad="${sat.noradId}" title="Remove">×</button>
     `;
     const ipIn = item.querySelector('.st-field-baseurl');
-    const saveIp = () => { setSatBaseUrl(sat.id, ipIn.value.trim()); pingSatellite(sat.id); };
+    const saveIp = () => { setSatBaseUrl(sat.noradId, ipIn.value.trim()); pingSatellite(sat.id); };
     ipIn.addEventListener('blur',    saveIp);
     ipIn.addEventListener('keydown', e => { if (e.key === 'Enter') ipIn.blur(); });
     list.appendChild(item);
