@@ -671,7 +671,7 @@ body.tools-active #sat-info { display: none !important; }
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #445566;
+  color: #6a8099;
   padding-bottom: 8px;
   border-bottom: 1px solid #1a1a2a;
 }
@@ -691,7 +691,7 @@ body.tools-active #sat-info { display: none !important; }
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: #445566;
+  color: #6a8099;
   margin-bottom: 2px;
 }
 
@@ -702,8 +702,8 @@ body.tools-active #sat-info { display: none !important; }
 }
 .st-ping-row .st-card-label { margin-bottom: 0; white-space: nowrap; }
 .st-ping-row input { width: 52px; padding: 3px 6px; }
-.st-unit { font-size: 10px; color: #445566; white-space: nowrap; }
-.st-tip-icon { font-size: 11px; color: #334455; cursor: default; }
+.st-unit { font-size: 10px; color: #6a8099; white-space: nowrap; }
+.st-tip-icon { font-size: 11px; color: #556677; cursor: default; }
 
 .st-card input {
   background: #1a1a28;
@@ -796,7 +796,7 @@ body.tools-active #sat-info { display: none !important; }
 }
 .st-item-meta {
   font-size: 10px;
-  color: #445;
+  color: #667788;
   white-space: nowrap;
 }
 
@@ -1586,23 +1586,42 @@ body.tools-active #sat-info { display: none !important; }
 .co-ping-dot::after {
   content: '';
   position: absolute;
-  inset: -1px;
+  inset: -4px;
   border-radius: 50%;
-  border: 1px solid currentColor;
-  opacity: 0;
-  animation: co-ping-ripple var(--ping-period, 20s) linear infinite;
+  background: conic-gradient(from -90deg, currentColor var(--ping-arc, 0deg), transparent 0deg);
+  opacity: 0.4;
+  mask-image: radial-gradient(circle, transparent 4px, black 4.5px);
+  -webkit-mask-image: radial-gradient(circle, transparent 4px, black 4.5px);
+  animation: co-ping-arc var(--ping-period, 20s) linear infinite;
   animation-delay: var(--ping-delay, 0s);
   pointer-events: none;
 }
-@keyframes co-ping-ripple {
-  0%   { transform: scale(1);   opacity: 0.55; }
-  70%  { transform: scale(2.8); opacity: 0.1; }
-  100% { transform: scale(3.2); opacity: 0; }
+@property --ping-arc {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes co-ping-arc {
+  from { --ping-arc: 0deg; }
+  to   { --ping-arc: 360deg; }
 }
 .co-ping-ok   { background: #44cc77; color: #44cc77; }
 .co-ping-err  { background: #ff4466; color: #ff4466; }
 .co-ping-none { background: #253040; color: transparent; }
 .co-ping-none::after { display: none; }
+
+/* Settings sat list ping dot */
+.st-ping-status {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  cursor: default;
+}
+.st-ping-ok   { background: #44cc77; }
+.st-ping-err  { background: #ff4466; }
+.st-ping-none { background: #253040; }
 
 /* ── Last contact ──────────────────────────────────────────────── */
 .co-contact-cell { min-width: 130px; }
@@ -1649,9 +1668,11 @@ body.tools-active #sat-info { display: none !important; }
 }
 /* NOMINAL is the expected state — muted */
 .co-pill-nominal { background: #0e1a28; color: #7a99bb; border: 1px solid #1e3550; }
-/* SAFE is an exception — amber */
+/* Monitoring-driven status pills */
+.co-pill-warn    { background: #1a1000; color: #ffaa22; border: 1px solid #664400; }
+.co-pill-crit    { background: #1a0008; color: #ff4466; border: 1px solid #660022; }
+/* Legacy */
 .co-pill-safe    { background: #1a1200; color: #ffcc00; border: 1px solid #664d00; }
-/* GNC/mission mode */
 .co-pill-mk      { background: #0e1a28; color: #7a99bb; border: 1px solid #1e3550; }
 
 /* ── Pass dots ─────────────────────────────────────────────────── */

@@ -1,7 +1,9 @@
 import { store }                              from '../store.js';
 import { propagate }                          from '../tle.js';
 import { sunDirectionECI, isInEclipse }       from '../sunVector.js';
-import { getPingIntervalSec, getPingElapsedSec } from '../satPing.js';
+import { getPingIntervalSec, getPingElapsedSec, satBaseUrl } from '../satPing.js';
+
+const GRAFANA_URL = 'http://172.17.206.5:3000/?orgId=1&from=now-6h&to=now&timezone=browser';
 
 // ── Constants ─────────────────────────────────────────────────────
 
@@ -123,8 +125,41 @@ function _classifyOrbit(incDeg, a) {
   return sub ? `${regime} · ${sub}` : regime;
 }
 
-// ── Alert badge ───────────────────────────────────────────────────
+// ── Monitoring status helpers ─────────────────────────────────────
 
+const _MON_CLS = {
+  NOMINAL:  '',
+  WATCH:    'co-sev-low',
+  WARNING:  'co-sev-med',
+  DISTRESS: 'co-sev-high',
+  CRITICAL: 'co-sev-crit',
+  SEVERE:   'co-sev-crit',
+};
+
+function _monCls(status)     { return _MON_CLS[status] ?? ''; }
+function _monPillCls(status) {
+  if (!status || status === 'NOMINAL') return 'co-pill-nominal';
+  if (status === 'WATCH' || status === 'WARNING') return 'co-pill-warn';
+  return 'co-pill-crit';
+}
+
+// Real on-board event counts from TM
+function _evtBadge(events) {
+  if (!events) return '<span class="co-nil">—</span>';
+  const slots = [
+    { label: 'H', v: events.high },
+    { label: 'M', v: events.med  },
+    { label: 'L', v: events.low  },
+    { label: 'N', v: events.normal },
+  ].filter(s => s.v?.value != null && s.v.value > 0);
+  if (!slots.length) return '<span class="co-nil">—</span>';
+  return slots.map(s => {
+    const cls = _monCls(s.v.status);
+    return `<span class="co-alert-badge ${cls}">${s.v.value}${s.label}</span>`;
+  }).join('');
+}
+
+// Fallback dummy alert badge (ground alerts, no real data yet)
 const _SEV_ORDER = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 };
 const _SEV_ABBR  = { LOW: 'L', MEDIUM: 'M', HIGH: 'H', CRITICAL: 'C' };
 const _SEV_CLS   = { LOW: 'co-sev-low', MEDIUM: 'co-sev-med', HIGH: 'co-sev-high', CRITICAL: 'co-sev-crit' };
@@ -190,7 +225,11 @@ function _tooltipContent(pass) {
 // ── Row HTML ──────────────────────────────────────────────────────
 
 function _rowHTML(sat, d, now, eclipse) {
-  const elapsed = now - d.lastContactMs;
+  // Prefer real telemetry; fall back to seeded dummy data
+  const tm = store.satTelemetry[sat.id] ?? null;
+
+  const lastContactMs = tm?.receptionTime ? new Date(tm.receptionTime).getTime() : d.lastContactMs;
+  const elapsed = now - lastContactMs;
   const isLive  = elapsed < 20000;
 
   const nextPass  = d.passes.find(p => p.future);
@@ -204,8 +243,12 @@ function _rowHTML(sat, d, now, eclipse) {
     : '<span class="co-next-contact co-nil">—</span>';
   const contactCell = `<div class="co-contact-stack">${lastLine}${nextLine}</div>`;
 
-  const safetyPill  = `<span class="co-pill ${d.modeSafety === 'SAFE' ? 'co-pill-safe' : 'co-pill-nominal'}">${d.modeSafety}</span>`;
-  const missionPill = `<span class="co-pill co-pill-mk">${d.modeMission}</span>`;
+  const sysVal  = tm?.sysMode?.value  ?? d.modeSafety;
+  const sysSts  = tm?.sysMode?.status ?? 'NOMINAL';
+  const gncVal  = tm?.gncMode?.value  ?? d.modeMission;
+  const gncSts  = tm?.gncMode?.status ?? 'NOMINAL';
+  const safetyPill  = `<span class="co-pill ${_monPillCls(sysSts)}">${sysVal}</span>`;
+  const missionPill = `<span class="co-pill ${_monPillCls(gncSts)}">${gncVal}</span>`;
   const modeCell    = `<div class="co-mode-stack">
     <div class="co-mode-row"><span class="co-mode-label">SYS</span>${safetyPill}</div>
     <div class="co-mode-row"><span class="co-mode-label">GNC</span>${missionPill}</div>
@@ -216,8 +259,11 @@ function _rowHTML(sat, d, now, eclipse) {
   else if (eclipse)      eclHtml = '<span data-field="ecl" class="co-ecl-shadow">● SHADOW</span>';
   else                   eclHtml = '<span data-field="ecl" class="co-ecl-sun">☀ SUN</span>';
 
-  const battCls  = d.battery >= 14.5 ? 'co-batt-ok' : d.battery >= 13.5 ? 'co-batt-warn' : 'co-batt-low';
-  const battCell = `<span class="${battCls}">${d.battery.toFixed(1)} V</span>`;
+  const battVal = tm?.battVoltage?.value ?? d.battery;
+  const battSts = tm?.battVoltage?.status ?? 'NOMINAL';
+  const _BATT_CLS = { NOMINAL: 'co-batt-ok', WATCH: 'co-batt-warn', WARNING: 'co-batt-warn', DISTRESS: 'co-batt-low', CRITICAL: 'co-batt-low', SEVERE: 'co-batt-low' };
+  const battCls  = _BATT_CLS[battSts] ?? 'co-batt-ok';
+  const battCell = `<span class="${battCls}" title="${battSts}">${Number(battVal).toFixed(1)} V</span>`;
 
   const missionCell = d.missionPlans > 0
     ? `<span class="co-mission-count">${d.missionPlans}</span>`
@@ -261,8 +307,8 @@ function _rowHTML(sat, d, now, eclipse) {
     <td>${orbitCell}</td>
     <td class="co-missions-cell">${missionCell}</td>
     <td class="co-alerts-cell">${_alertBadge(d.groundAlerts)}</td>
-    <td class="co-alerts-cell">${_alertBadge(d.boardAlerts)}</td>
-    <td class="co-links-cell">${_linkBadge('SCC', d.sccUrl)}${_linkBadge('Grafana', d.grafanaUrl)}</td>
+    <td class="co-alerts-cell">${_evtBadge(tm?.events)}</td>
+    <td class="co-links-cell">${_linkBadge('SCC', satBaseUrl(sat.noradId) ? `http://${satBaseUrl(sat.noradId)}:15000/` : null)}${_linkBadge('Grafana', GRAFANA_URL)}</td>
   </tr>`;
 }
 
@@ -377,12 +423,14 @@ export function initChadOps() {
       const row = tbody.querySelector(`tr[data-sat-id="${sat.id}"]`);
       if (!row) { render(); return; } // satellite added since last full render
 
-      const d = _seedDummy(sat);
+      const d  = _seedDummy(sat);
+      const tm = store.satTelemetry[sat.id] ?? null;
 
       // Contact time (changes every tick)
       const contactEl = row.querySelector('.co-contact-stack');
       if (contactEl) {
-        const elapsed  = now - d.lastContactMs;
+        const lastMs   = tm?.receptionTime ? new Date(tm.receptionTime).getTime() : d.lastContactMs;
+        const elapsed  = now - lastMs;
         const isLive   = elapsed < 20000;
         const nextPass = d.passes.find(p => p.future);
         const nextMs   = nextPass ? nextPass.time.getTime() - now : null;
@@ -405,8 +453,6 @@ export function initChadOps() {
         else                  { eclEl.className = 'co-ecl-sun';    eclEl.textContent = '☀ SUN'; }
       }
 
-      // Ping dot
-      _applyPingDot(row.querySelector('[data-field="ping"]'), sat.id);
     }
   }
 
@@ -453,7 +499,7 @@ export function initChadOps() {
   });
 
   store.subscribe(key => {
-    if (key === 'satellites'  && _active) render();
+    if ((key === 'satellites' || key === 'satTelemetry') && _active) render();
     if (key === 'pingStatus'  && _active) _updatePingDots();
   });
 }

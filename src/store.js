@@ -6,7 +6,8 @@ export const store = {
   attitudes: {},       // { [noradId]: { source, entries:[{t(ms), q:{x,y,z,w}}] } }
   positions: {},       // { [noradId]: last propagated result } — written by SatEntity, read by SatInfo
   _satById: new Map(), // id → sat, for O(1) lookups
-  pingStatus: {},   // satId → 'ok' | 'pending' | 'timeout' | 'error' | 'unconfigured'
+  pingStatus: {},      // satId → 'ok' | 'pending' | 'timeout' | 'error' | 'unconfigured'
+  satTelemetry: {},    // satId → { receptionTime, sysMode, gncMode, battVoltage, events }
   satScale: 500,
   orbitAlt: 550,       // km — shared by night shadow + GS footprint
   trackedSatId: null,
@@ -41,6 +42,7 @@ export const store = {
     this._satById.delete(id);
     if (sat) {
       delete this.positions[sat.noradId];
+      delete this.satTelemetry[sat.id];
       if (this.attitudes[sat.noradId]) {
         delete this.attitudes[sat.noradId];
         this.notify('attitudes');
@@ -92,6 +94,11 @@ export const store = {
   setPingStatus(satId, status) {
     this.pingStatus[satId] = status;
     this.notify('pingStatus');
+  },
+
+  setSatTelemetry(satId, data) {
+    this.satTelemetry[satId] = data;
+    this.notify('satTelemetry');
   },
 
   setOrbitAlt(v) {

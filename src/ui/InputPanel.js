@@ -114,6 +114,26 @@ function _patchGsList() {
   }
 }
 
+// ─── Settings ping status dots ───────────────────────────────────────────
+
+const _PING_TIPS = { ok: 'Server reachable', pending: 'Pinging…', timeout: 'Timeout', error: 'Unreachable', unconfigured: 'No server IP set' };
+
+function _applySettingsPingDot(el, satId) {
+  if (!el) return;
+  const ps = store.pingStatus[satId] ?? 'unconfigured';
+  el.className = 'st-ping-status st-ping-' + (ps === 'ok' ? 'ok' : ps === 'unconfigured' ? 'none' : 'err');
+  el.title = _PING_TIPS[ps] ?? ps;
+}
+
+function _updateSettingsPingDots() {
+  const list = document.getElementById('st-sat-list');
+  if (!list) return;
+  for (const sat of store.satellites) {
+    const dot = list.querySelector(`.st-ping-status[data-sat-id="${sat.id}"]`);
+    _applySettingsPingDot(dot, sat.id);
+  }
+}
+
 // ─── Settings view: full satellite list ──────────────────────────────────
 
 function renderSettingsSatList() {
@@ -129,6 +149,7 @@ function renderSettingsSatList() {
         <span class="st-item-name">${sat.name}</span>
         <span class="st-item-meta">#${sat.noradId} · ${sat.model ?? '12U'}</span>
       </div>
+      <span class="st-ping-status" data-sat-id="${sat.id}" title=""></span>
       <input class="st-field-baseurl" value="${satBaseUrl(sat.noradId)}" placeholder="Server IP" title="API server IP — e.g. 172.17.206.1">
       <button class="remove-btn" data-id="${sat.id}" data-norad="${sat.noradId}" title="Remove">×</button>
     `;
@@ -403,6 +424,9 @@ export function initInputPanel() {
   });
 
   store.subscribe((key) => {
+    if (key === 'pingStatus') {
+      _updateSettingsPingDots();
+    }
     if (key === 'satellites' || key === 'trackedSatId') {
       const newKey     = _satListKey();
       const idsChanged = newKey !== _satIdKey;
@@ -410,6 +434,7 @@ export function initInputPanel() {
       if (idsChanged) {
         renderSatList();
         renderSettingsSatList();
+        _updateSettingsPingDots();
       } else {
         _patchSatList();
       }

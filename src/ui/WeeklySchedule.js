@@ -175,6 +175,46 @@ function _buildLegend() {
   </div>`;
 }
 
+// ── iCal export ───────────────────────────────────────────────────
+
+function _toIcsDate(date) {
+  return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+}
+
+function _generateIcs(passes) {
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//u-track//WeeklySchedule//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+  ];
+  passes.forEach((p, i) => {
+    lines.push(
+      'BEGIN:VEVENT',
+      `UID:utrack-pass-${i}-${p.start.getTime()}@u-track`,
+      `DTSTART:${_toIcsDate(p.start)}`,
+      `DTEND:${_toIcsDate(p.end)}`,
+      `SUMMARY:${p.satName} @ ${p.station}`,
+      `DESCRIPTION:Satellite pass — ${p.satName} over ${p.station}`,
+      'END:VEVENT',
+    );
+  });
+  lines.push('END:VCALENDAR');
+  return lines.join('\r\n');
+}
+
+function _downloadIcs(passes, weekStart) {
+  const ics  = _generateIcs(passes);
+  const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `schedule-${_parisDateStr(weekStart)}.ics`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 // ── Init ──────────────────────────────────────────────────────────
 
 export function initWeeklySchedule() {
@@ -196,6 +236,7 @@ export function initWeeklySchedule() {
       <span class="co-sched-nav-range">${fmtD(weekStart)} – ${fmtD(weekEnd)} ${weekEnd.getFullYear()}</span>
       <button class="co-sched-nav-btn" id="co-sched-next">Next →</button>
       ${weekOffset !== 0 ? '<button class="co-sched-nav-btn co-sched-today-btn" id="co-sched-today">This week</button>' : ''}
+      <button class="co-sched-gcal-btn" id="co-sched-gcal" title="Download .ics and import into Google Calendar">↓ Export to GCal</button>
     </div>`;
 
     container.innerHTML = nav + _buildLegend() +
@@ -204,6 +245,7 @@ export function initWeeklySchedule() {
     document.getElementById('co-sched-prev')?.addEventListener('click', () => { weekOffset--; render(); _scrollToBiz(); });
     document.getElementById('co-sched-next')?.addEventListener('click', () => { weekOffset++; render(); _scrollToBiz(); });
     document.getElementById('co-sched-today')?.addEventListener('click', () => { weekOffset = 0; render(); _scrollToBiz(); });
+    document.getElementById('co-sched-gcal')?.addEventListener('click', () => _downloadIcs(passes, weekStart));
   }
 
   function _scrollToBiz() {

@@ -1,4 +1,5 @@
-import { store } from './store.js';
+import { store }              from './store.js';
+import { fetchSatTelemetry } from './satTelemetry.js';
 
 const PING_TIMEOUT = 5_000;
 
@@ -42,45 +43,52 @@ async function _ping(sat) {
   try {
     await fetch(`http://${ip}:15000/api/v1/ping`, {
       method: 'GET',
-      mode:   'no-cors', // only care if server responds, not the body
+      mode:   'no-cors',
       signal: ctrl.signal,
     });
+    // Set timestamp BEFORE notifying so animation delay is computed correctly
+    _lastPingMs[sat.id] = Date.now();
     store.setPingStatus(sat.id, 'ok');
   } catch (e) {
+    _lastPingMs[sat.id] = Date.now();
     store.setPingStatus(sat.id, e.name === 'AbortError' ? 'timeout' : 'error');
   } finally {
     clearTimeout(timer);
-    _lastPingMs[sat.id] = Date.now();
   }
 }
 
-function _pingAll() {
-  for (const sat of store.satellites) _ping(sat);
+// ── Per-satellite chained scheduling ─────────────────────────────
+// Each satellite gets its own setTimeout chain so the next ping fires
+// exactly `period` seconds after the previous one COMPLETED — no drift.
+
+const _schedTimers = {}; // satId → timer handle
+
+async function _pingAndReschedule(sat) {
+  await Promise.all([_ping(sat), fetchSatTelemetry(sat)]);
+  _schedTimers[sat.id] = setTimeout(() => _pingAndReschedule(sat), getPingIntervalSec() * 1000);
+}
+
+function _startSat(sat) {
+  clearTimeout(_schedTimers[sat.id]);
+  _pingAndReschedule(sat);
 }
 
 export function pingSatellite(satId) {
   const sat = store.satellites.find(s => s.id === satId);
-  if (sat) _ping(sat);
-}
-
-// ── Poller lifecycle ──────────────────────────────────────────────
-
-let _timer = null;
-
-function _startPoller() {
-  if (_timer) clearInterval(_timer);
-  _timer = setInterval(_pingAll, getPingIntervalSec() * 1000);
+  if (sat) _startSat(sat);
 }
 
 export function restartPingPoller() {
-  _pingAll();
-  _startPoller();
+  for (const sat of store.satellites) _startSat(sat);
 }
 
 export function initSatPing() {
-  _pingAll();
-  _startPoller();
+  for (const sat of store.satellites) _startSat(sat);
   store.subscribe(key => {
-    if (key === 'satellites') _pingAll();
+    if (key !== 'satellites') return;
+    // Start any newly added satellites; existing timers keep running
+    for (const sat of store.satellites) {
+      if (!_schedTimers[sat.id]) _startSat(sat);
+    }
   });
 }
