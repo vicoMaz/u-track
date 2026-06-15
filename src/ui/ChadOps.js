@@ -1,6 +1,7 @@
-import { store }                         from '../store.js';
-import { propagate }                     from '../tle.js';
-import { sunDirectionECI, isInEclipse }  from '../sunVector.js';
+import { store }                              from '../store.js';
+import { propagate }                          from '../tle.js';
+import { sunDirectionECI, isInEclipse }       from '../sunVector.js';
+import { getPingIntervalSec, getPingElapsedSec } from '../satPing.js';
 
 // ── Constants ─────────────────────────────────────────────────────
 
@@ -245,8 +246,14 @@ function _rowHTML(sat, d, now, eclipse) {
     <div class="co-orbit-row"><span class="co-orbit-label">TLE</span>${tleHtml}</div>
   </div>`;
 
+  const _ps  = store.pingStatus[sat.id] ?? 'unconfigured';
+  const _per = getPingIntervalSec();
+  const _ela = getPingElapsedSec(sat.id).toFixed(1);
+  const _pcls = _ps === 'ok' ? 'co-ping-ok' : _ps === 'unconfigured' ? 'co-ping-none' : 'co-ping-err';
+  const _ptip = { ok: 'Server reachable', pending: 'Pinging…', timeout: 'Timeout', error: 'Unreachable', unconfigured: 'No server IP set' }[_ps] ?? _ps;
+
   return `<tr class="co-row" data-sat-id="${sat.id}">
-    <td class="co-name-cell">${sat.name}</td>
+    <td class="co-name-cell"><span class="co-ping-dot ${_pcls}" data-field="ping" style="--ping-period:${_per}s;--ping-delay:-${_ela}s" title="${_ptip}"></span>${sat.name}</td>
     <td class="co-contact-cell">${contactCell}</td>
     <td class="co-mode-cell">${modeCell}</td>
     <td class="co-batt-cell">${battCell}</td>
@@ -397,6 +404,27 @@ export function initChadOps() {
         else if (eclipse)     { eclEl.className = 'co-ecl-shadow'; eclEl.textContent = '● SHADOW'; }
         else                  { eclEl.className = 'co-ecl-sun';    eclEl.textContent = '☀ SUN'; }
       }
+
+      // Ping dot
+      _applyPingDot(row.querySelector('[data-field="ping"]'), sat.id);
+    }
+  }
+
+  function _applyPingDot(el, satId) {
+    if (!el) return;
+    const ps  = store.pingStatus[satId] ?? 'unconfigured';
+    const per = getPingIntervalSec();
+    const ela = getPingElapsedSec(satId).toFixed(1);
+    el.className = 'co-ping-dot ' + (ps === 'ok' ? 'co-ping-ok' : ps === 'unconfigured' ? 'co-ping-none' : 'co-ping-err');
+    el.title = { ok: 'Server reachable', pending: 'Pinging…', timeout: 'Timeout', error: 'Unreachable', unconfigured: 'No server IP set' }[ps] ?? ps;
+    el.style.setProperty('--ping-period', `${per}s`);
+    el.style.setProperty('--ping-delay',  `-${ela}s`);
+  }
+
+  function _updatePingDots() {
+    for (const sat of store.satellites) {
+      const row = tbody.querySelector(`tr[data-sat-id="${sat.id}"]`);
+      if (row) _applyPingDot(row.querySelector('[data-field="ping"]'), sat.id);
     }
   }
 
@@ -425,7 +453,8 @@ export function initChadOps() {
   });
 
   store.subscribe(key => {
-    if (key === 'satellites' && _active) render();
+    if (key === 'satellites'  && _active) render();
+    if (key === 'pingStatus'  && _active) _updatePingDots();
   });
 }
 

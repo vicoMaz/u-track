@@ -670,6 +670,20 @@ body.tools-active #sat-info { display: none !important; }
   margin-bottom: 2px;
 }
 
+.st-ping-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+.st-ping-row input {
+  width: 64px;
+}
+.st-unit {
+  font-size: 10px;
+  color: #445566;
+}
+
 .st-card input {
   background: #1a1a28;
   border: 1px solid #2a2a3a;
@@ -745,6 +759,22 @@ body.tools-active #sat-info { display: none !important; }
   color: #556;
   font-variant-numeric: tabular-nums;
 }
+
+.st-field-baseurl {
+  width: 130px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: #667788;
+  font-size: 10px;
+  font-family: 'Courier New', monospace;
+  padding: 2px 5px;
+  outline: none;
+  transition: border-color 0.15s, color 0.15s;
+}
+.st-field-baseurl::placeholder { color: #2a3a4a; }
+.st-field-baseurl:hover { border-color: #2a3a4a; color: #99aabb; }
+.st-field-baseurl:focus { border-color: #3a5a7a; color: #ccc; background: #12121e; }
 
 .st-item .remove-btn {
   background: none;
@@ -1494,12 +1524,44 @@ body.tools-active #sat-info { display: none !important; }
   vertical-align: middle;
 }
 
-/* ── Name ──────────────────────────────────────────────────────── */
+/* ── Name + ping dot ───────────────────────────────────────────── */
 .co-name-cell {
   font-weight: 600;
   color: #bbb;
   min-width: 100px;
+  white-space: nowrap;
 }
+.co-ping-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  position: relative;
+  vertical-align: middle;
+  margin-right: 7px;
+  flex-shrink: 0;
+  cursor: default;
+}
+.co-ping-dot::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  opacity: 0;
+  animation: co-ping-ripple var(--ping-period, 20s) linear infinite;
+  animation-delay: var(--ping-delay, 0s);
+  pointer-events: none;
+}
+@keyframes co-ping-ripple {
+  0%   { transform: scale(1);   opacity: 0.55; }
+  70%  { transform: scale(2.8); opacity: 0.1; }
+  100% { transform: scale(3.2); opacity: 0; }
+}
+.co-ping-ok   { background: #44cc77; color: #44cc77; }
+.co-ping-err  { background: #ff4466; color: #ff4466; }
+.co-ping-none { background: #253040; color: transparent; }
+.co-ping-none::after { display: none; }
 
 /* ── Last contact ──────────────────────────────────────────────── */
 .co-contact-cell { min-width: 130px; }

@@ -1,6 +1,7 @@
 import { store, PALETTE, GS_PALETTE } from '../store.js';
 import { fetchTLE, parseTLE, propagate } from '../tle.js';
 import { persistSatellite, persistStation, deleteServerSatellite, deleteServerStation, updateServerStation } from '../apiPoller.js';
+import { satBaseUrl, setSatBaseUrl, pingSatellite, getPingIntervalSec, restartPingPoller } from '../satPing.js';
 
 // ─── Icons ────────────────────────────────────────────────────────────────
 
@@ -127,8 +128,13 @@ function renderSettingsSatList() {
       <span class="st-color-dot" style="background:${sat.color}"></span>
       <span class="st-item-name">${sat.name}</span>
       <span class="st-item-meta">#${sat.noradId} · ${sat.model ?? '12U'}</span>
+      <input class="st-field-baseurl" value="${satBaseUrl(sat.id)}" placeholder="Server IP" title="API server IP — e.g. 172.17.206.1">
       <button class="remove-btn" data-id="${sat.id}" data-norad="${sat.noradId}" title="Remove">×</button>
     `;
+    const ipIn = item.querySelector('.st-field-baseurl');
+    const saveIp = () => { setSatBaseUrl(sat.id, ipIn.value.trim()); pingSatellite(sat.id); };
+    ipIn.addEventListener('blur',    saveIp);
+    ipIn.addEventListener('keydown', e => { if (e.key === 'Enter') ipIn.blur(); });
     list.appendChild(item);
   }
   list.querySelectorAll('.remove-btn').forEach(btn => {
@@ -426,6 +432,20 @@ export function initInputPanel() {
       allFpBtn?.classList.toggle('active', allFp);
     }
   });
+
+  // Ping interval setting
+  const pingIntervalInput = document.getElementById('ping-interval-input');
+  if (pingIntervalInput) {
+    pingIntervalInput.value = getPingIntervalSec();
+    const savePingInterval = () => {
+      const v = Math.max(5, Math.min(300, parseInt(pingIntervalInput.value, 10) || 20));
+      pingIntervalInput.value = v;
+      localStorage.setItem('ping-interval', String(v));
+      restartPingPoller();
+    };
+    pingIntervalInput.addEventListener('change', savePingInterval);
+    pingIntervalInput.addEventListener('keydown', e => { if (e.key === 'Enter') pingIntervalInput.blur(); });
+  }
 
   renderSatList();
   renderGsList();

@@ -6,6 +6,7 @@ export const store = {
   attitudes: {},       // { [noradId]: { source, entries:[{t(ms), q:{x,y,z,w}}] } }
   positions: {},       // { [noradId]: last propagated result } — written by SatEntity, read by SatInfo
   _satById: new Map(), // id → sat, for O(1) lookups
+  pingStatus: {},   // satId → 'ok' | 'pending' | 'timeout' | 'error' | 'unconfigured'
   satScale: 500,
   orbitAlt: 550,       // km — shared by night shadow + GS footprint
   trackedSatId: null,
@@ -86,6 +87,11 @@ export const store = {
       this.attitudes[noradId] = entry;
     }
     this.notify('attitudes');
+  },
+
+  setPingStatus(satId, status) {
+    this.pingStatus[satId] = status;
+    this.notify('pingStatus');
   },
 
   setOrbitAlt(v) {

@@ -9,6 +9,7 @@ import { initOrbitInspector }   from './ui/OrbitInspector.js';
 import { initChadOps }          from './ui/ChadOps.js';
 import { initWeeklySchedule }   from './ui/WeeklySchedule.js';
 import { initNavClocks }        from './ui/NavClocks.js';
+import { initSatPing }          from './satPing.js';
 
 // Tab switching
 const tabBtns   = document.querySelectorAll('[data-tab]');
@@ -66,4 +67,4 @@ coSubtabBtns.forEach(btn => {
   });
 });
 
-loadInitialState().then(() => startApiPoller());
+loadInitialState().then(() => { startApiPoller(); initSatPing(); });
