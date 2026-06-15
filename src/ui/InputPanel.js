@@ -8,6 +8,13 @@ const SVG_EYE     = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="
 const SVG_EYE_OFF = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
 const SVG_CIRCLE  = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg>`;
 
+// ─── ID-key helpers for change detection ─────────────────────────────────
+
+let _satIdKey = '';
+let _gsIdKey  = '';
+const _satListKey = () => store.satellites.map(s => s.id).join('\0');
+const _gsListKey  = () => store.groundStations.map(g => g.id).join('\0');
+
 // ─── Satellite side-panel list (visibility toggles only) ──────────────────
 
 function renderSatList() {
@@ -17,6 +24,7 @@ function renderSatList() {
   for (const sat of store.satellites) {
     const item = document.createElement('div');
     item.className = 'sat-item' + (sat.id === store.trackedSatId ? ' tracking' : '');
+    item.dataset.itemId = sat.id;
     item.style.setProperty('--sat-color', sat.color);
     const hidden = sat.visible === false;
     item.innerHTML = `
@@ -26,7 +34,6 @@ function renderSatList() {
     `;
     list.appendChild(item);
   }
-
   list.querySelectorAll('.sat-name').forEach(el => {
     el.addEventListener('click', () => {
       const id = el.dataset.id;
@@ -38,6 +45,24 @@ function renderSatList() {
   });
 }
 
+// Patch visibility + tracking state without rebuilding the list
+function _patchSatList() {
+  const list = document.getElementById('sat-list');
+  if (!list) return;
+  for (const sat of store.satellites) {
+    const item = list.querySelector(`[data-item-id="${sat.id}"]`);
+    if (!item) { renderSatList(); return; }
+    const hidden = sat.visible === false;
+    item.classList.toggle('tracking', sat.id === store.trackedSatId);
+    const btn = item.querySelector('.vis-btn');
+    if (btn) {
+      btn.classList.toggle('vis-off', hidden);
+      btn.title     = hidden ? 'Show' : 'Hide';
+      btn.innerHTML = hidden ? SVG_EYE_OFF : SVG_EYE;
+    }
+  }
+}
+
 // ─── GS side-panel list (visibility + footprint toggles) ─────────────────
 
 function renderGsList() {
@@ -47,6 +72,7 @@ function renderGsList() {
   for (const gs of store.groundStations) {
     const item = document.createElement('div');
     item.className = 'gs-item';
+    item.dataset.itemId = gs.id;
     item.style.setProperty('--gs-color', gs.color);
     const hidden = gs.visible === false;
     item.innerHTML = `
@@ -63,6 +89,28 @@ function renderGsList() {
   list.querySelectorAll('.fp-btn').forEach(btn => {
     btn.addEventListener('click', () => store.toggleGSFootprint(btn.dataset.id));
   });
+}
+
+// Patch visibility + footprint state without rebuilding the list
+function _patchGsList() {
+  const list = document.getElementById('gs-list');
+  if (!list) return;
+  for (const gs of store.groundStations) {
+    const item = list.querySelector(`[data-item-id="${gs.id}"]`);
+    if (!item) { renderGsList(); return; }
+    const hidden = gs.visible === false;
+    const visBtn = item.querySelector('.vis-btn');
+    if (visBtn) {
+      visBtn.classList.toggle('vis-off', hidden);
+      visBtn.title     = hidden ? 'Show station' : 'Hide station';
+      visBtn.innerHTML = hidden ? SVG_EYE_OFF : SVG_EYE;
+    }
+    const fpBtn = item.querySelector('.fp-btn');
+    if (fpBtn) {
+      fpBtn.classList.toggle('fp-off', !gs.showFootprint);
+      fpBtn.title = gs.showFootprint ? 'Hide coverage' : 'Show coverage';
+    }
+  }
 }
 
 // ─── Settings view: full satellite list ──────────────────────────────────
@@ -349,14 +397,29 @@ export function initInputPanel() {
 
   store.subscribe((key) => {
     if (key === 'satellites' || key === 'trackedSatId') {
-      renderSatList();
-      renderSettingsSatList();
+      const newKey     = _satListKey();
+      const idsChanged = newKey !== _satIdKey;
+      _satIdKey = newKey;
+      if (idsChanged) {
+        renderSatList();
+        renderSettingsSatList();
+      } else {
+        _patchSatList();
+      }
       const allSatVis = store.satellites.length > 0 && store.satellites.every(s => s.visible !== false);
       satVisAllBtn?.classList.toggle('active', allSatVis);
     }
     if (key === 'groundStations') {
-      renderGsList();
-      if (!_skipGsSettingsRender) renderSettingsGsList();
+      const newKey     = _gsListKey();
+      const idsChanged = newKey !== _gsIdKey;
+      _gsIdKey = newKey;
+      if (idsChanged) {
+        renderGsList();
+        if (!_skipGsSettingsRender) renderSettingsGsList();
+      } else {
+        _patchGsList();
+        // Settings GS list only needs rebuild on add/remove, not vis/fp changes
+      }
       const allGsVis = store.groundStations.length > 0 && store.groundStations.every(g => g.visible !== false);
       const allFp    = store.groundStations.length > 0 && store.groundStations.every(g => g.showFootprint);
       gsVisAllBtn?.classList.toggle('active', allGsVis);
@@ -368,4 +431,6 @@ export function initInputPanel() {
   renderGsList();
   renderSettingsSatList();
   renderSettingsGsList();
+  _satIdKey = _satListKey();
+  _gsIdKey  = _gsListKey();
 }

@@ -211,9 +211,9 @@ function _rowHTML(sat, d, now, eclipse) {
   </div>`;
 
   let eclHtml;
-  if (eclipse === null)  eclHtml = '<span class="co-nil">—</span>';
-  else if (eclipse)      eclHtml = '<span class="co-ecl-shadow">● SHADOW</span>';
-  else                   eclHtml = '<span class="co-ecl-sun">☀ SUN</span>';
+  if (eclipse === null)  eclHtml = '<span data-field="ecl" class="co-nil">—</span>';
+  else if (eclipse)      eclHtml = '<span data-field="ecl" class="co-ecl-shadow">● SHADOW</span>';
+  else                   eclHtml = '<span data-field="ecl" class="co-ecl-sun">☀ SUN</span>';
 
   const battCls  = d.battery >= 14.5 ? 'co-batt-ok' : d.battery >= 13.5 ? 'co-batt-warn' : 'co-batt-low';
   const battCell = `<span class="${battCls}">${d.battery.toFixed(1)} V</span>`;
@@ -342,10 +342,6 @@ export function initChadOps() {
     const nowDate = new Date(now);
     const sunDir  = sunDirectionECI(nowDate);
 
-    // Toulouse live clock (Europe/Paris = CET/CEST)
-    const clkEl = document.getElementById('co-toulouse-clock');
-    if (clkEl) clkEl.textContent = nowDate.toLocaleTimeString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
     if (!store.satellites.length) {
       tbody.innerHTML = `<tr><td colspan="10" class="co-empty">No satellites loaded — add one to begin.</td></tr>`;
       return;
@@ -364,10 +360,50 @@ export function initChadOps() {
     _wireDots();
   }
 
+  // Lightweight tick: only patches contact-time and eclipse in-place — no DOM rebuild
+  function _tick() {
+    const now     = Date.now();
+    const nowDate = new Date(now);
+    const sunDir  = sunDirectionECI(nowDate);
+
+    for (const sat of store.satellites) {
+      const row = tbody.querySelector(`tr[data-sat-id="${sat.id}"]`);
+      if (!row) { render(); return; } // satellite added since last full render
+
+      const d = _seedDummy(sat);
+
+      // Contact time (changes every tick)
+      const contactEl = row.querySelector('.co-contact-stack');
+      if (contactEl) {
+        const elapsed  = now - d.lastContactMs;
+        const isLive   = elapsed < 20000;
+        const nextPass = d.passes.find(p => p.future);
+        const nextMs   = nextPass ? nextPass.time.getTime() - now : null;
+        const lastLine = isLive
+          ? '<span class="co-live-badge">● LIVE</span>'
+          : `<span class="co-contact-time">${_fmtAgo(elapsed)}</span>`;
+        const nextLine = nextMs !== null
+          ? `<span class="co-next-contact">Next ${_fmtIn(nextMs)}</span>`
+          : '<span class="co-next-contact co-nil">—</span>';
+        contactEl.innerHTML = lastLine + nextLine;
+      }
+
+      // Eclipse status (changes ~every 45 min but cheap to re-check)
+      const eclEl = row.querySelector('[data-field="ecl"]');
+      if (eclEl && sat.satrec) {
+        const r       = propagate(sat.satrec, nowDate);
+        const eclipse = r?.eciPos ? isInEclipse(r.eciPos, sunDir) : null;
+        if (eclipse === null) { eclEl.className = 'co-nil';        eclEl.textContent = '—'; }
+        else if (eclipse)     { eclEl.className = 'co-ecl-shadow'; eclEl.textContent = '● SHADOW'; }
+        else                  { eclEl.className = 'co-ecl-sun';    eclEl.textContent = '☀ SUN'; }
+      }
+    }
+  }
+
   function start() {
     _active = true;
     render();
-    _timer  = setInterval(render, 2000);
+    _timer  = setInterval(_tick, 10000);
   }
   function stop() {
     _active = false;
