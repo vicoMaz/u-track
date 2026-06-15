@@ -243,6 +243,18 @@
                 <input id="gs-lon-input" type="number" placeholder="Lon" min="-180" max="180" step="any" />
               </div>
               <button id="add-gs-btn">Add</button>
+              <div class="gs-import-wrap">
+                <button id="gs-import-btn" class="gs-import-btn">↑ Import JSON</button>
+                <input type="file" id="gs-import-file" accept=".json" style="display:none">
+                <div class="gs-import-tip">
+                  <div class="gs-import-tip-title">Expected JSON format</div>
+                  <pre class="gs-import-tip-code">[
+  { "name": "Toulouse", "lat": 43.60, "lon": 1.44 },
+  { "name": "Kourou",   "lat":  5.17, "lon": -52.68 }
+]</pre>
+                  <div class="gs-import-tip-note">name is optional · lat/lon in decimal degrees</div>
+                </div>
+              </div>
             </div>
             <div id="st-gs-list" class="st-list"></div>
           </div>

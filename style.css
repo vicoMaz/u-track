@@ -748,6 +748,65 @@ body.tools-active #sat-info { display: none !important; }
 }
 .st-item .remove-btn:hover { color: #ff4466; }
 
+/* ── GS JSON import ─────────────────────────────────────────── */
+.gs-import-wrap { position: relative; }
+
+.gs-import-btn {
+  background: #1a1a28;
+  border: 1px solid #2a2a3a;
+  border-radius: 4px;
+  color: #667788;
+  padding: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: inherit;
+  width: 100%;
+  transition: all 0.15s;
+}
+.gs-import-btn:hover { border-color: #ff9f4344; color: #ff9f43; }
+
+.gs-import-tip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 290px;
+  background: #1a1a2e;
+  border: 1px solid #3a3a5a;
+  border-radius: 8px;
+  padding: 12px 14px;
+  z-index: 9999;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.7);
+  pointer-events: none;
+  color: #bbb;
+}
+.gs-import-wrap:hover .gs-import-tip { display: block; }
+
+.gs-import-tip-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #ff9f43;
+  margin-bottom: 8px;
+}
+.gs-import-tip-code {
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  color: #00ff9d;
+  background: #0d0d18;
+  border: 1px solid #2a2a3a;
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  white-space: pre;
+}
+.gs-import-tip-note {
+  font-size: 10px;
+  color: #445566;
+  font-style: italic;
+}
+
 /* GS editable row — inputs look like text until hovered / focused */
 .st-field-name {
   flex: 1;

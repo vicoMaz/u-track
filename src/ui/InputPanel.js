@@ -289,6 +289,38 @@ export function initInputPanel() {
     if (e.key === 'Enter') addGroundStation();
   });
 
+  document.getElementById('gs-import-btn')?.addEventListener('click', () => {
+    document.getElementById('gs-import-file')?.click();
+  });
+  document.getElementById('gs-import-file')?.addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = evt => {
+      try {
+        const data = JSON.parse(evt.target.result);
+        if (!Array.isArray(data)) throw new Error('Expected an array');
+        for (const entry of data) {
+          const lat = parseFloat(entry.lat);
+          const lon = parseFloat(entry.lon);
+          if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) continue;
+          const id    = `gs-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+          const color = GS_PALETTE[store.groundStations.length % GS_PALETTE.length];
+          const name  = String(entry.name || entry.shortName || '').trim() || `GS-${id}`;
+          store.addGroundStation({ id, name, lat, lon, color });
+          persistStation(name, '', lat, lon, id).then(serverId => {
+            if (serverId !== id) {
+              const gs = store.groundStations.find(g => g.id === id);
+              if (gs) { gs.id = serverId; store.notify('groundStations'); }
+            }
+          });
+        }
+      } catch { /* invalid JSON — silent */ }
+      e.target.value = '';
+    };
+    reader.readAsText(file);
+  });
+
   document.getElementById('sat-toggle')?.addEventListener('click', () => {
     document.getElementById('sat-panel').classList.toggle('collapsed');
   });
