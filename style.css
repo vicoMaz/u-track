@@ -837,10 +837,10 @@ body.tools-active #sat-info { display: none !important; }
 .track-subtab.active,
 .tools-subtab.active,
 .co-subtab.active { background: #1e1e2e; color: #fff; }
-/* Active underline differs per section */
-.track-subtab.active              { border-bottom: 2px solid #00d4ff; }
+/* Active underline — same accent as top-level tab bar */
+.track-subtab.active,
 .tools-subtab.active,
-.co-subtab.active                 { border-bottom: 2px solid #c77dff; }
+.co-subtab.active                 { border-bottom: 2px solid #00d4ff; }
 
 .tools-subtab-content {
   display: none;
