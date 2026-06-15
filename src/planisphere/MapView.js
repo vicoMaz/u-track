@@ -38,13 +38,10 @@ export function initMap() {
   const TILE_DARK  = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
   const TILE_LIGHT = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
   const TILE_ATTR  = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, © <a href="https://carto.com/">CARTO</a>';
+  const TILE_OPTS  = { attribution: TILE_ATTR, subdomains: 'abcd', noWrap: false };
 
-  let _darkMode = true;
-  const tileLayer = L.tileLayer(TILE_DARK, {
-    attribution: TILE_ATTR,
-    subdomains: 'abcd',
-    noWrap: false,
-  }).addTo(map);
+  let _darkMode  = true;
+  let _tileLayer = L.tileLayer(TILE_DARK, TILE_OPTS).addTo(map);
 
   // Night shadow sits between tile layer (z 200) and overlay layer (z 400)
   map.createPane('nightPane');
@@ -96,8 +93,8 @@ export function initMap() {
       const update = () => {
         btn.textContent = _darkMode ? 'Light' : 'Dark';
         btn.title = _darkMode ? 'Switch to light map' : 'Switch to dark map';
-        tileLayer.setUrl(_darkMode ? TILE_DARK : TILE_LIGHT);
-        tileLayer.redraw();
+        _tileLayer.remove();
+        _tileLayer = L.tileLayer(_darkMode ? TILE_DARK : TILE_LIGHT, TILE_OPTS).addTo(map);
       };
       update();
       L.DomEvent.on(btn, 'click', (e) => {
