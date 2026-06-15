@@ -1520,7 +1520,9 @@ body.tools-active #sat-info { display: none !important; }
 .co-contact-time { color: #888; font-size: 11.5px; }
 
 /* ── Mode pills ────────────────────────────────────────────────── */
-.co-mode-cell { min-width: 130px; }
+.co-system-cell { min-width: 90px; }
+.co-gnc-cell    { min-width: 70px; border-left: 1px solid #1e2a3a; }
+.co-th-gnc      { border-left: 1px solid #1e2a3a; }
 
 .co-pill {
   display: inline-block;
@@ -1529,7 +1531,6 @@ body.tools-active #sat-info { display: none !important; }
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.04em;
-  margin-right: 4px;
 }
 /* NOMINAL is the expected state — it shouldn't shout */
 .co-pill-nominal { background: transparent; color: #c0ccee; border: 1px solid #6677aa; }

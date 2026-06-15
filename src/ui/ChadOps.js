@@ -242,7 +242,8 @@ function _rowHTML(sat, d, now, eclipse) {
   return `<tr class="co-row" data-sat-id="${sat.id}">
     <td class="co-name-cell">${sat.name}</td>
     <td class="co-contact-cell">${contactCell}</td>
-    <td class="co-mode-cell">${safetyPill} ${missionPill}</td>
+    <td class="co-system-cell">${safetyPill}</td>
+    <td class="co-gnc-cell">${missionPill}</td>
     <td class="co-batt-cell">${battCell}</td>
     <td class="co-passes-cell" data-sat-id="${sat.id}">${_passDots(d.passes)}</td>
     <td class="co-tle-col">${orbitCell}</td>
