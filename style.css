@@ -674,14 +674,14 @@ body.tools-active #sat-info { display: none !important; }
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 6px;
 }
-.st-ping-row input {
-  width: 64px;
-}
-.st-unit {
-  font-size: 10px;
-  color: #445566;
+.st-ping-row .st-card-label { margin-bottom: 0; }
+.st-ping-row input { width: 56px; }
+.st-unit { font-size: 10px; color: #445566; }
+.st-tip-icon {
+  font-size: 11px;
+  color: #334455;
+  cursor: default;
 }
 
 .st-card input {
