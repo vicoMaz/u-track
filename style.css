@@ -69,8 +69,6 @@ body.tracking-active #side-panel { top: 100px; }
 .tab-btn:hover { background: #1e1e2e; color: #ccc; }
 .tab-btn.active { background: #1e1e2e; color: #fff; border-bottom: 2px solid #00d4ff; }
 
-.tab-icon { font-size: 16px; padding: 4px 12px; }
-
 
 .api-docs-btn {
   text-decoration: none;
@@ -231,23 +229,6 @@ body.tracking-active #side-panel { top: 100px; }
   overflow-y: auto;
 }
 
-.add-sat-form { display: flex; flex-direction: column; gap: 6px; }
-
-.add-sat-form input {
-  background: #1a1a28;
-  border: 1px solid #333;
-  border-radius: 4px;
-  color: #ddd;
-  padding: 5px 8px;
-  font-size: 12px;
-  outline: none;
-}
-.add-sat-form input:focus { border-color: #00d4ff; }
-
-.add-sat-form .btn-row {
-  display: flex;
-  gap: 5px;
-}
 
 .model-toggle {
   background: #1e1e2e;
@@ -315,20 +296,6 @@ body.tracking-active #side-panel { top: 100px; }
 .sat-error { font-size: 10px; color: #ff3860; }
 
 /* ── Ground stations ──────────────────────────────────── */
-.add-gs-form { display: flex; flex-direction: column; gap: 6px; }
-
-.add-gs-form input {
-  background: #1a1a28;
-  border: 1px solid #333;
-  border-radius: 4px;
-  color: #ddd;
-  padding: 5px 8px;
-  font-size: 12px;
-  outline: none;
-  width: 100%;
-}
-.add-gs-form input:focus { border-color: #ff9f43; }
-
 .gs-coords { display: flex; gap: 6px; }
 .gs-coords input { flex: 1; min-width: 0; }
 
@@ -725,10 +692,10 @@ body.tools-active #sat-info { display: none !important; }
 .st-card #add-sat-btn:hover { background: #00d4ff28; }
 
 .st-card #add-gs-btn {
-  background: #1a1a28;
-  border: 1px solid #2a2a3a;
+  background: #ff9f4318;
+  border: 1px solid #ff9f4344;
   border-radius: 4px;
-  color: #99aacc;
+  color: #ff9f43;
   padding: 6px;
   cursor: pointer;
   font-size: 12px;
@@ -736,7 +703,7 @@ body.tools-active #sat-info { display: none !important; }
   width: 100%;
   transition: background 0.15s;
 }
-.st-card #add-gs-btn:hover { background: #22223a; color: #ccd; }
+.st-card #add-gs-btn:hover { background: #ff9f4328; }
 
 .st-list {
   display: flex;
@@ -804,7 +771,10 @@ body.tools-active #sat-info { display: none !important; }
 .vis-btn.vis-off { color: #334455; }
 .vis-btn:hover { opacity: 0.75; }
 
-.tools-subtab-bar {
+/* ── Subtab system (shared: Tracking / Tools / chadOps) ──── */
+.track-subtab-bar,
+.tools-subtab-bar,
+.co-subtab-bar {
   height: 36px;
   background: #111118;
   border-bottom: 1px solid #2a2a3a;
@@ -815,7 +785,9 @@ body.tools-active #sat-info { display: none !important; }
   flex-shrink: 0;
 }
 
-.tools-subtab {
+.track-subtab,
+.tools-subtab,
+.co-subtab {
   background: transparent;
   border: none;
   color: #888;
@@ -825,8 +797,16 @@ body.tools-active #sat-info { display: none !important; }
   font-size: 12px;
   transition: all 0.15s;
 }
-.tools-subtab:hover { background: #1e1e2e; color: #ccc; }
-.tools-subtab.active { background: #1e1e2e; color: #fff; border-bottom: 2px solid #c77dff; }
+.track-subtab:hover,
+.tools-subtab:hover,
+.co-subtab:hover { background: #1e1e2e; color: #ccc; }
+.track-subtab.active,
+.tools-subtab.active,
+.co-subtab.active { background: #1e1e2e; color: #fff; }
+/* Active underline differs per section */
+.track-subtab.active              { border-bottom: 2px solid #00d4ff; }
+.tools-subtab.active,
+.co-subtab.active                 { border-bottom: 2px solid #c77dff; }
 
 .tools-subtab-content {
   display: none;
@@ -1332,30 +1312,7 @@ body.tools-active #sat-info { display: none !important; }
   overflow: hidden;
 }
 
-/* ── chadOps internal subtab bar ───────────────────────────────── */
-.co-subtab-bar {
-  height: 36px;
-  background: #111118;
-  border-bottom: 1px solid #2a2a3a;
-  display: flex;
-  align-items: center;
-  padding: 0 8px;
-  gap: 2px;
-  flex-shrink: 0;
-}
-.co-subtab {
-  background: transparent;
-  border: none;
-  color: #888;
-  padding: 6px 16px;
-  cursor: pointer;
-  border-radius: 4px;
-  font-size: 12px;
-  transition: all 0.15s;
-}
-.co-subtab:hover { background: #1e1e2e; color: #ccc; }
-.co-subtab.active { background: #1e1e2e; color: #fff; border-bottom: 2px solid #c77dff; }
-
+/* ── chadOps subtab content ────────────────────────────────────── */
 .co-subtab-content {
   display: none;
   flex-direction: column;
@@ -1390,20 +1347,6 @@ body.tools-active #sat-info { display: none !important; }
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.co-toulouse {
-  margin-left: auto;
-  font-size: 11px;
-  color: #555;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-.co-toulouse-clock {
-  font-family: 'Courier New', monospace;
-  font-size: 13px;
-  color: #8888bb;
-  letter-spacing: 0.08em;
-}
-
 /* ── Table ─────────────────────────────────────────────────────── */
 
 .co-table-wrap {
@@ -1923,30 +1866,7 @@ a.co-link:hover {
    Tracking tab — 3D / 2D subtabs
    ═══════════════════════════════════════════════════════════════ */
 
-/* Tracking subtab bar — identical style to .tools-subtab-bar */
-.track-subtab-bar {
-  height: 36px;
-  background: #111118;
-  border-bottom: 1px solid #2a2a3a;
-  display: flex;
-  align-items: center;
-  padding: 0 8px;
-  gap: 2px;
-  flex-shrink: 0;
-}
-.track-subtab {
-  background: transparent;
-  border: none;
-  color: #888;
-  padding: 6px 16px;
-  cursor: pointer;
-  border-radius: 4px;
-  font-size: 12px;
-  transition: all 0.15s;
-}
-.track-subtab:hover { background: #1e1e2e; color: #ccc; }
-.track-subtab.active { background: #1e1e2e; color: #fff; border-bottom: 2px solid #00d4ff; }
-
+/* ── Tracking subtab content ───────────────────────────────────── */
 .track-subtab-content {
   display: none;
   flex: 1;
