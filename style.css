@@ -59,18 +59,6 @@ body.tracking-active #side-panel { top: 100px; }
 }
 .map-theme-btn:hover { color: #fff !important; background: #2a2a3a !important; }
 
-.map-dbg-opacity {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: #1a1a28 !important;
-  padding: 4px 8px !important;
-  font-size: 10px;
-  color: #888;
-  white-space: nowrap;
-}
-.map-dbg-opacity input { width: 80px; accent-color: #00d4ff; cursor: pointer; }
-
 /* ── Tab bar ────────────────────────────────────────── */
 #tab-bar {
   position: fixed;
@@ -617,7 +605,7 @@ body.tracking-active #time-player { display: flex; }
 
 /* ── Leaflet overrides ──────────────────────────────── */
 .leaflet-container { background: #0d0d18 !important; }
-.leaflet-tile-pane { opacity: 0.92; }
+.leaflet-tile-pane { opacity: 1; }
 
 /* Hide sat-info card on Tools tab (SatInfo.js re-shows it on every tick so CSS wins) */
 body.tools-active #sat-info { display: none !important; }
