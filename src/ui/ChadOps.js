@@ -205,6 +205,10 @@ function _rowHTML(sat, d, now, eclipse) {
 
   const safetyPill  = `<span class="co-pill ${d.modeSafety === 'SAFE' ? 'co-pill-safe' : 'co-pill-nominal'}">${d.modeSafety}</span>`;
   const missionPill = `<span class="co-pill co-pill-mk">${d.modeMission}</span>`;
+  const modeCell    = `<div class="co-mode-stack">
+    <div class="co-mode-row"><span class="co-mode-label">SYS</span>${safetyPill}</div>
+    <div class="co-mode-row"><span class="co-mode-label">GNC</span>${missionPill}</div>
+  </div>`;
 
   let eclHtml;
   if (eclipse === null)  eclHtml = '<span class="co-nil">—</span>';
@@ -242,8 +246,7 @@ function _rowHTML(sat, d, now, eclipse) {
   return `<tr class="co-row" data-sat-id="${sat.id}">
     <td class="co-name-cell">${sat.name}</td>
     <td class="co-contact-cell">${contactCell}</td>
-    <td class="co-system-cell">${safetyPill}</td>
-    <td class="co-gnc-cell">${missionPill}</td>
+    <td class="co-mode-cell">${modeCell}</td>
     <td class="co-batt-cell">${battCell}</td>
     <td class="co-passes-cell" data-sat-id="${sat.id}">${_passDots(d.passes)}</td>
     <td class="co-tle-col">${orbitCell}</td>
