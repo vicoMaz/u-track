@@ -35,8 +35,13 @@ export function initMap() {
   // Zoom control on the right so it doesn't overlap the satellite panel
   L.control.zoom({ position: 'topright' }).addTo(map);
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, © <a href="https://carto.com/">CARTO</a>',
+  const TILE_DARK  = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
+  const TILE_LIGHT = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+  const TILE_ATTR  = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, © <a href="https://carto.com/">CARTO</a>';
+
+  let _darkMode = true;
+  const tileLayer = L.tileLayer(TILE_DARK, {
+    attribution: TILE_ATTR,
     subdomains: 'abcd',
     noWrap: false,
   }).addTo(map);
@@ -83,6 +88,26 @@ export function initMap() {
     },
   });
   new HomeControl().addTo(map);
+
+  const ThemeControl = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+      const btn = L.DomUtil.create('button', 'leaflet-bar map-theme-btn');
+      const update = () => {
+        btn.textContent = _darkMode ? 'Light' : 'Dark';
+        btn.title = _darkMode ? 'Switch to light map' : 'Switch to dark map';
+        tileLayer.setUrl(_darkMode ? TILE_DARK : TILE_LIGHT);
+      };
+      update();
+      L.DomEvent.on(btn, 'click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        _darkMode = !_darkMode;
+        update();
+      });
+      return btn;
+    },
+  });
+  new ThemeControl().addTo(map);
 
   // Redraw night canvas whenever the map view changes (pan or zoom)
   // Also invalidate lat/lon cache since pixel→coord mapping changed
