@@ -2,6 +2,7 @@ import { store, PALETTE, GS_PALETTE } from '../store.js';
 import { fetchTLE, parseTLE, propagate } from '../tle.js';
 import { persistSatellite, persistStation, deleteServerSatellite, deleteServerStation, updateServerStation } from '../apiPoller.js';
 import { satBaseUrl, setSatBaseUrl, pingSatellite, getPingIntervalSec, restartPingPoller } from '../satPing.js';
+import { getTmConfig, setTmConfig, TM_DEFAULTS, fetchSatTelemetry } from '../satTelemetry.js';
 
 // ─── Icons ────────────────────────────────────────────────────────────────
 
@@ -136,27 +137,76 @@ function _updateSettingsPingDots() {
 
 // ─── Settings view: full satellite list ──────────────────────────────────
 
+const TM_FIELDS = [
+  { key: 'sysMode',   label: 'SYS mode' },
+  { key: 'gncMode',   label: 'GNC mode' },
+  { key: 'battery',   label: 'Battery'  },
+  { key: 'evtNormal', label: 'Evt Norm' },
+  { key: 'evtLow',    label: 'Evt Low'  },
+  { key: 'evtMed',    label: 'Evt Med'  },
+  { key: 'evtHigh',   label: 'Evt High' },
+];
+
 function renderSettingsSatList() {
   const list = document.getElementById('st-sat-list');
   if (!list) return;
   list.innerHTML = '';
   for (const sat of store.satellites) {
+    const cfg  = getTmConfig(sat.noradId);
     const item = document.createElement('div');
-    item.className = 'st-item';
+    item.className = 'st-item st-sat-item';
     item.style.setProperty('--sat-color', sat.color);
     item.innerHTML = `
-      <div class="st-item-info">
-        <span class="st-item-name">${sat.name}</span>
-        <span class="st-item-meta">#${sat.noradId} · ${sat.model ?? '12U'}</span>
+      <div class="st-item-row">
+        <div class="st-item-info">
+          <span class="st-item-name">${sat.name}</span>
+          <span class="st-item-meta">#${sat.noradId} · ${sat.model ?? '12U'}</span>
+        </div>
+        <span class="st-ping-status" data-sat-id="${sat.id}" title=""></span>
+        <input class="st-field-baseurl" value="${satBaseUrl(sat.noradId)}" placeholder="Server IP" title="API server IP — e.g. 172.17.206.1">
+        <button class="st-tm-toggle" title="Configure TM parameter mapping">▸ TM</button>
+        <button class="remove-btn" data-id="${sat.id}" data-norad="${sat.noradId}" title="Remove">×</button>
       </div>
-      <span class="st-ping-status" data-sat-id="${sat.id}" title=""></span>
-      <input class="st-field-baseurl" value="${satBaseUrl(sat.noradId)}" placeholder="Server IP" title="API server IP — e.g. 172.17.206.1">
-      <button class="remove-btn" data-id="${sat.id}" data-norad="${sat.noradId}" title="Remove">×</button>
+      <div class="st-tm-config" hidden>
+        <div class="st-tm-grid">
+          <span></span>
+          <span class="st-tm-col-header">Packet</span>
+          <span class="st-tm-col-header">Parameter</span>
+          ${TM_FIELDS.map(f => `
+            <span class="st-tm-label">${f.label}</span>
+            <input class="st-tm-field" data-key="${f.key}" data-sub="packet" value="${cfg[f.key]?.packet ?? TM_DEFAULTS[f.key].packet}" spellcheck="false">
+            <input class="st-tm-field" data-key="${f.key}" data-sub="param"  value="${cfg[f.key]?.param  ?? TM_DEFAULTS[f.key].param}"  spellcheck="false">
+          `).join('')}
+        </div>
+        <button class="st-tm-save">Save</button>
+      </div>
     `;
-    const ipIn = item.querySelector('.st-field-baseurl');
+
+    const ipIn  = item.querySelector('.st-field-baseurl');
     const saveIp = () => { setSatBaseUrl(sat.noradId, ipIn.value.trim()); pingSatellite(sat.id); };
     ipIn.addEventListener('blur',    saveIp);
     ipIn.addEventListener('keydown', e => { if (e.key === 'Enter') ipIn.blur(); });
+
+    const toggle    = item.querySelector('.st-tm-toggle');
+    const tmSection = item.querySelector('.st-tm-config');
+    toggle.addEventListener('click', () => {
+      const open = tmSection.hasAttribute('hidden');
+      tmSection.toggleAttribute('hidden', !open);
+      toggle.textContent = open ? '▾ TM' : '▸ TM';
+      toggle.classList.toggle('open', open);
+    });
+
+    item.querySelector('.st-tm-save').addEventListener('click', () => {
+      const newCfg = {};
+      item.querySelectorAll('.st-tm-field').forEach(inp => {
+        const { key, sub } = inp.dataset;
+        if (!newCfg[key]) newCfg[key] = { ...TM_DEFAULTS[key] };
+        newCfg[key][sub] = inp.value.trim() || TM_DEFAULTS[key][sub];
+      });
+      setTmConfig(sat.noradId, newCfg);
+      fetchSatTelemetry(sat);
+    });
+
     list.appendChild(item);
   }
   list.querySelectorAll('.remove-btn').forEach(btn => {

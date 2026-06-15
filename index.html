@@ -188,6 +188,7 @@
                 <thead>
                   <tr>
                     <th class="co-th">Satellite</th>
+                    <th class="co-th">Connection to SCC</th>
                     <th class="co-th">Last Contact</th>
                     <th class="co-th">Mode</th>
                     <th class="co-th">Battery</th>
@@ -223,7 +224,7 @@
               <label class="st-card-label" for="ping-interval-input">Refresh interval</label>
               <input id="ping-interval-input" type="number" min="5" max="300" step="5" value="20" />
               <span class="st-unit">s</span>
-              <span class="st-tip-icon" title="Seconds between server pings and all outgoing API requests (battery, mode, orbit…). Applies to all satellites.">ⓘ</span>
+              <span class="st-tip-icon" data-tip="How often chadOps contacts each satellite server — checks reachability and fetches telemetry (mode, battery, events). Applies to all satellites. Min 5 s · Max 300 s.">ⓘ</span>
             </div>
           </div>
 

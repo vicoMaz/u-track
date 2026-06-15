@@ -1,5 +1,6 @@
 import * as satjs from 'satellite.js';
 import { store, PALETTE, GS_PALETTE } from './store.js';
+import { setSatBaseUrl } from './satPing.js';
 
 let satIdCounter = 9000;
 let gsIdCounter  = 9000;
@@ -43,6 +44,8 @@ export async function loadInitialState() {
     if (satRes.ok) {
       const sats = await satRes.json();
       for (const item of sats) {
+        // Seed localStorage from server-persisted baseUrl (wins over stale local value)
+        if (item.baseUrl) setSatBaseUrl(item.noradId, item.baseUrl);
         const sat = parseSatEntry(item);
         if (sat) store.addSatellite(sat);
       }

@@ -17,6 +17,10 @@ export function getPingElapsedSec(satId) {
   return _lastPingMs[satId] ? (Date.now() - _lastPingMs[satId]) / 1000 : 0;
 }
 
+export function getLastPingMs(satId) {
+  return _lastPingMs[satId] ?? null;
+}
+
 // ── IP helpers ────────────────────────────────────────────────────
 
 // Keyed by noradId so the IP persists across page reloads (local sat IDs are time-based)
@@ -27,6 +31,12 @@ export function satBaseUrl(noradId) {
 export function setSatBaseUrl(noradId, ip) {
   if (ip) localStorage.setItem(`sat-baseurl-${noradId}`, ip);
   else     localStorage.removeItem(`sat-baseurl-${noradId}`);
+  // Persist to server so it survives localStorage clears and server restarts
+  fetch(`/api/satellites/${noradId}`, {
+    method:  'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ baseUrl: ip || null }),
+  }).catch(() => {});
 }
 
 // ── Ping logic ────────────────────────────────────────────────────

@@ -701,9 +701,59 @@ body.tools-active #sat-info { display: none !important; }
   gap: 6px;
 }
 .st-ping-row .st-card-label { margin-bottom: 0; white-space: nowrap; }
-.st-ping-row input { width: 52px; padding: 3px 6px; }
+.st-ping-row input { width: 52px; padding: 3px 6px; text-align: center; }
+/* Hide number spinner arrows */
+.st-ping-row input[type=number]::-webkit-outer-spin-button,
+.st-ping-row input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.st-ping-row input[type=number] { -moz-appearance: textfield; }
 .st-unit { font-size: 10px; color: #6a8099; white-space: nowrap; }
-.st-tip-icon { font-size: 11px; color: #556677; cursor: default; }
+.st-tip-icon {
+  font-size: 11px;
+  color: #556677;
+  cursor: default;
+  position: relative;
+}
+.st-tip-icon[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 240px;
+  background: #12121e;
+  border: 1px solid #2a3a5a;
+  border-radius: 6px;
+  color: #99aabb;
+  font-size: 11px;
+  line-height: 1.55;
+  padding: 9px 12px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  transform: translateX(-50%) translateY(-4px);
+  z-index: 200;
+  white-space: normal;
+  text-align: left;
+}
+.st-tip-icon[data-tip]::before {
+  content: '';
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-bottom-color: #2a3a5a;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 200;
+}
+.st-tip-icon[data-tip]:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.st-tip-icon[data-tip]:hover::before { opacity: 1; }
 
 .st-card input {
   background: #1a1a28;
@@ -827,6 +877,78 @@ body.tools-active #sat-info { display: none !important; }
   padding: 0 2px;
 }
 .st-item .remove-btn:hover { color: #ff4466; }
+
+/* Satellite items with expandable TM config */
+.st-sat-item { flex-direction: column; align-items: stretch; gap: 0; }
+.st-item-row { display: flex; align-items: center; gap: 8px; }
+
+.st-tm-toggle {
+  background: none;
+  border: 1px solid #1e2a3a;
+  border-radius: 3px;
+  color: #6a8099;
+  font-size: 9px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.st-tm-toggle.open { color: #99bbdd; border-color: #2a4a6a; }
+
+.st-tm-config {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #1a1a2e;
+}
+.st-tm-config[hidden] { display: none; }
+
+.st-tm-grid {
+  display: grid;
+  grid-template-columns: 64px 1fr 1fr;
+  gap: 4px 8px;
+  margin-bottom: 8px;
+}
+.st-tm-col-header {
+  font-size: 9px;
+  color: #445566;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding-bottom: 2px;
+  border-bottom: 1px solid #1a1a2e;
+}
+.st-tm-label {
+  font-size: 9px;
+  color: #6a8099;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  align-self: center;
+  white-space: nowrap;
+}
+.st-tm-field {
+  font-size: 10px;
+  font-family: 'Courier New', monospace;
+  color: #99aabb;
+  background: #0e0e18;
+  border: 1px solid #1e2030;
+  border-radius: 3px;
+  padding: 2px 5px;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+.st-tm-field:focus { border-color: #3a5a7a; color: #ccc; }
+
+.st-tm-save {
+  font-size: 10px;
+  padding: 3px 12px;
+  background: #0e1e2e;
+  color: #5599cc;
+  border: 1px solid #1e3a5a;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.st-tm-save:hover { background: #0e2840; color: #77bbee; }
 
 /* ── GS JSON import ─────────────────────────────────────────── */
 .gs-import-wrap { position: relative; }
@@ -1572,6 +1694,12 @@ body.tools-active #sat-info { display: none !important; }
   min-width: 100px;
   white-space: nowrap;
 }
+.co-ping-cell {
+  text-align: center;
+  vertical-align: middle;
+  white-space: nowrap;
+  width: 80px;
+}
 .co-ping-dot {
   display: inline-block;
   width: 7px;
@@ -1579,9 +1707,26 @@ body.tools-active #sat-info { display: none !important; }
   border-radius: 50%;
   position: relative;
   vertical-align: middle;
-  margin-right: 7px;
   flex-shrink: 0;
   cursor: default;
+}
+.co-ping-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  margin-top: 4px;
+}
+.co-ping-detail-ago {
+  font-size: 9px;
+  color: #ff6680;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.co-ping-detail-time {
+  font-size: 9px;
+  color: #556677;
+  font-family: 'Courier New', monospace;
 }
 .co-ping-dot::after {
   content: '';
@@ -1686,7 +1831,7 @@ body.tools-active #sat-info { display: none !important; }
 
 .co-dot {
   font-size: 14px;
-  cursor: default;
+  cursor: pointer;
   transition: transform 0.1s;
   line-height: 1;
 }

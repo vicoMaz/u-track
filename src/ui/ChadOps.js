@@ -1,9 +1,11 @@
 import { store }                              from '../store.js';
 import { propagate }                          from '../tle.js';
 import { sunDirectionECI, isInEclipse }       from '../sunVector.js';
-import { getPingIntervalSec, getPingElapsedSec, satBaseUrl } from '../satPing.js';
+import { getPingIntervalSec, getPingElapsedSec, getLastPingMs, satBaseUrl } from '../satPing.js';
 
-const GRAFANA_URL = 'http://172.17.206.5:3000/?orgId=1&from=now-6h&to=now&timezone=browser';
+const _grafanaUrl = ip => ip
+  ? `http://${ip.replace(/\.\d+$/, '.5')}:3000/?orgId=1&from=now-6h&to=now&timezone=browser`
+  : null;
 
 // ── Constants ─────────────────────────────────────────────────────
 
@@ -61,8 +63,9 @@ function _generateDummy(sat) {
         success: rng() > (success ? 0.1 : 0.5),
       });
     }
+    const dur = Math.floor(rng() * 600000 + 300000); // 5–15 min pass window
     passes.push({
-      id: `${sat.id}-past-${i}`, time: new Date(t),
+      id: `${sat.id}-past-${i}`, time: new Date(t), aos0: new Date(t), los0: new Date(t + dur),
       station: STATIONS[Math.floor(rng() * STATIONS.length)],
       future: false, success, procedures: procs,
     });
@@ -72,8 +75,9 @@ function _generateDummy(sat) {
   let futT = now + Math.floor(rng() * 3600000 + 3600000);
   for (let i = 0; i < 3; i++) {
     futT += Math.floor(rng() * 2 * 3600000 + 3600000);
+    const futDur = Math.floor(rng() * 600000 + 300000); // 5–15 min pass window
     passes.push({
-      id: `${sat.id}-future-${i}`, time: new Date(futT),
+      id: `${sat.id}-future-${i}`, time: new Date(futT), aos0: new Date(futT), los0: new Date(futT + futDur),
       station: STATIONS[Math.floor(rng() * STATIONS.length)],
       future: true, success: null, procedures: [],
       status: FUTURE_STATUSES[Math.floor(rng() * 3)],
@@ -206,8 +210,15 @@ function _passDots(passes) {
   return `<div class="co-dots">${pastHtml}<span class="co-dot-sep"></span>${futureHtml}</div>`;
 }
 
+function _fmtDuration(ms) {
+  const m = Math.floor(ms / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  return `${m}m ${String(s).padStart(2, '0')}s`;
+}
+
 function _tooltipContent(pass) {
-  const hdr = `<div class="co-tt-header">${pass.station} · ${_fmtDateTimeShort(pass.time)}</div>`;
+  const durStr = pass.aos0 && pass.los0 ? ` · ${_fmtDuration(pass.los0 - pass.aos0)}` : '';
+  const hdr = `<div class="co-tt-header">${pass.station} · ${_fmtDateTimeShort(pass.time)}${durStr}</div>`;
   if (pass.future) {
     const label = (pass.status ?? 'SCHEDULED').replace('_', ' ');
     const cls   = _STATUS_CLS[pass.status] ?? 'co-dot-scheduled';
@@ -220,6 +231,30 @@ function _tooltipContent(pass) {
     `<div class="co-tt-proc ${pr.success ? 'co-tt-ok' : 'co-tt-fail'}">${pr.success ? '●' : '✗'} ${pr.name}</div>`
   ).join('');
   return hdr + res + (procs ? `<div class="co-tt-procs">${procs}</div>` : '');
+}
+
+// ── Ping cell ────────────────────────────────────────────────────
+
+function _buildPingCell(satId) {
+  const ps   = store.pingStatus[satId] ?? 'unconfigured';
+  const per  = getPingIntervalSec();
+  const ela  = getPingElapsedSec(satId).toFixed(1);
+  const pcls = ps === 'ok' ? 'co-ping-ok' : ps === 'unconfigured' ? 'co-ping-none' : 'co-ping-err';
+  const dot  = `<span class="co-ping-dot ${pcls}" style="--ping-period:${per}s;--ping-delay:-${ela}s"></span>`;
+
+  const isErr = ps === 'error' || ps === 'timeout';
+  if (!isErr) return dot;
+
+  const lastMs  = getLastPingMs(satId);
+  const agoStr  = lastMs ? _fmtAgo(Date.now() - lastMs) : '—';
+  const timeStr = lastMs
+    ? new Date(lastMs).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : '—';
+  return `${dot}
+    <div class="co-ping-detail">
+      <span class="co-ping-detail-ago">${agoStr}</span>
+      <span class="co-ping-detail-time">${timeStr}</span>
+    </div>`;
 }
 
 // ── Row HTML ──────────────────────────────────────────────────────
@@ -292,14 +327,9 @@ function _rowHTML(sat, d, now, eclipse) {
     <div class="co-orbit-row"><span class="co-orbit-label">TLE</span>${tleHtml}</div>
   </div>`;
 
-  const _ps  = store.pingStatus[sat.id] ?? 'unconfigured';
-  const _per = getPingIntervalSec();
-  const _ela = getPingElapsedSec(sat.id).toFixed(1);
-  const _pcls = _ps === 'ok' ? 'co-ping-ok' : _ps === 'unconfigured' ? 'co-ping-none' : 'co-ping-err';
-  const _ptip = { ok: 'Server reachable', pending: 'Pinging…', timeout: 'Timeout', error: 'Unreachable', unconfigured: 'No server IP set' }[_ps] ?? _ps;
-
   return `<tr class="co-row" data-sat-id="${sat.id}">
-    <td class="co-name-cell"><span class="co-ping-dot ${_pcls}" data-field="ping" style="--ping-period:${_per}s;--ping-delay:-${_ela}s" title="${_ptip}"></span>${sat.name}</td>
+    <td class="co-name-cell">${sat.name}</td>
+    <td class="co-ping-cell" data-field="ping-cell">${_buildPingCell(sat.id)}</td>
     <td class="co-contact-cell">${contactCell}</td>
     <td class="co-mode-cell">${modeCell}</td>
     <td class="co-batt-cell">${battCell}</td>
@@ -308,7 +338,7 @@ function _rowHTML(sat, d, now, eclipse) {
     <td class="co-missions-cell">${missionCell}</td>
     <td class="co-alerts-cell">${_alertBadge(d.groundAlerts)}</td>
     <td class="co-alerts-cell">${_evtBadge(tm?.events)}</td>
-    <td class="co-links-cell">${_linkBadge('SCC', satBaseUrl(sat.noradId) ? `http://${satBaseUrl(sat.noradId)}:15000/` : null)}${_linkBadge('Grafana', GRAFANA_URL)}</td>
+    <td class="co-links-cell">${_linkBadge('SCC', satBaseUrl(sat.noradId) ? `http://${satBaseUrl(sat.noradId)}:15000/` : null)}${_linkBadge('Grafana', _grafanaUrl(satBaseUrl(sat.noradId)))}</td>
   </tr>`;
 }
 
@@ -376,6 +406,30 @@ export function initChadOps() {
       });
       dot.addEventListener('mousemove',  e => _positionTooltip(e, tooltip));
       dot.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+      dot.addEventListener('click', () => {
+        const sat  = store.satellites.find(s => s.id === satId);
+        if (!sat) return;
+        const pass = _seedDummy(sat).passes[idx];
+        if (!pass?.aos0 || !pass?.los0) return;
+        const ip = satBaseUrl(sat.noradId);
+        if (!ip) return;
+        const host = ip.replace(/\.\d+$/, '.5');
+        const from = pass.aos0.toISOString();
+        const to   = pass.los0.toISOString();
+        window.open(
+          `http://${host}:3000/a/grafana-lokiexplore-app/explore/service/-scc/logs` +
+          `?patterns=%5B%5D&from=${from}&to=${to}` +
+          `&var-lineFormat=&var-ds=P8E80F9AEF21F6940` +
+          `&var-filters=service_name%7C%3D%7C%2Fscc` +
+          `&var-fields=&var-levels=&var-metadata=&var-jsonFields=` +
+          `&var-patterns=&var-lineFilterV2=&var-lineFilters=` +
+          `&timezone=browser&var-all-fields=&userDisplayedFields=false` +
+          `&displayedFields=%5B%5D&urlColumns=%5B%5D` +
+          `&visualizationType=%22logs%22&prettifyLogMessage=false` +
+          `&sortOrder=%22Descending%22&wrapLogMessage=false`,
+          '_blank', 'noopener',
+        );
+      });
     });
 
     // Eclipse cell → Orbit Inspector navigation
@@ -456,32 +510,37 @@ export function initChadOps() {
     }
   }
 
-  function _applyPingDot(el, satId) {
-    if (!el) return;
-    const ps  = store.pingStatus[satId] ?? 'unconfigured';
-    const per = getPingIntervalSec();
-    const ela = getPingElapsedSec(satId).toFixed(1);
-    el.className = 'co-ping-dot ' + (ps === 'ok' ? 'co-ping-ok' : ps === 'unconfigured' ? 'co-ping-none' : 'co-ping-err');
-    el.title = { ok: 'Server reachable', pending: 'Pinging…', timeout: 'Timeout', error: 'Unreachable', unconfigured: 'No server IP set' }[ps] ?? ps;
-    el.style.setProperty('--ping-period', `${per}s`);
-    el.style.setProperty('--ping-delay',  `-${ela}s`);
-  }
-
   function _updatePingDots() {
     for (const sat of store.satellites) {
-      const row = tbody.querySelector(`tr[data-sat-id="${sat.id}"]`);
-      if (row) _applyPingDot(row.querySelector('[data-field="ping"]'), sat.id);
+      const row  = tbody.querySelector(`tr[data-sat-id="${sat.id}"]`);
+      const cell = row?.querySelector('[data-field="ping-cell"]');
+      if (cell) cell.innerHTML = _buildPingCell(sat.id);
     }
   }
 
+  let _agoTimer = null;
+
+  function _tickAgo() {
+    tbody.querySelectorAll('.co-ping-detail').forEach(detail => {
+      const row    = detail.closest('tr');
+      const satId  = row?.dataset.satId;
+      const lastMs = satId ? getLastPingMs(satId) : null;
+      if (!lastMs) return;
+      const agoEl = detail.querySelector('.co-ping-detail-ago');
+      if (agoEl) agoEl.textContent = _fmtAgo(Date.now() - lastMs);
+    });
+  }
+
   function start() {
-    _active = true;
+    _active   = true;
     render();
-    _timer  = setInterval(_tick, 10000);
+    _timer    = setInterval(_tick,    10000);
+    _agoTimer = setInterval(_tickAgo, 1000);
   }
   function stop() {
     _active = false;
-    if (_timer) { clearInterval(_timer); _timer = null; }
+    if (_timer)    { clearInterval(_timer);    _timer    = null; }
+    if (_agoTimer) { clearInterval(_agoTimer); _agoTimer = null; }
     tooltip.style.display = 'none';
   }
 

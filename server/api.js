@@ -1,15 +1,38 @@
 import { createServer } from 'http';
-import { randomUUID } from 'crypto';
+import { randomUUID }  from 'crypto';
+import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
-// ── Persistent state (survives page reloads; reset when Vite restarts) ────────
-const satellites = []; // { noradId, name, tle }
-const stations   = []; // { id, name, shortName, lat, lon }
-const attitudes  = {}; // { [noradId]: { source, entries:[{ t(ms), q:{x,y,z,w} }] } }
+// ── File persistence ──────────────────────────────────────────────────────────
+const _dir  = join(dirname(fileURLToPath(import.meta.url)), '../persistent');
+const _file = join(_dir, 'persistent.json');
+
+function _load() {
+  try {
+    mkdirSync(_dir, { recursive: true });
+    return JSON.parse(readFileSync(_file, 'utf8'));
+  } catch { return {}; }
+}
+
+function _save() {
+  try {
+    mkdirSync(_dir, { recursive: true });
+    writeFileSync(_file, JSON.stringify({ satellites, stations }, null, 2));
+  } catch (e) { console.warn('state save failed:', e.message); }
+}
+
+const _saved = _load();
+
+// ── State ─────────────────────────────────────────────────────────────────────
+const satellites = _saved.satellites ?? []; // { noradId, name, tle, model }
+const stations   = _saved.stations   ?? []; // { id, name, shortName, lat, lon }
+const attitudes  = {};                       // { [noradId]: { ... } } — not persisted (large)
 
 // Feed queues — items added while a page is already open
 const pendingSatellites = [];
 const pendingStations   = [];
-const pendingAttitudes  = []; // { noradId, quaternion, source, timestamp }
+const pendingAttitudes  = [];
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -39,7 +62,7 @@ function send(res, status, data) {
 const SPEC = {
   openapi: '3.0.0',
   info: {
-    title: 'u-track API',
+    title: 'chadOps API',
     version: '1.0.0',
     description:
       'Inject satellites and ground stations into the live tracker. ' +
@@ -78,6 +101,17 @@ const SPEC = {
       },
     },
     '/api/satellites/{noradId}': {
+      patch: {
+        summary: 'Update mutable satellite fields (baseUrl, name)',
+        parameters: [{ name: 'noradId', in: 'path', required: true, schema: { type: 'string' } }],
+        requestBody: {
+          content: { 'application/json': { schema: { type: 'object', properties: {
+            baseUrl: { type: 'string', description: 'API server IP/host for this satellite, e.g. 172.17.206.1' },
+            name:    { type: 'string' },
+          } } } },
+        },
+        responses: { 200: { description: 'Updated satellite' }, 404: { description: 'Not found' } },
+      },
       delete: {
         summary: 'Remove a satellite by NORAD ID',
         parameters: [{ name: 'noradId', in: 'path', required: true, schema: { type: 'string' } }],
@@ -165,7 +199,30 @@ const SPEC = {
         responses: {
           200: {
             description: 'Newly added items since last poll (cleared after response)',
-            content: { 'application/json': { schema: { type: 'object', properties: { satellites: { type: 'array' }, stations: { type: 'array' } } } } },
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    satellites: { type: 'array', items: { $ref: '#/components/schemas/Satellite' } },
+                    stations:   { type: 'array', items: { $ref: '#/components/schemas/Station'   } },
+                    attitudes: {
+                      type: 'array',
+                      description: 'Lightweight attitude notifications — on receipt the client re-fetches GET /api/attitude for the full dataset',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          noradId: { type: 'string' },
+                          source:  { type: 'string' },
+                          cleared: { type: 'boolean', description: 'true = attitude was deleted, client should remove it' },
+                          count:   { type: 'integer', description: 'Number of entries in the updated attitude record' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
           },
         },
       },
@@ -236,17 +293,31 @@ export function createApiMiddleware() {
         const entry = { noradId, name: body.name || null, tle, model };
         satellites.push(entry);
         pendingSatellites.push(entry);
+        _save();
       }
       return send(res, 201, { queued: 1, noradId });
     }
 
+    // PATCH /api/satellites/:noradId  — update mutable fields (baseUrl, name)
+    const satMatch = path.match(/^\/api\/satellites\/(.+)$/);
+    if (satMatch && method === 'PATCH') {
+      const noradId = satMatch[1];
+      const sat = satellites.find(s => s.noradId === noradId);
+      if (!sat) return send(res, 404, { error: 'Not found' });
+      const body = await readBody(req);
+      if ('baseUrl' in body) sat.baseUrl = body.baseUrl || null;
+      if ('name'    in body) sat.name    = body.name    || sat.name;
+      _save();
+      return send(res, 200, sat);
+    }
+
     // DELETE /api/satellites/:noradId
-    const satDel = path.match(/^\/api\/satellites\/(.+)$/);
-    if (satDel && method === 'DELETE') {
-      const noradId = satDel[1];
+    if (satMatch && method === 'DELETE') {
+      const noradId = satMatch[1];
       const idx = satellites.findIndex(s => s.noradId === noradId);
       if (idx === -1) return send(res, 404, { error: 'Not found' });
       satellites.splice(idx, 1);
+      _save();
       return send(res, 200, { deleted: 1 });
     }
 
@@ -271,6 +342,7 @@ export function createApiMiddleware() {
         pendingStations.push(entry);
         return entry;
       });
+      _save();
       return send(res, 201, { queued: created.length, stations: created });
     }
 
@@ -281,6 +353,7 @@ export function createApiMiddleware() {
       const idx = stations.findIndex(s => s.id === id);
       if (idx === -1) return send(res, 404, { error: 'Not found' });
       stations.splice(idx, 1);
+      _save();
       return send(res, 200, { deleted: 1 });
     }
 
