@@ -35,8 +35,9 @@ export function initMap() {
   // Zoom control on the right so it doesn't overlap the satellite panel
   L.control.zoom({ position: 'topright' }).addTo(map);
 
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap contributors',
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, © <a href="https://carto.com/">CARTO</a>',
+    subdomains: 'abcd',
     noWrap: false,
   }).addTo(map);
 
@@ -73,7 +74,7 @@ export function initMap() {
       btn.title     = 'Full world view';
       btn.style.cssText =
         'width:30px;height:30px;cursor:pointer;font-size:18px;' +
-        'line-height:28px;background:#fff;border:none;display:block;text-align:center;';
+        'line-height:28px;background:#1a1a28;color:#aaa;border:none;display:block;text-align:center;';
       L.DomEvent.on(btn, 'click', (e) => {
         L.DomEvent.stopPropagation(e);
         _fitWorld();
