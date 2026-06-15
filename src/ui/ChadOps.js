@@ -222,25 +222,27 @@ function _rowHTML(sat, d, now, eclipse) {
     ? `<span class="co-mission-count">${d.missionPlans}</span>`
     : '<span class="co-nil">—</span>';
 
-  // Merged Eclipse + TLE / Orbit cell
-  let orbitHtml = '';
+  // Eclipse + Altitude + TLE freshness cell
+  let altHtml  = '<span class="co-nil">—</span>';
+  let tleHtml  = '<span class="co-nil">—</span>';
   if (sat.satrec) {
     const sr        = sat.satrec;
     const n         = sr.no;
     const periodMin = (2 * Math.PI / n);
     const a         = Math.cbrt(MU * ((periodMin * 60) / (2 * Math.PI)) ** 2);
-    const incDeg    = sr.inclo * DEG;
-    const orbitType = _classifyOrbit(incDeg, a);
+    const altKm     = (a - R_E).toFixed(0);
+    altHtml = `<span class="co-alt-val">${altKm} km</span>`;
+
     const epochDate = _epochToDate(sr.epochyr, sr.epochdays);
     const ageDays   = (now - epochDate.getTime()) / 86400000;
     const ageCls    = ageDays > 7 ? 'co-tle-stale' : ageDays > 3 ? 'co-tle-old' : 'co-tle-fresh';
-    const ageIcon   = ageDays > 7 ? '!' : ageDays > 3 ? '⚠' : '✓';
-    orbitHtml = `<span class="co-tle-orbit">${orbitType}</span>
-      <span class="co-tle-age ${ageCls}">${ageDays.toFixed(1)}d ${ageIcon}</span>`;
+    const ageIcon   = ageDays > 7 ? '⚠' : ageDays > 3 ? '~' : '✓';
+    tleHtml = `<span class="co-tle-age ${ageCls}">${ageDays.toFixed(1)}d ${ageIcon}</span>`;
   }
-  const orbitCell = `<div class="co-orbit-cell co-eclipse-nav" data-sat-id="${sat.id}">
-    ${eclHtml}
-    ${orbitHtml}
+  const orbitCell = `<div class="co-orbit-stack co-eclipse-nav" data-sat-id="${sat.id}">
+    <div class="co-orbit-row"><span class="co-orbit-label">ECL</span>${eclHtml}</div>
+    <div class="co-orbit-row"><span class="co-orbit-label">ALT</span>${altHtml}</div>
+    <div class="co-orbit-row"><span class="co-orbit-label">TLE</span>${tleHtml}</div>
   </div>`;
 
   return `<tr class="co-row" data-sat-id="${sat.id}">
@@ -249,7 +251,7 @@ function _rowHTML(sat, d, now, eclipse) {
     <td class="co-mode-cell">${modeCell}</td>
     <td class="co-batt-cell">${battCell}</td>
     <td class="co-passes-cell" data-sat-id="${sat.id}">${_passDots(d.passes)}</td>
-    <td class="co-tle-col">${orbitCell}</td>
+    <td>${orbitCell}</td>
     <td class="co-missions-cell">${missionCell}</td>
     <td class="co-alerts-cell">${_alertBadge(d.groundAlerts)}</td>
     <td class="co-alerts-cell">${_alertBadge(d.boardAlerts)}</td>

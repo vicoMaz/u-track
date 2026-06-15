@@ -172,6 +172,14 @@ body.tracking-active #side-panel { top: 100px; }
   display: block;
   flex-shrink: 0;
 }
+#app-name {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #c0ccee;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
 
 .tab-bar-sep {
   width: 1px;
@@ -1419,7 +1427,7 @@ body.tools-active #sat-info { display: none !important; }
 #co-subtab-fleet { overflow-y: auto; }
 
 .co-container {
-  padding: 20px 24px;
+  padding: 8px 16px;
   min-height: 100%;
 }
 
@@ -1628,33 +1636,34 @@ body.tools-active #sat-info { display: none !important; }
 }
 
 /* ── Eclipse / Orbit merged cell ───────────────────────────────── */
-.co-orbit-cell {
+.co-orbit-stack {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
   cursor: pointer;
+  min-width: 130px;
 }
-.co-eclipse-nav:hover .co-ecl-shadow,
-.co-eclipse-nav:hover .co-ecl-sun { text-decoration: underline; }
+.co-orbit-row   { display: flex; align-items: center; gap: 6px; }
+.co-orbit-label {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.08em;
+  color: #445566; min-width: 24px; text-transform: uppercase;
+}
 
-.co-ecl-shadow { color: #88aadd; font-weight: 400; font-size: 11px; }
-.co-ecl-sun    { color: #ddbb44; font-weight: 400; font-size: 11px; }
+.co-ecl-shadow { color: #88aadd; font-size: 11px; }
+.co-ecl-sun    { color: #ddbb44; font-size: 11px; }
+
+.co-alt-val { color: #c0ccee; font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.co-tle-age   { font-size: 11px; font-weight: 500; }
+.co-tle-fresh { color: #4a9e6a; }
+.co-tle-old   { color: #ffcc00; }
+.co-tle-stale { color: #ff4466; }
 
 /* ── Battery ───────────────────────────────────────────────────── */
 .co-batt-cell  { min-width: 75px; font-variant-numeric: tabular-nums; }
-/* Battery OK = no news, grey. Only warn/low are highlighted. */
 .co-batt-ok   { color: #c0ccee; font-weight: 400; }
 .co-batt-warn { color: #ffcc00; font-weight: 600; }
 .co-batt-low  { color: #ff4466; font-weight: 600; }
-
-/* ── TLE / Orbit ───────────────────────────────────────────────── */
-.co-tle-col  { min-width: 120px; }
-.co-tle-cell { display: flex; flex-direction: column; gap: 2px; }
-.co-tle-orbit { font-size: 11.5px; color: #99bbdd; }
-.co-tle-age   { font-size: 10.5px; font-weight: 400; }
-.co-tle-fresh { color: #99bbdd; }
-.co-tle-old   { color: #ffcc00; }
-.co-tle-stale { color: #ff4466; }
 
 /* ── Missions ──────────────────────────────────────────────────── */
 .co-missions-cell { min-width: 70px; text-align: center; }
@@ -1765,6 +1774,19 @@ a.co-link:hover {
 }
 .co-sched-nav-btn:hover { color: #c77dff; border-color: #c77dff60; }
 .co-sched-today-btn { color: #c77dff; border-color: #c77dff40; }
+.co-sched-gcal-btn {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid #1a4a2a;
+  color: #4a9e6a;
+  padding: 3px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.co-sched-gcal-btn:hover { color: #6fcf97; border-color: #3a8a5a; background: #0d2018; }
 
 /* ── Legend ────────────────────────────────────────────────────── */
 .co-sched-legend {
