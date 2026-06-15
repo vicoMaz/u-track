@@ -35,8 +35,8 @@ export function initMap() {
   // Zoom control on the right so it doesn't overlap the satellite panel
   L.control.zoom({ position: 'topright' }).addTo(map);
 
-  const TILE_DARK  = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
-  const TILE_LIGHT = 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+  const TILE_DARK  = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+  const TILE_LIGHT = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
   const TILE_ATTR  = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, © <a href="https://carto.com/">CARTO</a>';
 
   let _darkMode = true;
@@ -97,6 +97,7 @@ export function initMap() {
         btn.textContent = _darkMode ? 'Light' : 'Dark';
         btn.title = _darkMode ? 'Switch to light map' : 'Switch to dark map';
         tileLayer.setUrl(_darkMode ? TILE_DARK : TILE_LIGHT);
+        tileLayer.redraw();
       };
       update();
       L.DomEvent.on(btn, 'click', (e) => {
