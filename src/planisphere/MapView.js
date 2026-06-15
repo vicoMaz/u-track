@@ -95,6 +95,8 @@ export function initMap() {
         btn.title = _darkMode ? 'Switch to light map' : 'Switch to dark map';
         _tileLayer.remove();
         _tileLayer = L.tileLayer(_darkMode ? TILE_DARK : TILE_LIGHT, TILE_OPTS).addTo(map);
+        if (_darkMode) _tileLayer.setOpacity(parseFloat(dbgSlider.value));
+        dbgControl.style.display = _darkMode ? 'flex' : 'none';
       };
       update();
       L.DomEvent.on(btn, 'click', (e) => {
@@ -106,6 +108,24 @@ export function initMap() {
     },
   });
   new ThemeControl().addTo(map);
+
+  // ── DEBUG: dark opacity slider — remove once value is decided ──────────────
+  let dbgSlider, dbgControl;
+  const DbgControl = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+      dbgControl = L.DomUtil.create('div', 'leaflet-bar map-dbg-opacity');
+      dbgControl.innerHTML = `<span>Opacity</span><input type="range" min="0.3" max="1" step="0.02" value="0.92">`;
+      dbgSlider = dbgControl.querySelector('input');
+      L.DomEvent.disableClickPropagation(dbgControl);
+      dbgSlider.addEventListener('input', () => {
+        if (_darkMode) _tileLayer.setOpacity(parseFloat(dbgSlider.value));
+      });
+      return dbgControl;
+    },
+  });
+  new DbgControl().addTo(map);
+  // ── END DEBUG ──────────────────────────────────────────────────────────────
 
   // Redraw night canvas whenever the map view changes (pan or zoom)
   // Also invalidate lat/lon cache since pixel→coord mapping changed
