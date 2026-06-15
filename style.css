@@ -208,7 +208,7 @@ body.tracking-active #side-panel { top: 100px; }
 }
 .panel-toggle:hover { color: #ccc; }
 
-#gs-footprint-all-btn {
+.panel-all-btn {
   background: none;
   border: 1px solid #2a2a3a;
   border-radius: 4px;
@@ -216,11 +216,13 @@ body.tracking-active #side-panel { top: 100px; }
   font-size: 11px;
   padding: 2px 7px;
   cursor: pointer;
-  margin-left: auto;
   transition: all 0.15s;
   flex-shrink: 0;
 }
-#gs-footprint-all-btn:hover { color: #aaa; border-color: #444; }
+/* Push the first "all" button to the right, rest follow naturally */
+.panel-header span + .panel-all-btn { margin-left: auto; }
+.panel-all-btn:hover { color: #aaa; border-color: #444; }
+.panel-all-btn.active { color: #778899; border-color: #778899; }
 #gs-footprint-all-btn.active { color: #ff9f43; border-color: #ff9f43; }
 
 .panel-body {

@@ -326,8 +326,22 @@ export function initInputPanel() {
     document.getElementById('gs-panel').classList.toggle('collapsed');
   });
 
-  const allBtn = document.getElementById('gs-footprint-all-btn');
-  allBtn?.addEventListener('click', () => {
+  const satVisAllBtn = document.getElementById('sat-vis-all-btn');
+  satVisAllBtn?.addEventListener('click', () => {
+    const allOn = store.satellites.every(s => s.visible !== false);
+    for (const s of store.satellites) s.visible = !allOn;
+    store.notify('satellites');
+  });
+
+  const gsVisAllBtn  = document.getElementById('gs-vis-all-btn');
+  gsVisAllBtn?.addEventListener('click', () => {
+    const allOn = store.groundStations.every(g => g.visible !== false);
+    for (const gs of store.groundStations) gs.visible = !allOn;
+    store.notify('groundStations');
+  });
+
+  const allFpBtn = document.getElementById('gs-footprint-all-btn');
+  allFpBtn?.addEventListener('click', () => {
     const allOn = store.groundStations.every(g => g.showFootprint);
     for (const gs of store.groundStations) gs.showFootprint = !allOn;
     store.notify('groundStations');
@@ -337,12 +351,16 @@ export function initInputPanel() {
     if (key === 'satellites' || key === 'trackedSatId') {
       renderSatList();
       renderSettingsSatList();
+      const allSatVis = store.satellites.length > 0 && store.satellites.every(s => s.visible !== false);
+      satVisAllBtn?.classList.toggle('active', allSatVis);
     }
     if (key === 'groundStations') {
       renderGsList();
       if (!_skipGsSettingsRender) renderSettingsGsList();
-      const allOn = store.groundStations.length > 0 && store.groundStations.every(g => g.showFootprint);
-      allBtn?.classList.toggle('active', allOn);
+      const allGsVis = store.groundStations.length > 0 && store.groundStations.every(g => g.visible !== false);
+      const allFp    = store.groundStations.length > 0 && store.groundStations.every(g => g.showFootprint);
+      gsVisAllBtn?.classList.toggle('active', allGsVis);
+      allFpBtn?.classList.toggle('active', allFp);
     }
   });
 
