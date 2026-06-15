@@ -2,10 +2,11 @@ import { store, PALETTE, GS_PALETTE } from '../store.js';
 import { fetchTLE, parseTLE, propagate } from '../tle.js';
 import { persistSatellite, persistStation, deleteServerSatellite, deleteServerStation, updateServerStation } from '../apiPoller.js';
 
-// ─── Eye icons ────────────────────────────────────────────────────────────
+// ─── Icons ────────────────────────────────────────────────────────────────
 
-const SVG_EYE = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const SVG_EYE     = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
 const SVG_EYE_OFF = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+const SVG_CIRCLE  = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg>`;
 
 // ─── Satellite side-panel list (visibility toggles only) ──────────────────
 
@@ -51,19 +52,16 @@ function renderGsList() {
     item.innerHTML = `
       <span class="sat-dot" style="background:${gs.color}"></span>
       <span class="gs-name">${gs.name}</span>
-      <button class="vis-btn ${hidden ? 'vis-off' : ''}" data-id="${gs.id}" title="${hidden ? 'Show' : 'Hide'}">${hidden ? SVG_EYE_OFF : SVG_EYE}</button>
-      <label class="footprint-toggle" title="Show footprint">
-        <input type="checkbox" class="fp-cb" data-id="${gs.id}" ${gs.showFootprint ? 'checked' : ''}>
-        <span class="toggle-track"></span>
-      </label>
+      <button class="vis-btn ${hidden ? 'vis-off' : ''}" data-id="${gs.id}" title="${hidden ? 'Show station' : 'Hide station'}">${hidden ? SVG_EYE_OFF : SVG_EYE}</button>
+      <button class="fp-btn ${gs.showFootprint ? '' : 'fp-off'}" data-id="${gs.id}" title="${gs.showFootprint ? 'Hide coverage' : 'Show coverage'}">${SVG_CIRCLE}</button>
     `;
     list.appendChild(item);
   }
   list.querySelectorAll('.vis-btn').forEach(btn => {
     btn.addEventListener('click', () => store.toggleGSVisibility(btn.dataset.id));
   });
-  list.querySelectorAll('.fp-cb').forEach(cb => {
-    cb.addEventListener('change', () => store.toggleGSFootprint(cb.dataset.id));
+  list.querySelectorAll('.fp-btn').forEach(btn => {
+    btn.addEventListener('click', () => store.toggleGSFootprint(btn.dataset.id));
   });
 }
 

@@ -329,37 +329,19 @@ body.tracking-active #side-panel { top: 100px; }
 }
 .gs-item .remove-btn:hover { color: #ff3860; }
 
-/* Footprint toggle switch */
-.footprint-toggle {
-  position: relative;
-  display: inline-block;
-  width: 26px;
-  height: 14px;
-  flex-shrink: 0;
+.fp-btn {
+  background: transparent;
+  border: none;
+  color: #778899;
   cursor: pointer;
+  padding: 0 2px;
+  line-height: 0;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
 }
-.footprint-toggle input { display: none; }
-.toggle-track {
-  position: absolute;
-  inset: 0;
-  background: #2a2a3a;
-  border-radius: 7px;
-  transition: background 0.15s;
-}
-.toggle-track::after {
-  content: '';
-  position: absolute;
-  left: 2px; top: 2px;
-  width: 10px; height: 10px;
-  background: #555;
-  border-radius: 50%;
-  transition: transform 0.15s, background 0.15s;
-}
-.footprint-toggle input:checked + .toggle-track { background: #ff9f4344; }
-.footprint-toggle input:checked + .toggle-track::after {
-  transform: translateX(12px);
-  background: #ff9f43;
-}
+.fp-btn.fp-off { color: #2a3a4a; }
+.fp-btn:hover { opacity: 0.75; }
 
 /* ── Time Player ────────────────────────────────────── */
 #time-player {
