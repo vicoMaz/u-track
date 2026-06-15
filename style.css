@@ -760,7 +760,7 @@ body.tools-active #sat-info { display: none !important; }
 .vis-btn {
   background: transparent;
   border: none;
-  color: #44cc77;
+  color: #778899;
   cursor: pointer;
   padding: 0 2px;
   line-height: 0;
@@ -768,7 +768,7 @@ body.tools-active #sat-info { display: none !important; }
   display: flex;
   align-items: center;
 }
-.vis-btn.vis-off { color: #334455; }
+.vis-btn.vis-off { color: #2a3a4a; }
 .vis-btn:hover { opacity: 0.75; }
 
 /* ── Subtab system (shared: Tracking / Tools / chadOps) ──── */
