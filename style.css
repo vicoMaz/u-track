@@ -770,7 +770,7 @@ body.tools-active #sat-info { display: none !important; }
   position: absolute;
   bottom: calc(100% + 8px);
   left: 0;
-  width: 290px;
+  width: 360px;
   background: #1a1a2e;
   border: 1px solid #3a3a5a;
   border-radius: 8px;
