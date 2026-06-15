@@ -748,6 +748,71 @@ body.tools-active #sat-info { display: none !important; }
 }
 .st-item .remove-btn:hover { color: #ff4466; }
 
+.gs-edit-btn {
+  background: none;
+  border: none;
+  color: #556677;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 3px;
+  line-height: 1;
+}
+.gs-edit-btn:hover { color: #99aabb; }
+
+/* Inline edit state for GS items */
+.st-item-editing {
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  border-left-color: #5566aa;
+}
+.st-edit-name {
+  flex: 1;
+  min-width: 80px;
+  background: #12121e;
+  border: 1px solid #5566aa;
+  border-radius: 4px;
+  color: #ccc;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+.st-edit-lat,
+.st-edit-lon {
+  width: 80px;
+  background: #12121e;
+  border: 1px solid #5566aa;
+  border-radius: 4px;
+  color: #ccc;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+.st-save-btn {
+  background: none;
+  border: 1px solid #44aa66;
+  border-radius: 4px;
+  color: #44aa66;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 7px;
+  transition: background 0.12s;
+}
+.st-save-btn:hover { background: #44aa6622; }
+.st-cancel-btn {
+  background: none;
+  border: 1px solid #334;
+  border-radius: 4px;
+  color: #556;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 7px;
+  transition: all 0.12s;
+}
+.st-cancel-btn:hover { color: #ff4466; border-color: #ff4466; }
+
 /* ── Tracking side-panel visibility items ───────────── */
 .sat-dot {
   width: 7px;

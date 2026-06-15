@@ -131,3 +131,14 @@ export async function deleteServerSatellite(noradId) {
 export async function deleteServerStation(id) {
   try { await fetch(`/api/stations/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch { }
 }
+
+export async function updateServerStation(id, name, lat, lon) {
+  try {
+    await fetch(`/api/stations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await fetch('/api/stations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, name, shortName: '', lat, lon }),
+    });
+  } catch { }
+}

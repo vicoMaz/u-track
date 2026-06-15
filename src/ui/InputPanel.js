@@ -1,6 +1,6 @@
 import { store, PALETTE, GS_PALETTE } from '../store.js';
 import { fetchTLE, parseTLE, propagate } from '../tle.js';
-import { persistSatellite, persistStation, deleteServerSatellite, deleteServerStation } from '../apiPoller.js';
+import { persistSatellite, persistStation, deleteServerSatellite, deleteServerStation, updateServerStation } from '../apiPoller.js';
 
 // ─── Eye icons ────────────────────────────────────────────────────────────
 
@@ -103,20 +103,58 @@ function renderSettingsGsList() {
     const item = document.createElement('div');
     item.className = 'st-item';
     item.style.setProperty('--gs-color', gs.color);
-    item.innerHTML = `
-      <span class="st-color-dot" style="background:${gs.color}"></span>
-      <span class="st-item-name">${gs.name}</span>
-      <span class="st-item-meta">${gs.lat.toFixed(2)}°, ${gs.lon.toFixed(2)}°</span>
-      <button class="remove-btn" data-id="${gs.id}" title="Remove">×</button>
-    `;
+    _gsItemView(item, gs);
     list.appendChild(item);
   }
-  list.querySelectorAll('.remove-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      deleteServerStation(btn.dataset.id);
-      store.removeGroundStation(btn.dataset.id);
-    });
+}
+
+function _gsItemView(item, gs) {
+  item.classList.remove('st-item-editing');
+  item.innerHTML = `
+    <span class="st-item-name">${gs.name}</span>
+    <span class="st-item-meta">${gs.lat.toFixed(4)}°, ${gs.lon.toFixed(4)}°</span>
+    <button class="gs-edit-btn" title="Edit">✏</button>
+    <button class="remove-btn" title="Remove">×</button>
+  `;
+  item.querySelector('.gs-edit-btn').addEventListener('click', () => _gsItemEdit(item, gs));
+  item.querySelector('.remove-btn').addEventListener('click', () => {
+    deleteServerStation(gs.id);
+    store.removeGroundStation(gs.id);
   });
+}
+
+function _gsItemEdit(item, gs) {
+  item.classList.add('st-item-editing');
+  item.innerHTML = `
+    <input class="st-edit-name" value="${gs.name}" placeholder="Name" maxlength="30">
+    <input class="st-edit-lat" type="number" value="${gs.lat}" placeholder="Lat" min="-90" max="90" step="any">
+    <input class="st-edit-lon" type="number" value="${gs.lon}" placeholder="Lon" min="-180" max="180" step="any">
+    <button class="st-save-btn" title="Save">✓</button>
+    <button class="st-cancel-btn" title="Cancel">✗</button>
+  `;
+  const nameIn = item.querySelector('.st-edit-name');
+  const latIn  = item.querySelector('.st-edit-lat');
+  const lonIn  = item.querySelector('.st-edit-lon');
+
+  function save() {
+    const name = nameIn.value.trim() || gs.name;
+    const lat  = parseFloat(latIn.value);
+    const lon  = parseFloat(lonIn.value);
+    if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+      latIn.style.borderColor = '#ff3860';
+      lonIn.style.borderColor = '#ff3860';
+      return;
+    }
+    store.updateGroundStation(gs.id, { name, lat, lon });
+    updateServerStation(gs.id, name, lat, lon);
+  }
+
+  item.querySelector('.st-save-btn').addEventListener('click', save);
+  item.querySelector('.st-cancel-btn').addEventListener('click', () => _gsItemView(item, gs));
+  nameIn.addEventListener('keydown', e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') _gsItemView(item, gs); });
+  lonIn.addEventListener('keydown',  e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') _gsItemView(item, gs); });
+  nameIn.focus();
+  nameIn.select();
 }
 
 // ─── Model toggle ─────────────────────────────────────────────────────────

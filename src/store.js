@@ -67,6 +67,13 @@ export const store = {
     this.notify('groundStations');
   },
 
+  updateGroundStation(id, updates) {
+    const gs = this.groundStations.find(g => g.id === id);
+    if (!gs) return;
+    Object.assign(gs, updates);
+    this.notify('groundStations');
+  },
+
   toggleGSFootprint(id) {
     const gs = this.groundStations.find(g => g.id === id);
     if (gs) { gs.showFootprint = !gs.showFootprint; this.notify('groundStations'); }
