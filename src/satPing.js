@@ -60,7 +60,8 @@ async function _ping(sat) {
     _lastPingMs[sat.id] = Date.now();
     store.setPingStatus(sat.id, 'ok');
   } catch (e) {
-    _lastPingMs[sat.id] = Date.now();
+    // Do NOT update _lastPingMs on failure — the elapsed counter should show
+    // how long ago the satellite was last reachable, not when we last tried.
     store.setPingStatus(sat.id, e.name === 'AbortError' ? 'timeout' : 'error');
   } finally {
     clearTimeout(timer);
