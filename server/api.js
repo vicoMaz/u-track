@@ -256,6 +256,50 @@ const SPEC = {
   },
 };
 
+// ── TLE auto-refresh ─────────────────────────────────────────────────────────
+
+const _CELESTRAK = id =>
+  `https://celestrak.org/NORAD/elements/gp.php?CATNR=${id}&FORMAT=TLE`;
+
+async function _fetchFreshTle(noradId) {
+  const ctrl  = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15_000);
+  try {
+    const res = await fetch(_CELESTRAK(noradId), { signal: ctrl.signal });
+    if (!res.ok) return null;
+    const text  = (await res.text()).trim();
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    const line1 = lines.find(l => l.startsWith('1 ') && l.length >= 60);
+    const line2 = lines.find(l => l.startsWith('2 ') && l.length >= 60);
+    return (line1 && line2) ? `${line1}\n${line2}` : null;
+  } catch { return null; }
+  finally { clearTimeout(timer); }
+}
+
+export async function refreshAllTles() {
+  let updated = 0;
+  for (const sat of satellites) {
+    if (!sat.noradId) continue;
+    const tle = await _fetchFreshTle(sat.noradId);
+    if (tle && tle !== sat.tle) {
+      sat.tle = tle;
+      sat.tleUpdatedAt = new Date().toISOString();
+      // tleUpdate flag tells the client to swap satrec on the existing entry
+      pendingSatellites.push({ ...sat, tleUpdate: true });
+      updated++;
+    }
+    // 500 ms gap between requests — Celestrak rate-limit courtesy
+    await new Promise(r => setTimeout(r, 500));
+  }
+  if (updated > 0) _save();
+  console.log(`[TLE] refreshed ${updated}/${satellites.length} at ${new Date().toUTCString()}`);
+}
+
+export function startTleRefresher() {
+  refreshAllTles();
+  setInterval(refreshAllTles, 24 * 60 * 60 * 1000);
+}
+
 // ── Request handler ───────────────────────────────────────────────────────────
 
 export function createApiMiddleware() {

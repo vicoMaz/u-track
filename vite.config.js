@@ -1,5 +1,5 @@
 import { defineConfig } from 'vite';
-import { createApiMiddleware } from './server/api.js';
+import { createApiMiddleware, startTleRefresher } from './server/api.js';
 
 export default defineConfig({
   plugins: [
@@ -7,6 +7,7 @@ export default defineConfig({
       name: 'api-server',
       configureServer(server) {
         server.middlewares.use(createApiMiddleware());
+        startTleRefresher();
       },
     },
   ],

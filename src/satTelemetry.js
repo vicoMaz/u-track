@@ -16,17 +16,32 @@ export const TM_DEFAULTS = {
   evtLow:    { packet: 'TM_3_25_OBSW_HK_PLT', param: 'OBSW_AM_NB_LOW_SEV_EVT'     },
   evtMed:    { packet: 'TM_3_25_OBSW_HK_PLT', param: 'OBSW_AM_NB_MED_SEV_EVT'     },
   evtHigh:   { packet: 'TM_3_25_OBSW_HK_PLT', param: 'OBSW_AM_NB_HIGH_SEV_EVT'    },
+  rw1:       { packet: 'TM_3_25_OBSW_HK_PLT', param: 'OBSW_AM_RW1_STATUS'          },
+  rw2:       { packet: 'TM_3_25_OBSW_HK_PLT', param: 'OBSW_AM_RW2_STATUS'          },
+  rw3:       { packet: 'TM_3_25_OBSW_HK_PLT', param: 'OBSW_AM_RW3_STATUS'          },
+  rw4:       { packet: 'TM_3_25_OBSW_HK_PLT', param: 'OBSW_AM_RW4_STATUS'          },
+  uptime:    { packet: 'TM_3_25_OBSW_HK_PLT', param: 'OBSW_AM_UPTIME'              },
 };
 
-export function getTmConfig(noradId) {
+const TM_DEFAULTS_12U = {
+  ...TM_DEFAULTS,
+  battery: { packet: 'TM_3_25_OBSW_HK_EPS_1S', param: 'EPS_AM_BAT_CALC' },
+};
+
+function _modelDefaults(model) {
+  return model === '12U' ? TM_DEFAULTS_12U : TM_DEFAULTS;
+}
+
+export function getTmConfig(noradId, model) {
+  const defaults = _modelDefaults(model);
   try {
     const saved = JSON.parse(localStorage.getItem(`sat-tmconfig-${noradId}`) ?? '{}');
     const cfg = {};
-    for (const [k, def] of Object.entries(TM_DEFAULTS)) {
+    for (const [k, def] of Object.entries(defaults)) {
       cfg[k] = { ...def, ...(saved[k] ?? {}) };
     }
     return cfg;
-  } catch { return structuredClone(TM_DEFAULTS); }
+  } catch { return structuredClone(defaults); }
 }
 
 export function setTmConfig(noradId, config) {
@@ -45,9 +60,59 @@ function _findParam(containers, name) {
   return null;
 }
 
+const _SEV_RANK = { WATCH: 1, WARNING: 2, DISTRESS: 3, SEVERE: 4, CRITICAL: 5 };
+
+function _rangeContains(range, value) {
+  const minOk = range.minInclusive != null ? value >= range.minInclusive
+              : range.minExclusive  != null ? value >  range.minExclusive : true;
+  const maxOk = range.maxInclusive != null ? value <= range.maxInclusive
+              : range.maxExclusive  != null ? value <  range.maxExclusive : true;
+  return minOk && maxOk;
+}
+
+// Numeric ranges: each range defines the safe operating band — outside it triggers the alarm.
+// Enum conditions: each condition maps an exact string value to a criticality level.
+function _computeStatus(monitoring, value) {
+  if (!monitoring || value == null) return null;
+
+  // Numeric range monitoring
+  const ranges = [
+    monitoring.watchRange, monitoring.warningRange, monitoring.distressRange,
+    monitoring.severeRange, monitoring.criticalRange,
+  ].filter(Boolean);
+  if (ranges.length) {
+    let worstRank = 0, worstStatus = null;
+    for (const r of ranges) {
+      if (!_rangeContains(r, value)) {
+        const rank = _SEV_RANK[r.criticality] ?? 0;
+        if (rank > worstRank) { worstRank = rank; worstStatus = r.criticality; }
+      }
+    }
+    return worstStatus ?? 'NOMINAL';
+  }
+
+  // Enum/textual condition monitoring
+  const conditions = [
+    monitoring.criticalCondition, monitoring.severeCondition, monitoring.distressCondition,
+    monitoring.warningCondition,  monitoring.watchCondition,  monitoring.nominalCondition,
+  ].filter(Boolean);
+  if (conditions.length) {
+    const strVal = String(value).toUpperCase();
+    for (const c of conditions) {
+      if (String(c.condition).toUpperCase() === strVal) return c.criticality;
+    }
+    return 'NOMINAL'; // value not mapped to any condition
+  }
+
+  return null;
+}
+
 function _extract(param) {
   if (!param) return null;
-  return { value: param.physicalValue?.value ?? null, status: param.status ?? 'NOMINAL' };
+  const value      = param.physicalValue?.value ?? null;
+  const monitoring = param.monitoring ?? null;
+  const status     = _computeStatus(monitoring, value) ?? param.status ?? 'NOMINAL';
+  return { value, status, monitoring };
 }
 
 async function _fetchPacket(ip, packetName) {
@@ -74,7 +139,7 @@ export async function fetchSatTelemetry(sat) {
   const ip = _satIp(sat.noradId);
   if (!ip) return;
 
-  const cfg = getTmConfig(sat.noradId);
+  const cfg = getTmConfig(sat.noradId, sat.model);
 
   // Group fields by their packet name so each unique TM is fetched only once
   const byPacket = new Map(); // packetName → [{field, param}]
@@ -102,6 +167,8 @@ export async function fetchSatTelemetry(sat) {
     sysMode:     extracted.sysMode   ?? null,
     gncMode:     extracted.gncMode   ?? null,
     battVoltage: extracted.battery   ?? null,
+    rw: [extracted.rw1 ?? null, extracted.rw2 ?? null, extracted.rw3 ?? null, extracted.rw4 ?? null],
+    uptime: extracted.uptime ?? null,
     events: {
       normal: extracted.evtNormal ?? null,
       low:    extracted.evtLow    ?? null,

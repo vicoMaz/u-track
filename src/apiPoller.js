@@ -86,8 +86,20 @@ export function startApiPoller() {
           }
         }
         for (const item of satellites) {
-          const sat = parseSatEntry(item);
-          if (sat) store.addSatellite(sat);
+          if (item.tleUpdate) {
+            try {
+              const lines = item.tle.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+              const line1 = lines.find(l => l.startsWith('1 ') && l.length >= 60);
+              const line2 = lines.find(l => l.startsWith('2 ') && l.length >= 60);
+              if (line1 && line2) {
+                const satrec = satjs.twoline2satrec(line1, line2);
+                if (satrec.error === 0) store.updateSatTle(item.noradId, satrec);
+              }
+            } catch { /* ignore bad TLE */ }
+          } else {
+            const sat = parseSatEntry(item);
+            if (sat) store.addSatellite(sat);
+          }
         }
         for (const item of stations) {
           const gs = parseGsEntry(item);

@@ -1,5 +1,6 @@
 import { store }              from './store.js';
 import { fetchSatTelemetry } from './satTelemetry.js';
+import { fetchSatPasses }    from './satPasses.js';
 
 const PING_TIMEOUT = 5_000;
 
@@ -75,7 +76,12 @@ async function _ping(sat) {
 const _schedTimers = {}; // satId → timer handle
 
 async function _pingAndReschedule(sat) {
-  await Promise.all([_ping(sat), fetchSatTelemetry(sat)]);
+  try {
+    await _ping(sat);
+    if (store.pingStatus[sat.id] === 'ok') {
+      await Promise.all([fetchSatTelemetry(sat), fetchSatPasses(sat)]);
+    }
+  } catch { /* never let an error kill the cycle */ }
   _schedTimers[sat.id] = setTimeout(() => _pingAndReschedule(sat), getPingIntervalSec() * 1000);
 }
 

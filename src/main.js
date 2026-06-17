@@ -29,6 +29,7 @@ tabBtns.forEach(btn => {
     sidePanel.style.display = hideSide ? 'none' : '';
     document.body.classList.toggle('tools-active',    hideSide);
     document.body.classList.toggle('tracking-active', isTracking);
+    location.hash = target;
   });
 });
 
@@ -66,5 +67,10 @@ coSubtabBtns.forEach(btn => {
     coSubtabContents.forEach(c => c.classList.toggle('active', c.id === `co-subtab-${target}`));
   });
 });
+
+// Restore tab from URL hash — must run after all initX() so their listeners are registered
+const _initHash = location.hash.slice(1);
+const _initBtn  = [...tabBtns].find(b => b.dataset.tab === _initHash);
+if (_initBtn) _initBtn.click();
 
 loadInitialState().then(() => { startApiPoller(); initSatPing(); });

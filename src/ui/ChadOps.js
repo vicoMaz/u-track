@@ -9,105 +9,9 @@ const _grafanaUrl = ip => ip
 
 // ── Constants ─────────────────────────────────────────────────────
 
-const PROCEDURES = [
-  'OPS_ROUTINE_NOMINAL', 'OPS_HEALTH_CHECK', 'OPS_STATUS_REPORT',
-  'MIS_SOAP_MISSION', 'MIS_IMAGING_SESSION', 'MIS_DOWNLINK_PAYLOAD',
-  'FSW_DOWNLOAD_DIAG_PS', 'FSW_PATCH_UPLOAD', 'FSW_PARAMETER_UPDATE',
-  'TTC_BEACON_CHECK', 'TTC_RANGING_SESSION',
-  'ADCS_MANEUVER_EXEC', 'ADCS_POINTING_VERIFY',
-  'EPS_BATTERY_CONDITIONING',
-];
-const STATIONS = ['TRO', 'SVB', 'KIR', 'KST', 'AWS'];
-
 const MU  = 398600.4418;
 const R_E = 6371;
 const DEG = 180 / Math.PI;
-
-// ── Dummy data ────────────────────────────────────────────────────
-
-const _dummyCache = new Map();
-
-function _seededRng(seed) {
-  let s = (seed | 0) ^ 0xdeadbeef;
-  return () => {
-    s ^= s << 13; s ^= s >> 17; s ^= s << 5;
-    return (s >>> 0) / 0x100000000;
-  };
-}
-
-function _hashStr(str) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 0x01000193);
-  return h;
-}
-
-function _generateDummy(sat) {
-  const rng = _seededRng(_hashStr(sat.id));
-  const now = Date.now();
-
-  const lastContactMs = now - Math.floor(rng() * 600000);          // 0–10 min ago
-  const modeSafety    = rng() > 0.15 ? 'NOMINAL' : 'SAFE';
-  const modeMission   = `MK${Math.floor(rng() * 5) + 1}`;
-
-  // Past passes: oldest first, spaced 2–5 h (17 passes, start ~80h back)
-  const passes = [];
-  let t = now - 80 * 3600000;
-  for (let i = 0; i < 17; i++) {
-    t += Math.floor(rng() * 3 * 3600000 + 2 * 3600000);
-    const success  = rng() > 0.25;
-    const numProcs = Math.floor(rng() * 3) + 1;
-    const procs    = [];
-    for (let p = 0; p < numProcs; p++) {
-      procs.push({
-        name:    PROCEDURES[Math.floor(rng() * PROCEDURES.length)],
-        success: rng() > (success ? 0.1 : 0.5),
-      });
-    }
-    const dur = Math.floor(rng() * 600000 + 300000); // 5–15 min pass window
-    passes.push({
-      id: `${sat.id}-past-${i}`, time: new Date(t), aos0: new Date(t), los0: new Date(t + dur),
-      station: STATIONS[Math.floor(rng() * STATIONS.length)],
-      future: false, success, procedures: procs,
-    });
-  }
-  // Future passes: nearest first, spaced 1–3 h
-  const FUTURE_STATUSES = ['SCHEDULED', 'OPEN', 'PENDING_MISSION'];
-  let futT = now + Math.floor(rng() * 3600000 + 3600000);
-  for (let i = 0; i < 3; i++) {
-    futT += Math.floor(rng() * 2 * 3600000 + 3600000);
-    const futDur = Math.floor(rng() * 600000 + 300000); // 5–15 min pass window
-    passes.push({
-      id: `${sat.id}-future-${i}`, time: new Date(futT), aos0: new Date(futT), los0: new Date(futT + futDur),
-      station: STATIONS[Math.floor(rng() * STATIONS.length)],
-      future: true, success: null, procedures: [],
-      status: FUTURE_STATUSES[Math.floor(rng() * 3)],
-    });
-  }
-
-  return {
-    lastContactMs,
-    modeSafety,
-    modeMission,
-    passes,
-    battery:      parseFloat((13.0 + rng() * 2.5).toFixed(1)),
-    missionPlans: Math.floor(rng() * 8),
-    groundAlerts: _genAlerts(rng),
-    boardAlerts:  _genAlerts(rng),
-    sccUrl:      null,   // to be provided per satellite
-    grafanaUrl:  null,   // to be provided per satellite
-  };
-}
-
-function _genAlerts(rng) {
-  const n = Math.floor(rng() * 5);
-  const SEVS = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'];
-  return Array.from({ length: n }, () => ({ severity: SEVS[Math.floor(rng() * 4)] }));
-}
-
-function _seedDummy(sat) {
-  if (!_dummyCache.has(sat.id)) _dummyCache.set(sat.id, _generateDummy(sat));
-  return _dummyCache.get(sat.id);
-}
 
 // ── TLE helpers ───────────────────────────────────────────────────
 
@@ -150,37 +54,20 @@ function _monPillCls(status) {
 // Real on-board event counts from TM
 function _evtBadge(events) {
   if (!events) return '<span class="co-nil">—</span>';
-  const slots = [
-    { label: 'H', v: events.high },
-    { label: 'M', v: events.med  },
-    { label: 'L', v: events.low  },
-    { label: 'N', v: events.normal },
-  ].filter(s => s.v?.value != null && s.v.value > 0);
-  if (!slots.length) return '<span class="co-nil">—</span>';
-  return slots.map(s => {
-    const cls = _monCls(s.v.status);
-    return `<span class="co-alert-badge ${cls}">${s.v.value}${s.label}</span>`;
-  }).join('');
-}
-
-// Fallback dummy alert badge (ground alerts, no real data yet)
-const _SEV_ORDER = { LOW: 0, MEDIUM: 1, HIGH: 2, CRITICAL: 3 };
-const _SEV_ABBR  = { LOW: 'L', MEDIUM: 'M', HIGH: 'H', CRITICAL: 'C' };
-const _SEV_CLS   = { LOW: 'co-sev-low', MEDIUM: 'co-sev-med', HIGH: 'co-sev-high', CRITICAL: 'co-sev-crit' };
-
-function _alertBadge(alerts) {
-  if (!alerts.length) return '<span class="co-nil">—</span>';
-  const counts = {};
-  let worst = -1;
-  for (const a of alerts) {
-    counts[a.severity] = (counts[a.severity] || 0) + 1;
-    if (_SEV_ORDER[a.severity] > worst) worst = _SEV_ORDER[a.severity];
-  }
-  const worstSev = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'][worst];
-  const parts = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']
-    .filter(s => counts[s])
-    .map(s => `${counts[s]}${_SEV_ABBR[s]}`);
-  return `<span class="co-alert-badge ${_SEV_CLS[worstSev]}">${parts.join(' ')}</span>`;
+  const rows = [
+    { label: 'HIGH', v: events.high   },
+    { label: 'MED',  v: events.med    },
+    { label: 'LOW',  v: events.low    },
+    { label: 'NOM',  v: events.normal },
+  ];
+  return `<div class="co-evt-stack">${rows.map(r => {
+    const val = r.v?.value ?? null;
+    const cls = r.v?.status ? _monPillCls(r.v.status) : '';
+    const valHtml = val != null
+      ? `<span class="co-pill ${cls}">${val}</span>`
+      : '<span class="co-nil">—</span>';
+    return `<div class="co-mode-row"><span class="co-mode-label">${r.label}</span>${valHtml}</div>`;
+  }).join('')}</div>`;
 }
 
 // ── External links ────────────────────────────────────────────────
@@ -194,16 +81,18 @@ function _linkBadge(label, url) {
 
 // ── Pass dots ─────────────────────────────────────────────────────
 
-const _STATUS_CLS = { SCHEDULED: 'co-dot-scheduled', OPEN: 'co-dot-open', PENDING_MISSION: 'co-dot-pending' };
+const _OUTCOME_CLS = { SUCCESS: 'co-dot-success', FAILURE: 'co-dot-fail', CANCELLED: 'co-dot-cancelled' };
 
 function _passDots(passes) {
+  if (!passes?.length) return '<span class="co-nil">—</span>';
   const html = passes.map((p, i) => {
+    let cls, ch;
     if (p.future) {
-      const cls = _STATUS_CLS[p.status] ?? 'co-dot-scheduled';
-      return `<span class="co-dot co-dot-future ${cls}" data-idx="${i}">○</span>`;
+      cls = 'co-dot-future'; ch = '○';
+    } else {
+      cls = _OUTCOME_CLS[p.outcome] ?? 'co-dot-success'; ch = '●';
     }
-    const cls = p.success ? 'co-dot-success' : 'co-dot-fail';
-    return `<span class="co-dot ${cls}" data-idx="${i}">●</span>`;
+    return `<span class="co-dot ${cls}" data-idx="${i}">${ch}</span>`;
   }).join('');
   return `<div class="co-dots-grid">${html}</div>`;
 }
@@ -214,18 +103,104 @@ function _fmtDuration(ms) {
   return `${m}m ${String(s).padStart(2, '0')}s`;
 }
 
-function _tooltipContent(pass) {
-  const durStr = pass.aos0 && pass.los0 ? ` · ${_fmtDuration(pass.los0 - pass.aos0)}` : '';
-  const hdr = `<div class="co-tt-header">${pass.station} · ${_fmtDateTimeShort(pass.time)}${durStr}</div>`;
-  if (pass.future) {
-    const label = (pass.status ?? 'SCHEDULED').replace('_', ' ');
-    const cls   = _STATUS_CLS[pass.status] ?? 'co-dot-scheduled';
-    return hdr + `<div class="co-tt-future-status ${cls}">○ ${label}</div>`;
+function _battMonTooltip(mon) {
+  const _SEV_ORDER = ['watchRange','warningRange','distressRange','severeRange','criticalRange'];
+  const _COND_ORDER = ['criticalCondition','severeCondition','distressCondition','warningCondition','watchCondition','nominalCondition'];
+  const _fmtBound = (v, inclusive, side) => {
+    if (v == null) return '';
+    return side === 'min' ? `${inclusive ? '≥' : '>'}${v}` : `${inclusive ? '≤' : '<'}${v}`;
+  };
+  let rows = '';
+  const ranges = _SEV_ORDER.map(k => mon[k]).filter(Boolean);
+  if (ranges.length) {
+    rows = '<div class="co-tt-header">Safe operating bands</div>';
+    rows += '<div class="co-batt-mon-note">Outside band → alarm triggers</div>';
+    for (const r of ranges) {
+      const lo = _fmtBound(r.minInclusive ?? r.minExclusive, r.minInclusive != null, 'min');
+      const hi = _fmtBound(r.maxInclusive ?? r.maxExclusive, r.maxInclusive != null, 'max');
+      const band = [lo, hi].filter(Boolean).join(' – ');
+      rows += `<div class="co-batt-mon-row"><span class="co-batt-mon-lvl co-mon-${r.criticality?.toLowerCase()}">${r.criticality}</span><span class="co-batt-mon-band">${band}</span></div>`;
+    }
+  } else {
+    const conds = _COND_ORDER.map(k => mon[k]).filter(Boolean);
+    if (conds.length) {
+      rows = '<div class="co-tt-header">Enum conditions</div>';
+      for (const c of conds) {
+        rows += `<div class="co-batt-mon-row"><span class="co-batt-mon-lvl co-mon-${c.criticality?.toLowerCase()}">${c.criticality}</span><span class="co-batt-mon-band">${c.condition}</span></div>`;
+      }
+    }
   }
-  const procs = pass.procedures.map(pr =>
-    `<div class="co-tt-proc ${pr.success ? 'co-tt-ok' : 'co-tt-fail'}">${pr.success ? '●' : '✗'} ${pr.name}</div>`
-  ).join('');
-  return hdr + (procs ? `<div class="co-tt-procs">${procs}</div>` : '');
+  return rows || '<div class="co-nil">No monitoring defined</div>';
+}
+
+const _PROC_CLS = { SUCCESS: 'co-tt-ok', FAILURE: 'co-tt-fail', CANCELLED: 'co-tt-cancelled' };
+const _PROC_CH  = { SUCCESS: '●', FAILURE: '✗', CANCELLED: '◌' };
+
+function _grafanaLokiUrl(grafanaHost, fromMs, toMs) {
+  return `http://${grafanaHost}:3000/a/grafana-lokiexplore-app/explore/service/-scc/logs`
+    + `?patterns=%5B%5D&from=${fromMs}&to=${toMs}`
+    + `&var-lineFormat=&var-ds=P8E80F9AEF21F6940`
+    + `&var-filters=service_name%7C%3D%7C%2Fscc`
+    + `&var-fields=&var-levels=&var-metadata=&var-jsonFields=`
+    + `&var-patterns=&var-lineFilterV2=&var-lineFilters=`
+    + `&timezone=browser&var-all-fields=&userDisplayedFields=false`
+    + `&displayedFields=%5B%5D&urlColumns=%5B%5D`
+    + `&visualizationType=%22logs%22&prettifyLogMessage=false`
+    + `&sortOrder=%22Descending%22&wrapLogMessage=false`;
+}
+
+function _passEclipseBar(satrec, start, end) {
+  if (!satrec || !start || !end) return '';
+  const STEP = 30_000; // 30s samples
+  let shadow = 0, sun = 0;
+  for (let t = start.getTime(); t <= end.getTime(); t += STEP) {
+    const d = new Date(t);
+    const r = propagate(satrec, d);
+    if (!r?.eciPos) continue;
+    if (isInEclipse(r.eciPos, sunDirectionECI(d))) shadow++; else sun++;
+  }
+  const total = shadow + sun;
+  if (!total) return '';
+  const eclPct = Math.round((shadow / total) * 100);
+  const sunPct = 100 - eclPct;
+  const fmtMin = m => `${m}m`;
+  const durMin = Math.round((end - start) / 60_000);
+  const eclMin = Math.round(shadow / total * durMin);
+  const sunMin = durMin - eclMin;
+  return `
+    <div class="co-tt-ecl-bar">
+      <div class="oi-eclipse-bar">
+        <div class="oi-eclipse-seg oi-seg-shadow" style="width:${eclPct}%">${eclPct > 15 ? fmtMin(eclMin) : ''}</div>
+        <div class="oi-eclipse-seg oi-seg-sun"    style="width:${sunPct}%">${sunPct > 15 ? fmtMin(sunMin) : ''}</div>
+      </div>
+      <div class="oi-eclipse-legend">
+        <span class="oi-ecl-shadow">● ${eclPct}% shadow</span>
+        <span class="oi-ecl-sun">☀ ${sunPct}% sun</span>
+      </div>
+    </div>`;
+}
+
+function _tooltipContent(pass, grafanaHost, sat) {
+  const dur = pass.end && pass.start ? ` · ${_fmtDuration(pass.end - pass.start)}` : '';
+  const hdr = `<div class="co-tt-header">${pass.station} · ${_fmtDateTimeShort(pass.start)}${dur}</div>`;
+  const eclBar = _passEclipseBar(sat?.satrec, pass.start, pass.end);
+  if (pass.future) {
+    return hdr + eclBar + `<div class="co-tt-future-status co-dot-future">○ SCHEDULED</div>`;
+  }
+  if (!pass.procedures?.length) {
+    return hdr + eclBar + `<div class="co-tt-proc co-tt-ok">● PASS OCCURRED</div>`;
+  }
+  const procs = pass.procedures.map((pr, i) => {
+    const cls     = _PROC_CLS[pr.status] ?? 'co-tt-ok';
+    const num     = `<span class="co-tt-num">${i + 1}</span>`;
+    const procDur = pr.endMs && pr.startMs ? ` <span class="co-tt-dur">${_fmtDuration(pr.endMs - pr.startMs)}</span>` : '';
+    if (grafanaHost) {
+      const url = _grafanaLokiUrl(grafanaHost, pr.startMs - 1000, pr.endMs + 1000);
+      return `<a href="${url}" target="_blank" rel="noopener" class="co-tt-proc co-tt-link ${cls}">${num} ${pr.name}${procDur}</a>`;
+    }
+    return `<div class="co-tt-proc ${cls}">${num} ${pr.name}${procDur}</div>`;
+  }).join('');
+  return hdr + eclBar + `<div class="co-tt-sep"></div><div class="co-tt-procs">${procs}</div>`;
 }
 
 // ── Ping cell ────────────────────────────────────────────────────
@@ -252,36 +227,58 @@ function _buildPingCell(satId) {
     </div>`;
 }
 
+// ── Reaction wheel cell ───────────────────────────────────────────
+
+function _rwOn(entry) {
+  if (!entry || entry.value == null) return null; // unknown
+  const v = entry.value;
+  if (typeof v === 'string') return v.toUpperCase() === 'ON';
+  return v === 1 || v === true;
+}
+
+function _rwCell(rw) {
+  if (!rw) return '<span class="co-nil">—</span>';
+  return `<div class="co-rw-grid">${[1,2,3,4].map((n, i) => {
+    const on = _rwOn(rw[i]);
+    const cls = on === null ? 'co-rw-unknown' : on ? 'co-rw-on' : 'co-rw-off';
+    return `<span class="co-rw-num ${cls}">${n}</span>`;
+  }).join('')}</div>`;
+}
+
 // ── Row HTML ──────────────────────────────────────────────────────
 
-function _rowHTML(sat, d, now, eclipse) {
-  // Prefer real telemetry; fall back to seeded dummy data
+function _rowHTML(sat, now, eclipse) {
   const tm = store.satTelemetry[sat.id] ?? null;
 
-  const lastContactMs = tm?.receptionTime ? new Date(tm.receptionTime).getTime() : d.lastContactMs;
-  const elapsed = now - lastContactMs;
-  const isLive  = elapsed < 20000;
+  const lastContactMs = tm?.receptionTime ? new Date(tm.receptionTime).getTime() : null;
+  const elapsed = lastContactMs !== null ? now - lastContactMs : null;
+  const isLive  = elapsed !== null && elapsed < 20000;
 
-  const nextPass  = d.passes.find(p => p.future);
-  const nextMs    = nextPass ? nextPass.time.getTime() - now : null;
-
-  const lastLine = isLive
-    ? '<span class="co-live-badge">● LIVE</span>'
-    : `<span class="co-contact-time">${_fmtAgo(elapsed)}</span>`;
-  const nextLine = nextMs !== null
-    ? `<span class="co-next-contact">Next ${_fmtIn(nextMs)}</span>`
+  const lastLine = elapsed === null
+    ? '<span class="co-nil">—</span>'
+    : isLive
+      ? '<span class="co-live-badge">● LIVE</span>'
+      : `<span class="co-contact-time">${_fmtAgo(elapsed)}</span>`;
+  const nextPass = (store.satPasses[sat.id] ?? []).find(p => p.future);
+  const nextLine = nextPass
+    ? `<span class="co-next-contact">Next ${_fmtIn(nextPass.start - now)}</span>`
     : '<span class="co-next-contact co-nil">—</span>';
   const contactCell = `<div class="co-contact-stack">${lastLine}${nextLine}</div>`;
 
-  const sysVal  = tm?.sysMode?.value  ?? d.modeSafety;
+  const sysVal  = tm?.sysMode?.value  ?? null;
   const sysSts  = tm?.sysMode?.status ?? 'NOMINAL';
-  const gncVal  = tm?.gncMode?.value  ?? d.modeMission;
+  const gncVal  = tm?.gncMode?.value  ?? null;
   const gncSts  = tm?.gncMode?.status ?? 'NOMINAL';
-  const safetyPill  = `<span class="co-pill ${_monPillCls(sysSts)}">${sysVal}</span>`;
-  const missionPill = `<span class="co-pill ${_monPillCls(gncSts)}">${gncVal}</span>`;
+  const safetyPill  = sysVal ? `<span class="co-pill ${_monPillCls(sysSts)}">${sysVal}</span>` : '<span class="co-nil">—</span>';
+  const missionPill = gncVal ? `<span class="co-pill ${_monPillCls(gncSts)}">${gncVal}</span>` : '<span class="co-nil">—</span>';
+  const uptimeRaw = tm?.uptime?.value ?? null;
+  const uptimeHtml = uptimeRaw != null
+    ? `<span class="co-uptime">${_fmtUptime(uptimeRaw)} <span class="co-uptime-raw">${uptimeRaw}</span></span>`
+    : '<span class="co-nil">—</span>';
   const modeCell    = `<div class="co-mode-stack">
     <div class="co-mode-row"><span class="co-mode-label">SYS</span>${safetyPill}</div>
     <div class="co-mode-row"><span class="co-mode-label">GNC</span>${missionPill}</div>
+    <div class="co-mode-row"><span class="co-mode-label">UP</span>${uptimeHtml}</div>
   </div>`;
 
   let eclHtml;
@@ -289,14 +286,14 @@ function _rowHTML(sat, d, now, eclipse) {
   else if (eclipse)      eclHtml = '<span data-field="ecl" class="co-ecl-shadow">● SHADOW</span>';
   else                   eclHtml = '<span data-field="ecl" class="co-ecl-sun">☀ SUN</span>';
 
-  const battVal = tm?.battVoltage?.value ?? d.battery;
-  const battSts = tm?.battVoltage?.status ?? 'NOMINAL';
-  const _BATT_CLS = { NOMINAL: 'co-batt-ok', WATCH: 'co-batt-warn', WARNING: 'co-batt-warn', DISTRESS: 'co-batt-low', CRITICAL: 'co-batt-low', SEVERE: 'co-batt-low' };
+  const battVal  = tm?.battVoltage?.value      ?? null;
+  const battSts  = tm?.battVoltage?.status     ?? 'NOMINAL';
+  const battMon  = tm?.battVoltage?.monitoring ?? null;
+  const _BATT_CLS = { NOMINAL: 'co-batt-ok', WATCH: 'co-batt-watch', WARNING: 'co-batt-warn', DISTRESS: 'co-batt-dist', SEVERE: 'co-batt-low', CRITICAL: 'co-batt-low' };
   const battCls  = _BATT_CLS[battSts] ?? 'co-batt-ok';
-  const battCell = `<span class="${battCls}" title="${battSts}">${Number(battVal).toFixed(1)} V</span>`;
-
-  const missionCell = d.missionPlans > 0
-    ? `<span class="co-mission-count">${d.missionPlans}</span>`
+  const battMonAttr = battMon ? ` data-batt-mon='${JSON.stringify(battMon)}'` : '';
+  const battCell = battVal != null
+    ? `<span class="${battCls} co-batt-hover"${battMonAttr}>${Number(battVal).toFixed(1)} V</span>`
     : '<span class="co-nil">—</span>';
 
   // Eclipse + Altitude + TLE freshness cell
@@ -328,11 +325,12 @@ function _rowHTML(sat, d, now, eclipse) {
     <td class="co-contact-cell">${contactCell}</td>
     <td class="co-mode-cell">${modeCell}</td>
     <td class="co-batt-cell">${battCell}</td>
-    <td class="co-passes-cell" data-sat-id="${sat.id}">${_passDots(d.passes)}</td>
+    <td class="co-rw-cell">${_rwCell(tm?.rw)}</td>
+    <td class="co-passes-cell" data-sat-id="${sat.id}">${_passDots(store.satPasses[sat.id])}</td>
     <td>${orbitCell}</td>
-    <td class="co-alerts-cell">${_alertBadge(d.groundAlerts)}</td>
+    <td class="co-alerts-cell"><span class="co-nil">—</span></td>
     <td class="co-alerts-cell">${_evtBadge(tm?.events)}</td>
-    <td class="co-links-cell">${_linkBadge('SCC', satBaseUrl(sat.noradId) ? `http://${satBaseUrl(sat.noradId)}:15000/` : null)}${_linkBadge('Grafana', _grafanaUrl(satBaseUrl(sat.noradId)))}</td>
+    <td class="co-links-cell">${_linkBadge('SCC', satBaseUrl(sat.noradId) ? `http://${satBaseUrl(sat.noradId)}:15000/` : null)}${_linkBadge('Grafana', _grafanaUrl(satBaseUrl(sat.noradId)))}${_linkBadge('Dashboard', 'http://172.17.205.1/')}</td>
   </tr>`;
 }
 
@@ -364,25 +362,41 @@ export function initChadOps() {
   let _active = false;
   let _timer  = null;
 
+  let _ttHideTimer = null;
+  const _hideNow      = () => { clearTimeout(_ttHideTimer); tooltip.style.display = 'none'; };
+  const _scheduleHide = () => { clearTimeout(_ttHideTimer); _ttHideTimer = setTimeout(_hideNow, 800); };
+  const _cancelHide   = () => { clearTimeout(_ttHideTimer); };
+
+  // Tooltip stays open while the mouse is inside it; hides 800ms after leaving
+  tooltip.addEventListener('mouseenter', _cancelHide);
+  tooltip.addEventListener('mouseleave', _scheduleHide);
+
+  // Click anywhere outside the tooltip dismisses it immediately
+  document.addEventListener('click', e => {
+    if (tooltip.style.display !== 'none' && !tooltip.contains(e.target)) _hideNow();
+  }, true);
+
   // Legend tooltip on passes column header
   const LEGEND_HTML = `
-    <div class="co-legend-title">Past passes (7)</div>
-    <div class="co-legend-row"><span class="co-dot co-dot-success">●</span> Pass succeeded</div>
-    <div class="co-legend-row"><span class="co-dot co-dot-fail">●</span> Pass failed</div>
-    <div class="co-legend-title co-legend-gap">Upcoming passes</div>
-    <div class="co-legend-row"><span class="co-dot co-dot-future co-dot-scheduled">○</span> Scheduled</div>
-    <div class="co-legend-row"><span class="co-dot co-dot-future co-dot-open">○</span> Open</div>
-    <div class="co-legend-row"><span class="co-dot co-dot-future co-dot-pending">○</span> Pending Mission</div>`;
+    <div class="co-legend-title">Pass horizon · ±7 days</div>
+    <div class="co-legend-sub">Each dot is one pass. Grid reads left→right, oldest to newest. Refreshed every ping cycle.</div>
+    <div class="co-legend-title co-legend-gap">Past</div>
+    <div class="co-legend-row"><span class="co-dot co-dot-success">●</span> Success</div>
+    <div class="co-legend-row"><span class="co-dot co-dot-fail">●</span> Failure</div>
+    <div class="co-legend-row"><span class="co-dot co-dot-cancelled">●</span> Cancelled</div>
+    <div class="co-legend-title co-legend-gap">Future</div>
+    <div class="co-legend-row"><span class="co-dot co-dot-future">○</span> Upcoming (no outcome yet)</div>`;
 
   const passesHeader = document.getElementById('co-passes-th');
   if (passesHeader) {
     passesHeader.addEventListener('mouseenter', e => {
+      _cancelHide();
       tooltip.innerHTML     = LEGEND_HTML;
       tooltip.style.display = 'block';
       _positionTooltip(e, tooltip);
     });
     passesHeader.addEventListener('mousemove',  e => _positionTooltip(e, tooltip));
-    passesHeader.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+    passesHeader.addEventListener('mouseleave', _scheduleHide);
   }
 
   function _wireDots() {
@@ -390,40 +404,31 @@ export function initChadOps() {
       const satId = dot.closest('[data-sat-id]')?.dataset.satId;
       const idx   = parseInt(dot.dataset.idx, 10);
       dot.addEventListener('mouseenter', e => {
+        _cancelHide();
         const sat  = store.satellites.find(s => s.id === satId);
-        if (!sat) return;
-        const pass = _seedDummy(sat).passes[idx];
+        const pass = sat ? (store.satPasses[sat.id] ?? [])[idx] : null;
         if (!pass) return;
-        tooltip.innerHTML     = _tooltipContent(pass);
+        const ip          = satBaseUrl(sat.noradId);
+        const grafanaHost = ip ? ip.replace(/\.\d+$/, '.5') : null;
+        tooltip.innerHTML     = _tooltipContent(pass, grafanaHost, sat);
         tooltip.style.display = 'block';
         _positionTooltip(e, tooltip);
       });
-      dot.addEventListener('mousemove',  e => _positionTooltip(e, tooltip));
-      dot.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
-      dot.addEventListener('click', () => {
-        const sat  = store.satellites.find(s => s.id === satId);
-        if (!sat) return;
-        const pass = _seedDummy(sat).passes[idx];
-        if (!pass?.aos0 || !pass?.los0) return;
-        const ip = satBaseUrl(sat.noradId);
-        if (!ip) return;
-        const host = ip.replace(/\.\d+$/, '.5');
-        const from = pass.aos0.toISOString();
-        const to   = pass.los0.toISOString();
-        window.open(
-          `http://${host}:3000/a/grafana-lokiexplore-app/explore/service/-scc/logs` +
-          `?patterns=%5B%5D&from=${from}&to=${to}` +
-          `&var-lineFormat=&var-ds=P8E80F9AEF21F6940` +
-          `&var-filters=service_name%7C%3D%7C%2Fscc` +
-          `&var-fields=&var-levels=&var-metadata=&var-jsonFields=` +
-          `&var-patterns=&var-lineFilterV2=&var-lineFilters=` +
-          `&timezone=browser&var-all-fields=&userDisplayedFields=false` +
-          `&displayedFields=%5B%5D&urlColumns=%5B%5D` +
-          `&visualizationType=%22logs%22&prettifyLogMessage=false` +
-          `&sortOrder=%22Descending%22&wrapLogMessage=false`,
-          '_blank', 'noopener',
-        );
+      dot.addEventListener('mouseleave', _scheduleHide);
+    });
+
+    // Battery monitoring tooltip
+    tbody.querySelectorAll('.co-batt-hover[data-batt-mon]').forEach(el => {
+      el.addEventListener('mouseenter', e => {
+        try {
+          const mon = JSON.parse(el.dataset.battMon);
+          _cancelHide();
+          tooltip.innerHTML     = _battMonTooltip(mon);
+          tooltip.style.display = 'block';
+          _positionTooltip(e, tooltip);
+        } catch { /* bad JSON, ignore */ }
       });
+      el.addEventListener('mouseleave', _scheduleHide);
     });
 
     // Eclipse cell → Orbit Inspector navigation
@@ -449,13 +454,12 @@ export function initChadOps() {
     }
 
     tbody.innerHTML = store.satellites.map(sat => {
-      const d = _seedDummy(sat);
       let eclipse = null;
       if (sat.satrec) {
         const r = propagate(sat.satrec, nowDate);
         if (r?.eciPos) eclipse = isInEclipse(r.eciPos, sunDir);
       }
-      return _rowHTML(sat, d, now, eclipse);
+      return _rowHTML(sat, now, eclipse);
     }).join('');
 
     _wireDots();
@@ -471,22 +475,22 @@ export function initChadOps() {
       const row = tbody.querySelector(`tr[data-sat-id="${sat.id}"]`);
       if (!row) { render(); return; } // satellite added since last full render
 
-      const d  = _seedDummy(sat);
       const tm = store.satTelemetry[sat.id] ?? null;
 
       // Contact time (changes every tick)
       const contactEl = row.querySelector('.co-contact-stack');
       if (contactEl) {
-        const lastMs   = tm?.receptionTime ? new Date(tm.receptionTime).getTime() : d.lastContactMs;
-        const elapsed  = now - lastMs;
-        const isLive   = elapsed < 20000;
-        const nextPass = d.passes.find(p => p.future);
-        const nextMs   = nextPass ? nextPass.time.getTime() - now : null;
-        const lastLine = isLive
-          ? '<span class="co-live-badge">● LIVE</span>'
-          : `<span class="co-contact-time">${_fmtAgo(elapsed)}</span>`;
-        const nextLine = nextMs !== null
-          ? `<span class="co-next-contact">Next ${_fmtIn(nextMs)}</span>`
+        const lastMs  = tm?.receptionTime ? new Date(tm.receptionTime).getTime() : null;
+        const elapsed = lastMs !== null ? now - lastMs : null;
+        const isLive  = elapsed !== null && elapsed < 20000;
+        const lastLine = elapsed === null
+          ? '<span class="co-nil">—</span>'
+          : isLive
+            ? '<span class="co-live-badge">● LIVE</span>'
+            : `<span class="co-contact-time">${_fmtAgo(elapsed)}</span>`;
+        const nextPass = (store.satPasses[sat.id] ?? []).find(p => p.future);
+        const nextLine = nextPass
+          ? `<span class="co-next-contact">Next ${_fmtIn(nextPass.start - now)}</span>`
           : '<span class="co-next-contact co-nil">—</span>';
         contactEl.innerHTML = lastLine + nextLine;
       }
@@ -552,12 +556,21 @@ export function initChadOps() {
   });
 
   store.subscribe(key => {
-    if ((key === 'satellites' || key === 'satTelemetry') && _active) render();
-    if (key === 'pingStatus'  && _active) _updatePingDots();
+    if ((key === 'satellites' || key === 'satTelemetry' || key === 'satPasses') && _active) render();
+    if (key === 'pingStatus' && _active) _updatePingDots();
   });
 }
 
 // ── Formatting helpers ────────────────────────────────────────────
+
+function _fmtUptime(seconds) {
+  const s = Math.floor(Number(seconds));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  if (d > 0) return `${d}d ${h}h`;
+  const m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
 
 function _fmtAgo(ms) {
   const s = Math.floor(ms / 1000);

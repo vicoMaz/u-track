@@ -82,6 +82,8 @@ body.tracking-active #side-panel { top: 100px; }
   border-radius: 4px;
   font-size: 12px;
   transition: all 0.15s;
+  text-decoration: none;
+  display: inline-block;
 }
 .tab-btn:hover { background: #1e1e2e; color: #ccc; }
 .tab-btn.active { background: #1e1e2e; color: #fff; border-bottom: 2px solid #00d4ff; }
@@ -1793,6 +1795,8 @@ body.tools-active #sat-info { display: none !important; }
 }
 
 .co-contact-time { color: #888; font-size: 11.5px; }
+.co-uptime { font-size: 11px; color: #aaa; }
+.co-uptime-raw { font-size: 10px; color: #556; margin-left: 4px; }
 
 /* ── Mode cell ──────────────────────────────────────────────────── */
 .co-mode-cell   { min-width: 110px; }
@@ -1825,7 +1829,7 @@ body.tools-active #sat-info { display: none !important; }
 
 .co-dots-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(7, 1fr);
   gap: 1px 8px;
   width: fit-content;
 }
@@ -1841,6 +1845,7 @@ body.tools-active #sat-info { display: none !important; }
 
 .co-dot-success   { color: #44dd88; }
 .co-dot-fail      { color: #ff4466; }
+.co-dot-cancelled { color: #ff8c00; }
 .co-dot-future    { color: #556688; }
 .co-dot-scheduled { color: #556688; }
 .co-dot-open      { color: #44aadd; }
@@ -1858,9 +1863,8 @@ body.tools-active #sat-info { display: none !important; }
   border-radius: 6px;
   padding: 10px 12px;
   min-width: 210px;
-  max-width: 300px;
+  max-width: 420px;
   box-shadow: 0 4px 20px #00000066;
-  pointer-events: none;
   font-size: 11.5px;
 }
 .co-tt-header {
@@ -1872,10 +1876,30 @@ body.tools-active #sat-info { display: none !important; }
 }
 .co-tt-result { margin-bottom: 5px; font-weight: 600; }
 .co-tt-procs  { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
-.co-tt-proc   { font-size: 11px; font-family: 'Courier New', monospace; }
+.co-tt-proc   { font-size: 11px; font-family: 'Courier New', monospace; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; white-space: nowrap; }
+.co-tt-link   { display: block; text-decoration: none; border-radius: 3px; padding: 1px 3px; }
+.co-tt-link:hover { background: rgba(255,255,255,0.08); text-decoration: underline; }
 .co-tt-note          { color: #555; font-style: italic; }
 .co-tt-ok            { color: #00cc66; }
 .co-tt-fail          { color: #ff4455; }
+.co-tt-cancelled     { color: #ff8c00; }
+.co-tt-ecl-bar { margin: 6px 0 2px; }
+.co-tt-ecl-bar .oi-eclipse-bar { height: 14px; }
+.co-tt-ecl-bar .oi-eclipse-legend { font-size: 10px; margin-top: 3px; }
+.co-tt-sep { border-top: 1px solid #2a2a4a; margin: 8px 0 4px; }
+.co-batt-mon-note { font-size: 10px; color: #555; margin-bottom: 6px; }
+.co-batt-mon-row  { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; font-family: 'Courier New', monospace; margin-bottom: 2px; }
+.co-batt-mon-lvl  { font-weight: 700; min-width: 70px; }
+.co-batt-mon-band { color: #aaa; }
+.co-mon-nominal  { color: #2db872; }
+.co-mon-watch    { color: #a0d4ff; }
+.co-mon-warning  { color: #ffbe0b; }
+.co-mon-distress { color: #ff8c00; }
+.co-mon-severe   { color: #ff4466; }
+.co-mon-critical { color: #ff0040; }
+.co-batt-hover   { cursor: help; }
+.co-tt-dur { font-size: 10px; opacity: 0.55; flex-shrink: 0; }
+.co-tt-num { opacity: 0.45; min-width: 1ch; }
 .co-tt-future-status { font-weight: 700; font-size: 11.5px; margin-top: 4px; }
 
 /* Legend in passes header tooltip */
@@ -1887,6 +1911,7 @@ body.tools-active #sat-info { display: none !important; }
   margin-bottom: 5px;
 }
 .co-legend-gap { margin-top: 10px; }
+.co-legend-sub { font-size: 10px; color: #555; margin-bottom: 6px; line-height: 1.4; }
 .co-legend-row {
   display: flex;
   align-items: center;
@@ -1927,8 +1952,16 @@ body.tools-active #sat-info { display: none !important; }
 
 /* ── Battery ───────────────────────────────────────────────────── */
 .co-batt-cell  { min-width: 75px; font-variant-numeric: tabular-nums; }
+.co-rw-cell    { min-width: 52px; }
+.co-rw-grid    { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; width: 44px; }
+.co-rw-num     { font-size: 13px; font-weight: 800; text-align: center; line-height: 1.3; }
+.co-rw-on      { color: #c0ccee; }
+.co-rw-off     { color: #ff4466; }
+.co-rw-unknown { color: #444; }
 .co-batt-ok   { color: #c0ccee; font-weight: 400; }
+.co-batt-watch { color: #a0d4ff; font-weight: 500; }
 .co-batt-warn { color: #ffcc00; font-weight: 600; }
+.co-batt-dist { color: #ff8c00; font-weight: 600; }
 .co-batt-low  { color: #ff4466; font-weight: 600; }
 
 /* ── Missions ──────────────────────────────────────────────────── */
@@ -1963,11 +1996,11 @@ body.tools-active #sat-info { display: none !important; }
 
 /* ── External links ────────────────────────────────────────────── */
 .co-links-cell {
-  min-width: 140px;
+  min-width: 90px;
   display: flex;
-  gap: 6px;
-  align-items: center;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
 }
 
 .co-link {

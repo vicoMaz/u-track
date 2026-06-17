@@ -2,7 +2,7 @@ import { store, PALETTE, GS_PALETTE } from '../store.js';
 import { fetchTLE, parseTLE, propagate } from '../tle.js';
 import { persistSatellite, persistStation, deleteServerSatellite, deleteServerStation, updateServerStation } from '../apiPoller.js';
 import { satBaseUrl, setSatBaseUrl, pingSatellite, getPingIntervalSec, restartPingPoller } from '../satPing.js';
-import { getTmConfig, setTmConfig, TM_DEFAULTS, fetchSatTelemetry } from '../satTelemetry.js';
+import { getTmConfig, setTmConfig, fetchSatTelemetry } from '../satTelemetry.js';
 
 // ─── Icons ────────────────────────────────────────────────────────────────
 
@@ -145,6 +145,11 @@ const TM_FIELDS = [
   { key: 'evtLow',    label: 'Evt Low'  },
   { key: 'evtMed',    label: 'Evt Med'  },
   { key: 'evtHigh',   label: 'Evt High' },
+  { key: 'rw1',       label: 'RW 1'     },
+  { key: 'rw2',       label: 'RW 2'     },
+  { key: 'rw3',       label: 'RW 3'     },
+  { key: 'rw4',       label: 'RW 4'     },
+  { key: 'uptime',    label: 'Uptime'   },
 ];
 
 function renderSettingsSatList() {
@@ -152,7 +157,7 @@ function renderSettingsSatList() {
   if (!list) return;
   list.innerHTML = '';
   for (const sat of store.satellites) {
-    const cfg  = getTmConfig(sat.noradId);
+    const cfg  = getTmConfig(sat.noradId, sat.model);
     const item = document.createElement('div');
     item.className = 'st-item st-sat-item';
     item.style.setProperty('--sat-color', sat.color);
@@ -174,8 +179,8 @@ function renderSettingsSatList() {
           <span class="st-tm-col-header">Parameter</span>
           ${TM_FIELDS.map(f => `
             <span class="st-tm-label">${f.label}</span>
-            <input class="st-tm-field" data-key="${f.key}" data-sub="packet" value="${cfg[f.key]?.packet ?? TM_DEFAULTS[f.key].packet}" spellcheck="false">
-            <input class="st-tm-field" data-key="${f.key}" data-sub="param"  value="${cfg[f.key]?.param  ?? TM_DEFAULTS[f.key].param}"  spellcheck="false">
+            <input class="st-tm-field" data-key="${f.key}" data-sub="packet" value="${cfg[f.key].packet}" spellcheck="false">
+            <input class="st-tm-field" data-key="${f.key}" data-sub="param"  value="${cfg[f.key].param}"  spellcheck="false">
           `).join('')}
         </div>
         <button class="st-tm-save">Save</button>
@@ -183,7 +188,12 @@ function renderSettingsSatList() {
     `;
 
     const ipIn  = item.querySelector('.st-field-baseurl');
-    const saveIp = () => { setSatBaseUrl(sat.noradId, ipIn.value.trim()); pingSatellite(sat.id); };
+    const saveIp = () => {
+      setSatBaseUrl(sat.noradId, ipIn.value.trim());
+      store.setSatTelemetry(sat.id, null);  // clear stale data while reconnecting
+      store.setSatPasses(sat.id, []);
+      pingSatellite(sat.id);
+    };
     ipIn.addEventListener('blur',    saveIp);
     ipIn.addEventListener('keydown', e => { if (e.key === 'Enter') ipIn.blur(); });
 
@@ -196,15 +206,19 @@ function renderSettingsSatList() {
       toggle.classList.toggle('open', open);
     });
 
-    item.querySelector('.st-tm-save').addEventListener('click', () => {
+    const saveBtn = item.querySelector('.st-tm-save');
+    saveBtn.addEventListener('click', () => {
       const newCfg = {};
       item.querySelectorAll('.st-tm-field').forEach(inp => {
         const { key, sub } = inp.dataset;
-        if (!newCfg[key]) newCfg[key] = { ...TM_DEFAULTS[key] };
-        newCfg[key][sub] = inp.value.trim() || TM_DEFAULTS[key][sub];
+        if (!newCfg[key]) newCfg[key] = { ...cfg[key] };
+        newCfg[key][sub] = inp.value.trim() || cfg[key][sub];
       });
       setTmConfig(sat.noradId, newCfg);
       fetchSatTelemetry(sat);
+      saveBtn.textContent = 'Saved ✓';
+      saveBtn.disabled = true;
+      setTimeout(() => { saveBtn.textContent = 'Save'; saveBtn.disabled = false; }, 1500);
     });
 
     list.appendChild(item);

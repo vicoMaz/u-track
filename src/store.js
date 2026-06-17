@@ -8,6 +8,7 @@ export const store = {
   _satById: new Map(), // id → sat, for O(1) lookups
   pingStatus: {},      // satId → 'ok' | 'pending' | 'timeout' | 'error' | 'unconfigured'
   satTelemetry: {},    // satId → { receptionTime, sysMode, gncMode, battVoltage, events }
+  satPasses: {},       // satId → [{ id, start, end, aos5, los5, station, network, future }]
   satScale: 500,
   orbitAlt: 550,       // km — shared by night shadow + GS footprint
   trackedSatId: null,
@@ -43,6 +44,7 @@ export const store = {
     if (sat) {
       delete this.positions[sat.noradId];
       delete this.satTelemetry[sat.id];
+      delete this.satPasses[sat.id];
       if (this.attitudes[sat.noradId]) {
         delete this.attitudes[sat.noradId];
         this.notify('attitudes');
@@ -99,6 +101,16 @@ export const store = {
   setSatTelemetry(satId, data) {
     this.satTelemetry[satId] = data;
     this.notify('satTelemetry');
+  },
+
+  setSatPasses(satId, passes) {
+    this.satPasses[satId] = passes;
+    this.notify('satPasses');
+  },
+
+  updateSatTle(noradId, satrec) {
+    const sat = this.satellites.find(s => s.noradId === noradId);
+    if (sat) { sat.satrec = satrec; this.notify('satellites'); }
   },
 
   setOrbitAlt(v) {
