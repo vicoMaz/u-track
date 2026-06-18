@@ -5,7 +5,7 @@ function _satIp(noradId) {
 }
 
 async function _fetchJson(ip, path, signal) {
-  const res = await fetch(`http://${ip}:15000${path}`, { signal });
+  const res = await fetch(`http://${ip.replace(/\.\d+$/, '.5')}:15500${path}`, { signal });
   return res.ok ? res.json() : null;
 }
 

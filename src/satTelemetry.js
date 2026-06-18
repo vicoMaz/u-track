@@ -117,11 +117,11 @@ function _extract(param) {
 
 async function _fetchPacket(ip, packetName) {
   const end   = new Date(Date.now() + 10_000).toISOString();
-  const start = new Date(Date.now() - 4 * 3_600_000).toISOString();
-  const url   = `http://${ip}:15000/api/v1/tm-packets`
+  const start = new Date(Date.now() - 24 * 3_600_000).toISOString();
+  const url   = `http://${ip.replace(/\.\d+$/, '.5')}:15500/api/v1/tm-packets`
     + `?start=${encodeURIComponent(start)}`
     + `&end=${encodeURIComponent(end)}`
-    + `&orderBy=OnBoardTime`
+    + `&orderBy=OnBoardTime&sortDir=DESC`
     + `&filter=${encodeURIComponent(packetName)}`
     + `&maxLimit=1`;
   const ctrl  = new AbortController();
@@ -162,11 +162,18 @@ export async function fetchSatTelemetry(sat) {
     }
   }));
 
+  const battV   = extracted.battery?.value;
+  const [socA, socB] = sat.model === 'FF' ? [-361.07, 18.55] : [-361.5, 27.86];
+  const battSoc = battV != null
+    ? Math.max(0, Math.min(100, Math.round(socA + socB * battV)))
+    : null;
+
   store.setSatTelemetry(sat.id, {
     receptionTime,
     sysMode:     extracted.sysMode   ?? null,
     gncMode:     extracted.gncMode   ?? null,
     battVoltage: extracted.battery   ?? null,
+    battSoc:     battSoc != null ? { value: battSoc } : null,
     rw: [extracted.rw1 ?? null, extracted.rw2 ?? null, extracted.rw3 ?? null, extracted.rw4 ?? null],
     uptime: extracted.uptime ?? null,
     events: {

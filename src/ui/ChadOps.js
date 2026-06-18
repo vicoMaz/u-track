@@ -3,9 +3,10 @@ import { propagate }                          from '../tle.js';
 import { sunDirectionECI, isInEclipse }       from '../sunVector.js';
 import { getPingIntervalSec, getPingElapsedSec, getLastPingMs, satBaseUrl } from '../satPing.js';
 
-const _grafanaUrl = ip => ip
+const _grafanaUrl   = ip => ip
   ? `http://${ip.replace(/\.\d+$/, '.5')}:3000/?orgId=1&from=now-6h&to=now&timezone=browser`
   : null;
+const _dashboardUrl = ip => ip ? `http://${ip}/` : null;
 
 // ── Constants ─────────────────────────────────────────────────────
 
@@ -113,8 +114,9 @@ function _battMonTooltip(mon) {
   let rows = '';
   const ranges = _SEV_ORDER.map(k => mon[k]).filter(Boolean);
   if (ranges.length) {
-    rows = '<div class="co-tt-header">Safe operating bands</div>';
+    rows = '<div class="co-tt-header">Ground Monitorings</div>';
     rows += '<div class="co-batt-mon-note">Outside band → alarm triggers</div>';
+    rows += '<div class="co-batt-mon-note">SoC estimate valid between 20% and 90%</div>';
     for (const r of ranges) {
       const lo = _fmtBound(r.minInclusive ?? r.minExclusive, r.minInclusive != null, 'min');
       const hi = _fmtBound(r.maxInclusive ?? r.maxExclusive, r.maxInclusive != null, 'max');
@@ -193,12 +195,13 @@ function _tooltipContent(pass, grafanaHost, sat) {
   const procs = pass.procedures.map((pr, i) => {
     const cls     = _PROC_CLS[pr.status] ?? 'co-tt-ok';
     const num     = `<span class="co-tt-num">${i + 1}</span>`;
-    const procDur = pr.endMs && pr.startMs ? ` <span class="co-tt-dur">${_fmtDuration(pr.endMs - pr.startMs)}</span>` : '';
+    const name    = `<span class="co-tt-pname">${pr.name}</span>`;
+    const procDur = pr.endMs && pr.startMs ? `<span class="co-tt-dur">${_fmtDuration(pr.endMs - pr.startMs)}</span>` : '';
     if (grafanaHost) {
       const url = _grafanaLokiUrl(grafanaHost, pr.startMs - 1000, pr.endMs + 1000);
-      return `<a href="${url}" target="_blank" rel="noopener" class="co-tt-proc co-tt-link ${cls}">${num} ${pr.name}${procDur}</a>`;
+      return `<a href="${url}" target="_blank" rel="noopener" class="co-tt-proc co-tt-link ${cls}" title="${pr.name}">${num}${name}${procDur}</a>`;
     }
-    return `<div class="co-tt-proc ${cls}">${num} ${pr.name}${procDur}</div>`;
+    return `<div class="co-tt-proc ${cls}" title="${pr.name}">${num}${name}${procDur}</div>`;
   }).join('');
   return hdr + eclBar + `<div class="co-tt-sep"></div><div class="co-tt-procs">${procs}</div>`;
 }
@@ -289,11 +292,13 @@ function _rowHTML(sat, now, eclipse) {
   const battVal  = tm?.battVoltage?.value      ?? null;
   const battSts  = tm?.battVoltage?.status     ?? 'NOMINAL';
   const battMon  = tm?.battVoltage?.monitoring ?? null;
+  const battSoc  = tm?.battSoc?.value          ?? null;
   const _BATT_CLS = { NOMINAL: 'co-batt-ok', WATCH: 'co-batt-watch', WARNING: 'co-batt-warn', DISTRESS: 'co-batt-dist', SEVERE: 'co-batt-low', CRITICAL: 'co-batt-low' };
   const battCls  = _BATT_CLS[battSts] ?? 'co-batt-ok';
   const battMonAttr = battMon ? ` data-batt-mon='${JSON.stringify(battMon)}'` : '';
+  const socHtml  = battSoc != null ? `<span class="co-soc" title="SoC estimate — valid between 20% and 90%">${battSoc}%</span>` : '';
   const battCell = battVal != null
-    ? `<span class="${battCls} co-batt-hover"${battMonAttr}>${Number(battVal).toFixed(1)} V</span>`
+    ? `<span class="${battCls} co-batt-hover"${battMonAttr}>${Number(battVal).toFixed(1)} V${socHtml}</span>`
     : '<span class="co-nil">—</span>';
 
   // Eclipse + Altitude + TLE freshness cell
@@ -330,7 +335,7 @@ function _rowHTML(sat, now, eclipse) {
     <td>${orbitCell}</td>
     <td class="co-alerts-cell"><span class="co-nil">—</span></td>
     <td class="co-alerts-cell">${_evtBadge(tm?.events)}</td>
-    <td class="co-links-cell">${_linkBadge('SCC', satBaseUrl(sat.noradId) ? `http://${satBaseUrl(sat.noradId)}:15000/` : null)}${_linkBadge('Grafana', _grafanaUrl(satBaseUrl(sat.noradId)))}${_linkBadge('Dashboard', 'http://172.17.205.1/')}</td>
+    <td class="co-links-cell">${_linkBadge('SCC', satBaseUrl(sat.noradId) ? `http://${satBaseUrl(sat.noradId)}:15000/` : null)}${_linkBadge('Grafana', _grafanaUrl(satBaseUrl(sat.noradId)))}${_linkBadge('Dashboard', _dashboardUrl(satBaseUrl(sat.noradId)))}</td>
   </tr>`;
 }
 

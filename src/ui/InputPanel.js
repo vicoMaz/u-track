@@ -141,6 +141,9 @@ const TM_FIELDS = [
   { key: 'sysMode',   label: 'SYS mode' },
   { key: 'gncMode',   label: 'GNC mode' },
   { key: 'battery',   label: 'Battery'  },
+  { key: 'battSoc',   label: 'SoC [%]', formula: model => model === 'FF'
+      ? '−361.07 + 18.55 × V<sub>Batt</sub>'
+      : '−361.5 + 27.86 × V<sub>Batt</sub>' },
   { key: 'evtNormal', label: 'Evt Norm' },
   { key: 'evtLow',    label: 'Evt Low'  },
   { key: 'evtMed',    label: 'Evt Med'  },
@@ -177,11 +180,12 @@ function renderSettingsSatList() {
           <span></span>
           <span class="st-tm-col-header">Packet</span>
           <span class="st-tm-col-header">Parameter</span>
-          ${TM_FIELDS.map(f => `
-            <span class="st-tm-label">${f.label}</span>
+          ${TM_FIELDS.map(f => f.formula
+            ? `<span class="st-tm-label">${f.label}</span><span class="st-tm-formula">${f.formula(sat.model)}</span>`
+            : `<span class="st-tm-label">${f.label}</span>
             <input class="st-tm-field" data-key="${f.key}" data-sub="packet" value="${cfg[f.key].packet}" spellcheck="false">
-            <input class="st-tm-field" data-key="${f.key}" data-sub="param"  value="${cfg[f.key].param}"  spellcheck="false">
-          `).join('')}
+            <input class="st-tm-field" data-key="${f.key}" data-sub="param"  value="${cfg[f.key].param}"  spellcheck="false">`
+          ).join('')}
         </div>
         <button class="st-tm-save">Save</button>
       </div>

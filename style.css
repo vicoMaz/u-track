@@ -940,6 +940,7 @@ body.tools-active #sat-info { display: none !important; }
   box-sizing: border-box;
 }
 .st-tm-field:focus { border-color: #3a5a7a; color: #ccc; }
+.st-tm-formula { grid-column: span 2; font-size: 10px; font-family: 'Courier New', monospace; color: #4a8aaa; padding: 2px 5px; align-self: center; }
 
 .st-tm-save {
   font-size: 10px;
@@ -1863,7 +1864,7 @@ body.tools-active #sat-info { display: none !important; }
   border-radius: 6px;
   padding: 10px 12px;
   min-width: 210px;
-  max-width: 420px;
+  max-width: 620px;
   box-shadow: 0 4px 20px #00000066;
   font-size: 11.5px;
 }
@@ -1877,6 +1878,7 @@ body.tools-active #sat-info { display: none !important; }
 .co-tt-result { margin-bottom: 5px; font-weight: 600; }
 .co-tt-procs  { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
 .co-tt-proc   { font-size: 11px; font-family: 'Courier New', monospace; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; white-space: nowrap; }
+.co-tt-pname  { flex: 1; }
 .co-tt-link   { display: block; text-decoration: none; border-radius: 3px; padding: 1px 3px; }
 .co-tt-link:hover { background: rgba(255,255,255,0.08); text-decoration: underline; }
 .co-tt-note          { color: #555; font-style: italic; }
@@ -1898,6 +1900,7 @@ body.tools-active #sat-info { display: none !important; }
 .co-mon-severe   { color: #ff4466; }
 .co-mon-critical { color: #ff0040; }
 .co-batt-hover   { cursor: help; }
+.co-soc          { display: block; font-size: 9px; opacity: 0.6; margin-top: 1px; }
 .co-tt-dur { font-size: 10px; opacity: 0.55; flex-shrink: 0; }
 .co-tt-num { opacity: 0.45; min-width: 1ch; }
 .co-tt-future-status { font-weight: 700; font-size: 11.5px; margin-top: 4px; }

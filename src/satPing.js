@@ -52,7 +52,7 @@ async function _ping(sat) {
   const ctrl  = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), PING_TIMEOUT);
   try {
-    await fetch(`http://${ip}:15000/api/v1/ping`, {
+    await fetch(`http://${ip.replace(/\.\d+$/, '.5')}:15500/api/v1/ping`, {
       method: 'GET',
       mode:   'no-cors',
       signal: ctrl.signal,
