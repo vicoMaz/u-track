@@ -7,6 +7,7 @@ const _grafanaUrl   = ip => ip
   ? `http://${ip.replace(/\.\d+$/, '.5')}:3000/?orgId=1&from=now-6h&to=now&timezone=browser`
   : null;
 const _dashboardUrl = ip => ip ? `http://${ip}/` : null;
+const _gnmUrl        = ip => ip ? `http://${ip.replace(/\.\d+$/, '.3')}:15602/` : null;
 
 // ── Constants ─────────────────────────────────────────────────────
 
@@ -343,7 +344,7 @@ function _rowHTML(sat, now, eclipse) {
     <td>${orbitCell}</td>
     <td class="co-alerts-cell"><span class="co-nil">—</span></td>
     <td class="co-alerts-cell">${_evtBadge(tm?.events)}</td>
-    <td class="co-links-cell">${_linkBadge('SCC', satBaseUrl(sat.noradId) ? `http://${satBaseUrl(sat.noradId)}:15000/` : null)}${_linkBadge('Grafana', _grafanaUrl(satBaseUrl(sat.noradId)))}${_linkBadge('Dashboard', _dashboardUrl(satBaseUrl(sat.noradId)))}</td>
+    <td class="co-links-cell">${_linkBadge('SCC', satBaseUrl(sat.noradId) ? `http://${satBaseUrl(sat.noradId)}:15000/` : null)}${_linkBadge('Grafana', _grafanaUrl(satBaseUrl(sat.noradId)))}${_linkBadge('Dashboard', _dashboardUrl(satBaseUrl(sat.noradId)))}${_linkBadge('GNM', _gnmUrl(satBaseUrl(sat.noradId)))}</td>
   </tr>`;
 }
 
