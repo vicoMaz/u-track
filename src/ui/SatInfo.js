@@ -2,6 +2,7 @@ import { store } from '../store.js';
 import { propagate } from '../tle.js';
 import { sunDirectionECI, isInEclipse } from '../sunVector.js';
 import { satJwt } from '../satPing.js';
+import { getAttStatus } from '../satAttitude.js';
 
 const card       = document.getElementById('sat-info');
 const nameEl     = document.getElementById('sat-info-name');
@@ -76,26 +77,32 @@ function update() {
   orbitText.textContent = 'TLE (public)';
 
   // Attitude row
-  const att     = store.attitudes[sat.noradId];
-  const entries = att?.entries;
-  const hasJwt  = !!satJwt(sat.noradId);
+  const att       = store.attitudes[sat.noradId];
+  const entries   = att?.entries;
+  const hasJwt    = !!satJwt(sat.noradId);
+  const attStatus = getAttStatus(sat.noradId);
 
   if (entries?.length) {
     const tNow = store.currentTime.getTime();
+    const tMin = entries[0].t;
     const tMax = entries[entries.length - 1].t;
-    if (tNow > tMax) {
-      attDot.style.color  = DOT_GREY;
-      attText.textContent = 'Default Sun Pointing — APM data expired';
-    } else {
+    if (tNow >= tMin && tNow <= tMax) {
       attDot.style.color  = DOT_GREEN;
       attText.textContent = `Interpolated · ${att.source ?? 'apm'}`;
+    } else {
+      // sim time outside the fetched window — renderer falls back to sun pointing
+      attDot.style.color  = DOT_GREY;
+      attText.textContent = 'Default Sun Pointing — outside attitude window';
     }
-  } else if (hasJwt) {
-    attDot.style.color  = DOT_AMBER;
-    attText.textContent = 'APM · Waiting for data…';
-  } else {
+  } else if (!hasJwt) {
     attDot.style.color  = DOT_GREY;
     attText.textContent = 'Default Sun Pointing — no JWT configured';
+  } else if (attStatus !== 'ok' && attStatus !== 'pending') {
+    attDot.style.color  = '#ff3860';
+    attText.textContent = `APM · ${attStatus}`;
+  } else {
+    attDot.style.color  = DOT_AMBER;
+    attText.textContent = 'APM · Waiting for first fetch…';
   }
 
   // Eclipse icon next to satellite name

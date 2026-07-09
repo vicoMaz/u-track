@@ -3,7 +3,10 @@ import { satBaseUrl, satJwt, getPingIntervalSec } from './satPing.js';
 
 const ATT_MIN_INTERVAL_MS = 90_000; // never fetch more often than 90s per satellite
 
-const _lastAttMs = {}; // noradId → timestamp of last successful fetch
+const _lastAttMs  = {}; // noradId → timestamp of last successful fetch
+const _attStatus  = {}; // noradId → 'ok' | 'error' | 'pending'
+
+export function getAttStatus(noradId) { return _attStatus[noradId] ?? 'pending'; }
 
 function _parseApm(text) {
   const get = key => {
@@ -35,22 +38,31 @@ export async function fetchSatAttitude(sat) {
     const res = await fetch(url, {
       headers: { Authorization: jwt, Accept: 'text/plain' },
     });
-    if (!res.ok) return;
+    if (!res.ok) {
+      _attStatus[sat.noradId] = `HTTP ${res.status}`;
+      return;
+    }
     const text  = await res.text();
     const entry = _parseApm(text);
-    if (!entry) return;
+    if (!entry) {
+      _attStatus[sat.noradId] = 'parse error';
+      return;
+    }
 
     _lastAttMs[sat.noradId] = now;
+    _attStatus[sat.noradId] = 'ok';
 
-    // Q_DOT ≈ 0 → attitude is effectively constant; build a 2-entry window
-    // that covers "now" until the next expected fetch so the 3D renderer can SLERP.
+    // Q_DOT ≈ 0 → attitude is constant; anchor window to fetch time (not APM epoch)
+    // so it's always valid for "now" regardless of what epoch the server returned.
     const validMs = Math.max(ATT_MIN_INTERVAL_MS, getPingIntervalSec() * 1000) * 2;
     store.setAttitude(sat.noradId, {
       source:  'apm',
       entries: [
-        { t: entry.t,            q: entry.q },
-        { t: entry.t + validMs,  q: entry.q },
+        { t: now,            q: entry.q },
+        { t: now + validMs,  q: entry.q },
       ],
     });
-  } catch { /* non-fatal */ }
+  } catch (e) {
+    _attStatus[sat.noradId] = e?.message?.includes('Failed to fetch') ? 'CORS / unreachable' : (e?.message ?? 'error');
+  }
 }
