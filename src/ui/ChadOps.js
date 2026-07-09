@@ -1,7 +1,7 @@
 import { store }                              from '../store.js';
 import { propagate }                          from '../tle.js';
 import { sunDirectionECI, isInEclipse }       from '../sunVector.js';
-import { getPingIntervalSec, getPingElapsedSec, getLastPingMs, satBaseUrl } from '../satPing.js';
+import { getPingIntervalSec, getPingElapsedSec, getLastPingMs, satBaseUrl, pingSatellite } from '../satPing.js';
 
 const _grafanaUrl   = ip => ip
   ? `http://${ip.replace(/\.\d+$/, '.5')}:3000/?orgId=1&from=now-6h&to=now&timezone=browser`
@@ -213,7 +213,7 @@ function _buildPingCell(satId) {
   const per  = getPingIntervalSec();
   const ela  = getPingElapsedSec(satId).toFixed(1);
   const pcls = ps === 'ok' ? 'co-ping-ok' : ps === 'unconfigured' ? 'co-ping-none' : 'co-ping-err';
-  const dot  = `<span class="co-ping-dot ${pcls}" style="--ping-period:${per}s;--ping-delay:-${ela}s"></span>`;
+  const dot  = `<span class="co-ping-dot ${pcls}" style="--ping-period:${per}s;--ping-delay:-${ela}s" title="Click to force update"></span>`;
 
   const isErr = ps === 'error' || ps === 'timeout';
   if (!isErr) return dot;
@@ -510,6 +510,18 @@ export function initChadOps() {
         else                  { eclEl.className = 'co-ecl-sun';    eclEl.textContent = '☀ SUN'; }
       }
 
+      // TLE freshness (recomputed from epoch on every tick so the age counter advances)
+      const tleEl = row.querySelector('.co-tle-age');
+      if (tleEl && sat.satrec) {
+        const sr        = sat.satrec;
+        const epochDate = _epochToDate(sr.epochyr, sr.epochdays);
+        const ageDays   = (now - epochDate.getTime()) / 86400000;
+        const ageCls    = ageDays > 7 ? 'co-tle-stale' : ageDays > 3 ? 'co-tle-old' : 'co-tle-fresh';
+        const ageIcon   = ageDays > 7 ? '⚠' : ageDays > 3 ? '~' : '✓';
+        tleEl.className   = `co-tle-age ${ageCls}`;
+        tleEl.textContent = `${ageDays.toFixed(1)}d ${ageIcon}`;
+      }
+
     }
   }
 
@@ -533,6 +545,13 @@ export function initChadOps() {
       if (agoEl) agoEl.textContent = _fmtAgo(Date.now() - lastMs);
     });
   }
+
+  tbody.addEventListener('click', e => {
+    const dot = e.target.closest('.co-ping-dot');
+    if (!dot) return;
+    const satId = dot.closest('tr')?.dataset.satId;
+    if (satId) pingSatellite(satId);
+  });
 
   function start() {
     _active   = true;
