@@ -23,6 +23,15 @@ function _epochToDate(yr, days) {
   return d;
 }
 
+function _tleAgeLabel(ageDays) {
+  const cls  = ageDays > 7 ? 'co-tle-stale' : ageDays > 3 ? 'co-tle-old' : 'co-tle-fresh';
+  const icon = ageDays > 7 ? '⚠' : ageDays > 3 ? '~' : '✓';
+  const age  = ageDays < 1
+    ? `${(ageDays * 24).toFixed(1)}h`
+    : `${ageDays.toFixed(1)}d`;
+  return { cls, icon, age };
+}
+
 function _classifyOrbit(incDeg, a) {
   const alt = a - R_E;
   let regime = alt < 2000 ? 'LEO' : alt < 35286 ? 'MEO' : alt < 36286 ? 'GEO' : 'HEO';
@@ -314,9 +323,8 @@ function _rowHTML(sat, now, eclipse) {
 
     const epochDate = _epochToDate(sr.epochyr, sr.epochdays);
     const ageDays   = (now - epochDate.getTime()) / 86400000;
-    const ageCls    = ageDays > 7 ? 'co-tle-stale' : ageDays > 3 ? 'co-tle-old' : 'co-tle-fresh';
-    const ageIcon   = ageDays > 7 ? '⚠' : ageDays > 3 ? '~' : '✓';
-    tleHtml = `<span class="co-tle-age ${ageCls}">${ageDays.toFixed(1)}d ${ageIcon}</span>`;
+    const { cls: ageCls, icon: ageIcon, age } = _tleAgeLabel(ageDays);
+    tleHtml = `<span class="co-tle-age ${ageCls}">${age} ${ageIcon}</span>`;
   }
   const orbitCell = `<div class="co-orbit-stack co-eclipse-nav" data-sat-id="${sat.id}">
     <div class="co-orbit-row"><span class="co-orbit-label">ECL</span>${eclHtml}</div>
@@ -513,13 +521,11 @@ export function initChadOps() {
       // TLE freshness (recomputed from epoch on every tick so the age counter advances)
       const tleEl = row.querySelector('.co-tle-age');
       if (tleEl && sat.satrec) {
-        const sr        = sat.satrec;
-        const epochDate = _epochToDate(sr.epochyr, sr.epochdays);
+        const epochDate = _epochToDate(sat.satrec.epochyr, sat.satrec.epochdays);
         const ageDays   = (now - epochDate.getTime()) / 86400000;
-        const ageCls    = ageDays > 7 ? 'co-tle-stale' : ageDays > 3 ? 'co-tle-old' : 'co-tle-fresh';
-        const ageIcon   = ageDays > 7 ? '⚠' : ageDays > 3 ? '~' : '✓';
-        tleEl.className   = `co-tle-age ${ageCls}`;
-        tleEl.textContent = `${ageDays.toFixed(1)}d ${ageIcon}`;
+        const { cls, icon, age } = _tleAgeLabel(ageDays);
+        tleEl.className   = `co-tle-age ${cls}`;
+        tleEl.textContent = `${age} ${icon}`;
       }
 
     }
