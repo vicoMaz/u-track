@@ -1,6 +1,7 @@
 import { store } from '../store.js';
 import { propagate } from '../tle.js';
 import { sunDirectionECI, isInEclipse } from '../sunVector.js';
+import { satJwt } from '../satPing.js';
 
 const card       = document.getElementById('sat-info');
 const nameEl     = document.getElementById('sat-info-name');
@@ -75,29 +76,26 @@ function update() {
   orbitText.textContent = 'TLE (public)';
 
   // Attitude row
-  const att = store.attitudes[sat.noradId];
+  const att     = store.attitudes[sat.noradId];
   const entries = att?.entries;
+  const hasJwt  = !!satJwt(sat.noradId);
+
   if (entries?.length) {
     const tNow = store.currentTime.getTime();
-    const tMin = entries[0].t;
     const tMax = entries[entries.length - 1].t;
-    const src  = att.source || 'unknown';
-
-    if (tNow < tMin) {
+    if (tNow > tMax) {
       attDot.style.color  = DOT_GREY;
-      attText.textContent = `Default Sun Pointing — TM starts ${fmtUTC(tMin)}`;
-    } else if (tNow > tMax) {
-      attDot.style.color  = DOT_GREY;
-      attText.textContent = `Default Sun Pointing — TM ended ${fmtUTC(tMax)}`;
+      attText.textContent = 'Default Sun Pointing — APM data expired';
     } else {
-      attDot.style.color  = ctx === 'live' ? DOT_GREEN : DOT_AMBER;
-      attText.textContent = ctx === 'live'
-        ? `Interpolated · Live TM (${src})`
-        : `Interpolated · TM Replay (${src})`;
+      attDot.style.color  = DOT_GREEN;
+      attText.textContent = `Interpolated · ${att.source ?? 'apm'}`;
     }
+  } else if (hasJwt) {
+    attDot.style.color  = DOT_AMBER;
+    attText.textContent = 'APM · Waiting for data…';
   } else {
     attDot.style.color  = DOT_GREY;
-    attText.textContent = 'Default Sun Pointing, No Telemetry Available';
+    attText.textContent = 'Default Sun Pointing — no JWT configured';
   }
 
   // Eclipse icon next to satellite name
