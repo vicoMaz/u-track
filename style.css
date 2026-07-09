@@ -1069,9 +1069,8 @@ body.tools-active #sat-info { display: none !important; }
 .vis-btn.vis-off { color: #2a3a4a; }
 .vis-btn:hover { opacity: 0.75; }
 
-/* ── Subtab system (shared: Tracking / Tools / chadOps) ──── */
+/* ── Subtab system (shared: Tracking / chadOps) ──── */
 .track-subtab-bar,
-.tools-subtab-bar,
 .co-subtab-bar {
   height: 36px;
   background: #111118;
@@ -1084,7 +1083,6 @@ body.tools-active #sat-info { display: none !important; }
 }
 
 .track-subtab,
-.tools-subtab,
 .co-subtab {
   background: transparent;
   border: none;
@@ -1096,25 +1094,21 @@ body.tools-active #sat-info { display: none !important; }
   transition: all 0.15s;
 }
 .track-subtab:hover,
-.tools-subtab:hover,
 .co-subtab:hover { background: #1e1e2e; color: #ccc; }
 .track-subtab.active,
-.tools-subtab.active,
 .co-subtab.active { background: #1e1e2e; color: #fff; }
 /* Active underline — same accent as top-level tab bar */
 .track-subtab.active,
-.tools-subtab.active,
-.co-subtab.active                 { border-bottom: 2px solid #00d4ff; }
-
-.tools-subtab-content {
-  display: none;
-  flex: 1;
-  min-height: 0;
-}
-.tools-subtab-content.active { display: flex; flex-direction: column; }
+.co-subtab.active { border-bottom: 2px solid #00d4ff; }
 
 /* ── Orbit Inspector ─────────────────────────────────── */
-#tools-subtab-orbit { overflow: hidden; }
+#tools-subtab-orbit {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
 
 .oi-topbar {
   display: flex;
@@ -1273,329 +1267,6 @@ body.tools-active #sat-info { display: none !important; }
 .oi-no-events { color: #444; font-size: 11px; font-style: italic; }
 .oi-empty { color: #444; font-size: 12px; font-style: italic; padding: 20px; text-align: center; }
 
-/* ── Staplan Explorer ───────────────────────────────── */
-#tools-subtab-staplan {
-  padding: 12px;
-  gap: 10px;
-  overflow: hidden;
-}
-
-.csc-card {
-  background: #12121a;
-  border: 1px solid #2a2a3a;
-  border-radius: 8px;
-  padding: 10px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  flex-shrink: 0;
-}
-.csc-card.csc-flex1 { flex: 1; min-height: 0; }
-.csc-card.csc-timetable-card { height: 210px; }
-
-.csc-card-title-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.csc-card-title {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #555;
-}
-
-.csc-copy-btn {
-  background: #1a1a28;
-  border: 1px solid #2a2a3a;
-  border-radius: 4px;
-  color: #888;
-  padding: 2px 10px;
-  cursor: pointer;
-  font-size: 11px;
-  transition: all 0.15s;
-}
-.csc-copy-btn:hover { border-color: #00d4ff; color: #00d4ff; }
-.csc-copy-btn.copied { border-color: #00ff9d55; color: #00ff9d; }
-
-.csc-download-btn {
-  background: #1a1a28;
-  border: 1px solid #2a2a3a;
-  border-radius: 4px;
-  color: #888;
-  padding: 2px 10px;
-  cursor: pointer;
-  font-size: 11px;
-  transition: all 0.15s;
-  margin-left: auto;
-}
-.csc-download-btn:hover { border-color: #c77dff; color: #c77dff; }
-
-.csc-uploaders-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-
-.csc-uploader {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  background: #1a1a28;
-  border: 1px solid #2a2a3a;
-  border-radius: 6px;
-  font-size: 12px;
-}
-.csc-sat-dot { font-size: 10px; }
-.csc-sat-name { color: #ddd; font-weight: 600; }
-.csc-uploaded { color: #00ff9d; font-size: 11px; }
-.csc-hint { color: #555; font-size: 12px; font-style: italic; }
-
-.csc-upload-btn {
-  background: #c77dff22;
-  border: 1px solid #c77dff55;
-  border-radius: 4px;
-  color: #c77dff;
-  padding: 3px 8px;
-  cursor: pointer;
-  font-size: 11px;
-  transition: background 0.15s;
-  position: relative;
-}
-.csc-upload-btn:hover { background: #c77dff33; }
-
-/* Visually hidden but still clickable — display:none blocks label trigger in some browsers */
-.csc-file-input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  width: 100%;
-  height: 100%;
-  cursor: pointer;
-}
-
-.csc-clear-btn {
-  background: none;
-  border: none;
-  color: #555;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-}
-.csc-clear-btn:hover { color: #ff3860; }
-
-.csc-table-scroll { flex: 1; min-height: 0; overflow: auto; }
-
-.csc-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 12px;
-  white-space: nowrap;
-}
-.csc-table th {
-  background: #0d0d18;
-  color: #555;
-  text-transform: uppercase;
-  font-size: 10px;
-  letter-spacing: 0.05em;
-  padding: 6px 10px;
-  text-align: left;
-  border-bottom: 1px solid #2a2a3a;
-  position: sticky;
-  top: 0;
-  z-index: 1;
-}
-.csc-table td {
-  padding: 4px 10px;
-  border-bottom: 1px solid #1a1a28;
-  color: #bbb;
-}
-.csc-table tbody tr:hover td { background: #1a1a2a; }
-.csc-table .mono { font-family: 'Courier New', monospace; font-size: 11px; color: #ccc; }
-.csc-empty { color: #444; font-style: italic; text-align: center; padding: 20px; }
-
-.csc-pass-row.selected td { background: #0e2a14; }
-.csc-pass-row.selected:hover td { background: #163320; }
-
-/* ── Yes/No toggle switch ───────────────────────────── */
-.csc-toggle { display: inline-flex; align-items: center; cursor: pointer; }
-.csc-toggle-input { display: none; }
-.csc-toggle-track {
-  width: 32px;
-  height: 16px;
-  border-radius: 8px;
-  background: #2a2a3a;
-  border: 1px solid #3a3a4a;
-  position: relative;
-  transition: background 0.18s, border-color 0.18s;
-}
-.csc-toggle-thumb {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #555;
-  transition: left 0.18s, background 0.18s;
-}
-.csc-toggle-input:checked + .csc-toggle-track {
-  background: #00ff9d22;
-  border-color: #00ff9d;
-}
-.csc-toggle-input:checked + .csc-toggle-track .csc-toggle-thumb {
-  left: 18px;
-  background: #00ff9d;
-}
-.csc-toggle:hover .csc-toggle-track { border-color: #666; }
-.csc-toggle-input:checked ~ * .csc-toggle-track,
-.csc-toggle:hover .csc-toggle-input:checked + .csc-toggle-track { border-color: #00ff9daa; }
-
-/* ── Deselect All button header — sits above Yes/No column ── */
-.eclipse-th-actions {
-  text-align: center;
-  white-space: nowrap;
-}
-.csc-deselect-btn {
-  background: transparent;
-  border: 1px solid #333;
-  border-radius: 4px;
-  color: #666;
-  padding: 1px 7px;
-  cursor: pointer;
-  font-size: 10px;
-  font-weight: normal;
-  text-transform: none;
-  letter-spacing: 0;
-  transition: all 0.15s;
-}
-.csc-deselect-btn:hover { border-color: #ff3860; color: #ff3860; }
-
-/* ── Eclipse + actions cell (All Passes table) ──────────── */
-.eclipse-actions-cell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  white-space: nowrap;
-}
-.eclipse-val {
-  font-family: 'Courier New', monospace;
-  font-size: 11px;
-  color: #888;
-  min-width: 38px;
-  text-align: right;
-  flex-shrink: 0;
-}
-
-/* Pass number column in timetable */
-.pass-num {
-  font-family: 'Courier New', monospace;
-  font-size: 11px;
-  color: #555;
-  text-align: center;
-  white-space: nowrap;
-}
-
-/* ── Eclipse bar ─────────────────────────────────────────── */
-.eclipse-cell { padding: 4px 8px !important; }
-
-.eclipse-bar {
-  height: 16px;
-  border-radius: 3px;
-  display: flex;
-  align-items: center;
-  width: 120px;       /* fixed width — don't let it stretch */
-  flex-shrink: 0;
-  overflow: hidden;
-}
-.eclipse-seg-l,
-.eclipse-seg-r {
-  overflow: hidden;
-  white-space: nowrap;
-  font-size: 10px;
-  font-weight: 700;
-  color: rgba(255,255,255,0.92);
-  text-shadow: 0 0 5px rgba(0,0,0,0.9);
-  text-align: center;
-  flex-shrink: 0;
-}
-.eclipse-none { color: #444; }
-
-/* ── Eclipse header tooltip ─────────────────────────────── */
-.eclipse-th { cursor: pointer; white-space: nowrap; user-select: none; }
-.eclipse-info-icon { font-size: 10px; color: #555; vertical-align: super; }
-.eclipse-th:hover .eclipse-info-icon { color: #c77dff; }
-.eclipse-th.eclipse-th-copied { color: #00ff9d !important; }
-.eclipse-th.eclipse-th-copied .eclipse-info-icon { color: #00ff9d; }
-
-.etip-note { color: #666; font-size: 10px; margin-top: 4px; font-style: italic; }
-.eclipse-tooltip-copy-hint {
-  margin-top: 8px;
-  font-size: 10px;
-  color: #c77dff;
-  text-align: center;
-  letter-spacing: 0.03em;
-}
-
-#eclipse-float-tip {
-  display: none;
-  position: fixed;
-  width: 340px;
-  background: #1a1a2e;
-  border: 1px solid #3a3a5a;
-  border-radius: 8px;
-  padding: 12px 14px;
-  z-index: 99999;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.7);
-  font-size: 11px;
-  font-weight: normal;
-  text-transform: none;
-  letter-spacing: 0;
-  color: #bbb;
-  pointer-events: none;
-}
-#eclipse-float-tip.visible { display: block; }
-
-.eclipse-tooltip-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: #c77dff;
-  margin-bottom: 8px;
-}
-.eclipse-tooltip-row { margin: 3px 0; }
-.etip-key {
-  display: inline-block;
-  width: 24px;
-  font-family: 'Courier New', monospace;
-  color: #00d4ff;
-  font-weight: 700;
-  margin-right: 6px;
-}
-.eclipse-tooltip-divider {
-  height: 1px;
-  background: #2a2a4a;
-  margin: 10px 0;
-}
-.eclipse-tooltip-label {
-  color: #666;
-  font-size: 10px;
-  margin-bottom: 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.eclipse-tooltip-formula {
-  font-family: 'Courier New', monospace;
-  font-size: 9.5px;
-  color: #00ff9d;
-  background: #0d0d18;
-  border: 1px solid #2a2a3a;
-  border-radius: 4px;
-  padding: 6px 8px;
-  word-break: break-all;
-  overflow-wrap: break-word;
-  white-space: normal;
-  line-height: 1.6;
-}
 
 /* ═══════════════════════════════════════════════════════════════
    chadOps — Operational Status Dashboard
@@ -1711,6 +1382,7 @@ body.tools-active #sat-info { display: none !important; }
   position: relative;
   vertical-align: middle;
   flex-shrink: 0;
+  cursor: pointer;
   cursor: default;
 }
 .co-ping-detail {

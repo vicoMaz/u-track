@@ -89,79 +89,8 @@
       <!-- Tools view -->
       <div id="tools-view" class="view">
 
-        <!-- Tools subtab bar -->
-        <div class="tools-subtab-bar">
-          <button class="tools-subtab active" data-subtab="staplan">Staplan Explorer</button>
-          <button class="tools-subtab" data-subtab="orbit">Orbit Inspector</button>
-        </div>
-
-        <!-- Staplan Explorer -->
-        <div class="tools-subtab-content active" id="tools-subtab-staplan">
-
-          <!-- Satellite staplan uploaders -->
-          <div class="csc-card">
-            <div class="csc-card-title">Staplans</div>
-            <div id="csc-uploaders" class="csc-uploaders-row"></div>
-          </div>
-
-          <!-- All passes -->
-          <div class="csc-card csc-flex1">
-            <div class="csc-card-title-row">
-              <div class="csc-card-title">All Passes</div>
-              <button id="csc-download-btn" class="csc-download-btn">↓ Download Staplan</button>
-            </div>
-            <div class="csc-table-scroll">
-              <table class="csc-table">
-                <thead>
-                  <tr>
-                    <th>Sat.</th>
-                    <th>Station</th>
-                    <th>AOS (0°)</th>
-                    <th>AOS (5°)</th>
-                    <th>LOS (5°)</th>
-                    <th>LOS (0°)</th>
-                    <th>Duration (5°–5°)</th>
-                    <th class="eclipse-th">Eclipse <span class="eclipse-info-icon">ⓘ</span></th>
-                    <th class="eclipse-th-actions">
-                      <button id="csc-deselect-btn" class="csc-deselect-btn">Deselect All</button>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody id="csc-pass-table"></tbody>
-              </table>
-            </div>
-          </div>
-
-          <!-- Desired timetable -->
-          <div class="csc-card csc-timetable-card">
-            <div class="csc-card-title-row">
-              <div class="csc-card-title">Timetable</div>
-              <button id="csc-copy-btn" class="csc-copy-btn">Copy</button>
-            </div>
-            <div class="csc-table-scroll">
-              <table class="csc-table">
-                <thead>
-                  <tr>
-                    <th>Pass #</th>
-                    <th>Sat.</th>
-                    <th>Station</th>
-                    <th>AOS (0°)</th>
-                    <th>AOS (5°)</th>
-                    <th>LOS (5°)</th>
-                    <th>LOS (0°)</th>
-                    <th>Duration (5°–5°)</th>
-                    <th class="eclipse-th">Eclipse <span class="eclipse-info-icon">ⓘ</span></th>
-                  </tr>
-                </thead>
-                <tbody id="csc-timetable"></tbody>
-              </table>
-            </div>
-          </div>
-
-        </div>
-
         <!-- Orbit Inspector -->
-        <div class="tools-subtab-content" id="tools-subtab-orbit">
+        <div id="tools-subtab-orbit">
           <div class="oi-topbar">
             <label class="oi-sat-label">Satellite</label>
             <select id="oi-sat-select" class="oi-sat-select"></select>
@@ -236,8 +165,9 @@
               <div class="st-section-title">Satellites</div>
               <div class="st-card">
                 <div class="st-card-label">Add Satellite</div>
-                <input id="norad-input" type="text" placeholder="NORAD ID or paste TLE" />
-                <input id="name-input" type="text" placeholder="Name (optional)" maxlength="30" />
+                <input id="sat-id-input" type="text" placeholder="Satellite ID (e.g. LEONAV)" />
+                <input id="sat-ip-input" type="text" placeholder="Server IP (e.g. 172.17.208.1)" />
+                <input id="name-input" type="text" placeholder="Display name (optional)" maxlength="30" />
                 <div class="btn-row">
                   <button id="model-toggle" class="model-toggle" title="Select 3D model">12U</button>
                   <button id="add-sat-btn">Add</button>
