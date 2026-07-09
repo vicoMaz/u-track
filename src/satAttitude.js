@@ -39,7 +39,8 @@ export async function fetchSatAttitude(sat) {
       headers: { Authorization: jwt, Accept: 'text/plain' },
     });
     if (!res.ok) {
-      _attStatus[sat.noradId] = `HTTP ${res.status}`;
+      // 500 = no attitude data available for this epoch — not a real error
+      _attStatus[sat.noradId] = res.status === 500 ? 'no-data' : `HTTP ${res.status}`;
       return;
     }
     const text  = await res.text();

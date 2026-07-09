@@ -97,6 +97,9 @@ function update() {
   } else if (!hasJwt) {
     attDot.style.color  = DOT_GREY;
     attText.textContent = 'Default Sun Pointing — no JWT configured';
+  } else if (attStatus === 'no-data') {
+    attDot.style.color  = DOT_GREY;
+    attText.textContent = 'Default Sun Pointing — no attitude data';
   } else if (attStatus !== 'ok' && attStatus !== 'pending') {
     attDot.style.color  = '#ff3860';
     attText.textContent = `APM · ${attStatus}`;
