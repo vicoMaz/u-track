@@ -869,6 +869,23 @@ body.tools-active #sat-info { display: none !important; }
 .st-field-baseurl:hover { border-color: #2a3a4a; color: #99aabb; }
 .st-field-baseurl:focus { border-color: #3a5a7a; color: #ccc; background: #0d0d1a; }
 
+.st-field-jwt {
+  width: 80px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: #4a5a44;
+  font-size: 10px;
+  font-family: 'Courier New', monospace;
+  padding: 2px 4px;
+  outline: none;
+  transition: border-color 0.15s, color 0.15s;
+}
+.st-field-jwt::placeholder { color: #252a20; }
+.st-field-jwt:hover { border-color: #3a4a2a; color: #88aa77; }
+.st-field-jwt:focus { width: 200px; border-color: #4a7a3a; color: #aaccaa; background: #0d0d1a; }
+
 .st-item .remove-btn {
   background: none;
   border: none;

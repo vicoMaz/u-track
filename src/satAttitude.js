@@ -1,0 +1,56 @@
+import { store }                           from './store.js';
+import { satBaseUrl, satJwt, getPingIntervalSec } from './satPing.js';
+
+const ATT_MIN_INTERVAL_MS = 90_000; // never fetch more often than 90s per satellite
+
+const _lastAttMs = {}; // noradId → timestamp of last successful fetch
+
+function _parseApm(text) {
+  const get = key => {
+    const m = text.match(new RegExp(`^${key}\\s*=\\s*(.+)$`, 'm'));
+    return m ? m[1].trim() : null;
+  };
+  const epoch = get('EPOCH');
+  const q1 = parseFloat(get('Q1'));
+  const q2 = parseFloat(get('Q2'));
+  const q3 = parseFloat(get('Q3'));
+  const qc = parseFloat(get('QC'));
+  if (!epoch || isNaN(q1) || isNaN(q2) || isNaN(q3) || isNaN(qc)) return null;
+  return { t: new Date(epoch).getTime(), q: { x: q1, y: q2, z: q3, w: qc } };
+}
+
+export async function fetchSatAttitude(sat) {
+  const now = Date.now();
+  if (now - (_lastAttMs[sat.noradId] ?? 0) < ATT_MIN_INTERVAL_MS) return;
+
+  const ip  = satBaseUrl(sat.noradId);
+  const jwt = satJwt(sat.noradId);
+  if (!ip || !jwt) return;
+
+  const host  = ip.replace(/\.\d+$/, '.4');
+  const epoch = new Date(now).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const url   = `http://${host}:16060/api/platform/v1/attitudeParameterMessage?epoch=${encodeURIComponent(epoch)}`;
+
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: jwt, Accept: 'text/plain' },
+    });
+    if (!res.ok) return;
+    const text  = await res.text();
+    const entry = _parseApm(text);
+    if (!entry) return;
+
+    _lastAttMs[sat.noradId] = now;
+
+    // Q_DOT ≈ 0 → attitude is effectively constant; build a 2-entry window
+    // that covers "now" until the next expected fetch so the 3D renderer can SLERP.
+    const validMs = Math.max(ATT_MIN_INTERVAL_MS, getPingIntervalSec() * 1000) * 2;
+    store.setAttitude(sat.noradId, {
+      source:  'apm',
+      entries: [
+        { t: entry.t,            q: entry.q },
+        { t: entry.t + validMs,  q: entry.q },
+      ],
+    });
+  } catch { /* non-fatal */ }
+}

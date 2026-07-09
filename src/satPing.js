@@ -2,6 +2,7 @@ import { store }              from './store.js';
 import { fetchSatTelemetry } from './satTelemetry.js';
 import { fetchSatPasses }    from './satPasses.js';
 import { fetchSatTle }       from './satTle.js';
+import { fetchSatAttitude }  from './satAttitude.js';
 
 const PING_TIMEOUT = 5_000;
 
@@ -39,6 +40,16 @@ export function setSatBaseUrl(noradId, ip) {
     headers: { 'Content-Type': 'application/json' },
     body:    JSON.stringify({ baseUrl: ip || null }),
   }).catch(() => {});
+}
+
+// JWT tokens are per-satellite and stored client-side only (never sent to the local server)
+export function satJwt(noradId) {
+  return localStorage.getItem(`sat-jwt-${noradId}`) ?? '';
+}
+
+export function setSatJwt(noradId, token) {
+  if (token) localStorage.setItem(`sat-jwt-${noradId}`, token);
+  else       localStorage.removeItem(`sat-jwt-${noradId}`);
 }
 
 // ── Ping logic ────────────────────────────────────────────────────
@@ -80,7 +91,7 @@ async function _pingAndReschedule(sat) {
   try {
     await _ping(sat);
     if (store.pingStatus[sat.id] === 'ok') {
-      await Promise.all([fetchSatTelemetry(sat), fetchSatPasses(sat), fetchSatTle(sat)]);
+      await Promise.all([fetchSatTelemetry(sat), fetchSatPasses(sat), fetchSatTle(sat), fetchSatAttitude(sat)]);
     }
   } catch { /* never let an error kill the cycle */ }
   _schedTimers[sat.id] = setTimeout(() => _pingAndReschedule(sat), getPingIntervalSec() * 1000);

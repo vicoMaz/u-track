@@ -1,7 +1,7 @@
 import { store, PALETTE, GS_PALETTE } from '../store.js';
-import { fetchTLE, parseTLE, propagate } from '../tle.js';
+import { parseTLE, propagate } from '../tle.js';
 import { persistSatellite, persistStation, deleteServerSatellite, deleteServerStation, updateServerStation } from '../apiPoller.js';
-import { satBaseUrl, setSatBaseUrl, pingSatellite, getPingIntervalSec, restartPingPoller } from '../satPing.js';
+import { satBaseUrl, setSatBaseUrl, satJwt, setSatJwt, pingSatellite, getPingIntervalSec, restartPingPoller } from '../satPing.js';
 import { getTmConfig, setTmConfig, fetchSatTelemetry } from '../satTelemetry.js';
 
 // ─── Icons ────────────────────────────────────────────────────────────────
@@ -172,6 +172,7 @@ function renderSettingsSatList() {
         </div>
         <span class="st-ping-status" data-sat-id="${sat.id}" title=""></span>
         <input class="st-field-baseurl" value="${satBaseUrl(sat.noradId)}" placeholder="Server IP" title="API server IP — e.g. 172.17.206.1">
+        <input class="st-field-jwt" type="password" value="${satJwt(sat.noradId)}" placeholder="JWT token (attitude)" title="Bearer token for attitude endpoint — stored in browser localStorage only">
         <button class="st-tm-toggle" title="Configure TM parameter mapping">▸ TM</button>
         <button class="remove-btn" data-id="${sat.id}" data-norad="${sat.noradId}" title="Remove">×</button>
       </div>
@@ -200,6 +201,11 @@ function renderSettingsSatList() {
     };
     ipIn.addEventListener('blur',    saveIp);
     ipIn.addEventListener('keydown', e => { if (e.key === 'Enter') ipIn.blur(); });
+
+    const jwtIn   = item.querySelector('.st-field-jwt');
+    const saveJwt = () => setSatJwt(sat.noradId, jwtIn.value.trim());
+    jwtIn.addEventListener('blur',    saveJwt);
+    jwtIn.addEventListener('keydown', e => { if (e.key === 'Enter') jwtIn.blur(); });
 
     const toggle    = item.querySelector('.st-tm-toggle');
     const tmSection = item.querySelector('.st-tm-config');
@@ -288,7 +294,6 @@ function renderSettingsGsList() {
 
 const modelToggle = document.getElementById('model-toggle');
 let selectedModel = '12U';
-let pendingTLE = null;
 if (modelToggle) {
   modelToggle.addEventListener('click', () => {
     selectedModel = selectedModel === '12U' ? 'FF' : '12U';
@@ -303,58 +308,52 @@ function nextColor() {
   return PALETTE[store.satellites.length % PALETTE.length];
 }
 
-async function finaliseSatellite({ satrec, noradId, tleName, line1, line2, statusEl }) {
+async function finaliseSatellite({ satrec, noradId, satId, ip, line1, line2, statusEl }) {
   const nameInput = document.getElementById('name-input');
   const testResult = propagate(satrec, store.currentTime);
-  if (!testResult) throw new Error(`Cannot propagate NORAD ${noradId} — object may have decayed or re-entered.`);
+  if (!testResult) throw new Error('Cannot propagate — object may have decayed.');
 
   statusEl.remove();
   const id    = `sat-${Date.now()}`;
   const color = nextColor();
-  const name  = nameInput.value.trim() || tleName || `SAT-${noradId}`;
+  const name  = nameInput.value.trim() || satId || `SAT-${noradId}`;
   store.addSatellite({ id, noradId, name, color, satrec, model: selectedModel });
-  persistSatellite(name, line1, line2, selectedModel);
-  document.getElementById('norad-input').value = '';
+  await persistSatellite(name, line1, line2, selectedModel, satId);
+  setSatBaseUrl(noradId, ip);
   nameInput.value = '';
 }
 
 async function addSatellite() {
-  const noradInput = document.getElementById('norad-input');
+  const satIdInput = document.getElementById('sat-id-input');
+  const satIpInput = document.getElementById('sat-ip-input');
   const addBtn     = document.getElementById('add-sat-btn');
 
-  if (pendingTLE) {
-    const tle = pendingTLE; pendingTLE = null;
-    noradInput.style.borderColor = '';
-    await addSatelliteFromTLE(tle);
-    return;
-  }
-
-  const raw = noradInput.value.trim();
-  if (!raw) return;
-  if (!/^\d{1,9}$/.test(raw)) { _flash(noradInput, '#ff3860'); return; }
-  if (store.satellites.some(s => s.noradId === raw)) { _flash(noradInput, '#ffbe0b'); return; }
+  const satId = satIdInput.value.trim();
+  const ip    = satIpInput.value.trim();
+  if (!satId) { _flash(satIdInput, '#ff3860'); return; }
+  if (!ip)    { _flash(satIpInput, '#ff3860'); return; }
 
   addBtn.disabled = true; addBtn.textContent = '…';
-  const statusEl = _statusEl('Fetching ' + raw + '…');
+  const statusEl = _statusEl(`Fetching TLE for ${satId}…`);
   try {
-    const { satrec, name: tleName, line1, line2 } = await fetchTLE(raw);
-    await finaliseSatellite({ satrec, noradId: raw, tleName, line1, line2, statusEl });
-  } catch (err) {
-    statusEl.className = 'sat-error';
-    statusEl.textContent = 'Error: ' + err.message;
-    setTimeout(() => statusEl.remove(), 4000);
-  } finally { addBtn.disabled = false; addBtn.textContent = 'Add'; }
-}
+    const host = ip.replace(/\.\d+$/, '.3');
+    const res  = await fetch(`http://${host}:15602/api/v1/data/orbit/best-tle?satellite_id=${encodeURIComponent(satId)}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      const detail = body.match(/No satellite with id (.+)/)?.[0]
+                  ?? body.match(/Caused by \d+: (.+)/)?.[1]
+                  ?? `FDS returned ${res.status}`;
+      throw new Error(detail.trim());
+    }
+    const data = await res.json();
+    if (!data.first_line || !data.second_line) throw new Error('No TLE in response');
 
-async function addSatelliteFromTLE(parsed) {
-  const addBtn = document.getElementById('add-sat-btn');
-  document.getElementById('norad-input').value = '';
-  addBtn.disabled = true; addBtn.textContent = '…';
-  const statusEl = _statusEl('Adding satellite…');
-  try {
-    const { satrec, name: tleName, noradId, line1, line2 } = parsed;
-    if (store.satellites.some(s => s.noradId === noradId)) throw new Error(`NORAD ${noradId} already loaded.`);
-    await finaliseSatellite({ satrec, noradId, tleName, line1, line2, statusEl });
+    const { satrec, noradId, line1, line2 } = parseTLE(`${data.first_line}\n${data.second_line}`);
+    if (store.satellites.some(s => s.noradId === noradId)) throw new Error(`Already loaded (NORAD ${noradId})`);
+
+    await finaliseSatellite({ satrec, noradId, satId, ip, line1, line2, statusEl });
+    satIdInput.value = '';
+    satIpInput.value = '';
   } catch (err) {
     statusEl.className = 'sat-error';
     statusEl.textContent = 'Error: ' + err.message;
@@ -404,27 +403,7 @@ async function addGroundStation() {
 
 export function initInputPanel() {
   document.getElementById('add-sat-btn')?.addEventListener('click', addSatellite);
-
-  const noradInput = document.getElementById('norad-input');
-  noradInput?.addEventListener('keydown', e => { if (e.key === 'Enter') addSatellite(); });
-  noradInput?.addEventListener('paste', e => {
-    const text = e.clipboardData.getData('text');
-    if (/^[12] /m.test(text) && text.includes('\n')) {
-      e.preventDefault();
-      try {
-        pendingTLE = parseTLE(text);
-        noradInput.value = pendingTLE.noradId;
-        noradInput.style.borderColor = '#c77dff';
-        const nameInput = document.getElementById('name-input');
-        if (!nameInput.value.trim() && pendingTLE.name) nameInput.value = pendingTLE.name;
-      } catch {
-        pendingTLE = null; _flash(noradInput, '#ff3860');
-      }
-    }
-  });
-  noradInput?.addEventListener('input', () => {
-    if (pendingTLE) { pendingTLE = null; noradInput.style.borderColor = ''; }
-  });
+  document.getElementById('sat-ip-input')?.addEventListener('keydown', e => { if (e.key === 'Enter') addSatellite(); });
 
   document.getElementById('add-gs-btn')?.addEventListener('click', addGroundStation);
   document.getElementById('gs-lon-input')?.addEventListener('keydown', e => {
