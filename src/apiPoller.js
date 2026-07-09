@@ -17,11 +17,12 @@ function parseSatEntry(item) {
     if (satrec.error !== 0) return null;
     const nameLineIdx = lines.indexOf(line1) - 1;
     const tleName = nameLineIdx >= 0 ? lines[nameLineIdx] : '';
-    const name  = item.name || tleName || `SAT-${noradId}`;
-    const id    = `sat-api-${++satIdCounter}`;
-    const color = PALETTE[store.satellites.length % PALETTE.length];
-    const model = item.model === 'FF' ? 'FF' : '12U';
-    return { id, noradId, name, color, satrec, model };
+    const name       = item.name || tleName || `SAT-${noradId}`;
+    const id         = `sat-api-${++satIdCounter}`;
+    const color      = PALETTE[store.satellites.length % PALETTE.length];
+    const model      = item.model === 'FF' ? 'FF' : '12U';
+    const satelliteId = item.satelliteId || null;
+    return { id, noradId, name, color, satrec, model, satelliteId };
   } catch { return null; }
 }
 
@@ -113,12 +114,12 @@ export function startApiPoller() {
 }
 
 // Called by InputPanel when the user adds via the UI form
-export async function persistSatellite(name, line1, line2, model = '12U') {
+export async function persistSatellite(name, line1, line2, model = '12U', satelliteId = null) {
   try {
     await fetch('/api/satellites', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, tle: `${line1}\n${line2}`, model }),
+      body: JSON.stringify({ name, tle: `${line1}\n${line2}`, model, satelliteId }),
     });
   } catch { /* non-fatal */ }
 }
