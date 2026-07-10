@@ -1,40 +1,61 @@
-import { store, PALETTE, GS_PALETTE } from '../store.js';
+import { store, PALETTE } from '../store.js';
 import { parseTLE, propagate } from '../tle.js';
-import { persistSatellite, persistStation, deleteServerSatellite, deleteServerStation, updateServerStation } from '../apiPoller.js';
+import { persistSatellite, deleteServerSatellite } from '../apiPoller.js';
 import { satBaseUrl, setSatBaseUrl, satJwt, setSatJwt, pingSatellite, getPingIntervalSec, restartPingPoller } from '../satPing.js';
-import { getTmConfig, setTmConfig, fetchSatTelemetry } from '../satTelemetry.js';
+
+// ─── Subnet routing reference ─────────────────────────────────────────────
+// Base IP stored per satellite is the SCC machine (.1):
+//   .1  = SCC  — telemetry (port 15000), used as-is
+//   .3  = GNM  — TLE + antennas (port 15602)
+//   .4  = FDS  (second FDS node, currently unused)
+//   .5  = FDS  — ping target, passes, attitude (port 15500); Grafana (:3000)
+import { setNetworkVisible } from '../satAntennas.js';
 
 // ─── Icons ────────────────────────────────────────────────────────────────
 
 const SVG_EYE     = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
 const SVG_EYE_OFF = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
-const SVG_CIRCLE  = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/></svg>`;
 
 // ─── ID-key helpers for change detection ─────────────────────────────────
 
 let _satIdKey = '';
-let _gsIdKey  = '';
 const _satListKey = () => store.satellites.map(s => s.id).join('\0');
-const _gsListKey  = () => store.groundStations.map(g => g.id).join('\0');
 
-// ─── Satellite side-panel list (visibility toggles only) ──────────────────
+// Which satellites have their station rows collapsed
+const _stationsCollapsed = new Set();
+
+// ─── Satellite side-panel list — fused with per-network toggles ──────────
 
 function renderSatList() {
   const list = document.getElementById('sat-list');
   if (!list) return;
   list.innerHTML = '';
   for (const sat of store.satellites) {
-    const item = document.createElement('div');
-    item.className = 'sat-item' + (sat.id === store.trackedSatId ? ' tracking' : '');
-    item.dataset.itemId = sat.id;
-    item.style.setProperty('--sat-color', sat.color);
-    const hidden = sat.visible === false;
-    item.innerHTML = `
-      <span class="sat-dot" style="background:${sat.color}"></span>
-      <span class="sat-name" data-id="${sat.id}" title="Centre view">${sat.name}</span>
-      <button class="vis-btn ${hidden ? 'vis-off' : ''}" data-id="${sat.id}" title="${hidden ? 'Show' : 'Hide'}">${hidden ? SVG_EYE_OFF : SVG_EYE}</button>
+    const hidden     = sat.visible === false;
+    const networks   = store.getSatNetworks(sat.id);
+    const group = document.createElement('div');
+    group.className = 'sat-group';
+    group.dataset.itemId = sat.id;
+    group.style.setProperty('--sat-color', sat.color);
+    const collapsed = _stationsCollapsed.has(sat.id);
+    group.innerHTML = `
+      <div class="sat-item${sat.id === store.trackedSatId ? ' tracking' : ''}">
+        <span class="sat-dot" style="background:${sat.color}"></span>
+        <span class="sat-name" data-id="${sat.id}" title="Centre view">${sat.name}</span>
+        ${networks.length ? `<button class="gs-collapse-btn" data-id="${sat.id}" title="Toggle stations">${collapsed ? '▸' : '▾'}</button>` : ''}
+        <button class="vis-btn ${hidden ? 'vis-off' : ''}" data-id="${sat.id}" title="${hidden ? 'Show' : 'Hide'}">${hidden ? SVG_EYE_OFF : SVG_EYE}</button>
+      </div>
+      ${networks.length ? `<div class="gs-net-rows${collapsed ? ' gs-collapsed' : ''}">${networks.map(n => {
+        const visible = store.antennaToggles[`${sat.id}:${n.network}`] ?? true;
+        return `
+          <label class="gs-net-row">
+            <input type="checkbox" class="gs-net-toggle" data-sat="${sat.id}" data-network="${n.network}" ${visible ? 'checked' : ''}>
+            <span class="gs-net-name">${n.network}</span>
+            <span class="gs-net-count">${n.siteCount} site${n.siteCount === 1 ? '' : 's'}</span>
+          </label>`;
+      }).join('')}</div>` : ''}
     `;
-    list.appendChild(item);
+    list.appendChild(group);
   }
   list.querySelectorAll('.sat-name').forEach(el => {
     el.addEventListener('click', () => {
@@ -45,6 +66,23 @@ function renderSatList() {
   list.querySelectorAll('.vis-btn').forEach(btn => {
     btn.addEventListener('click', () => store.toggleSatVisibility(btn.dataset.id));
   });
+  list.querySelectorAll('.gs-net-toggle').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const sat = store._satById.get(cb.dataset.sat);
+      if (sat) setNetworkVisible(sat, cb.dataset.network, cb.checked);
+    });
+  });
+  list.querySelectorAll('.gs-collapse-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      const nowCollapsed = _stationsCollapsed.has(id)
+        ? (_stationsCollapsed.delete(id), false)
+        : (_stationsCollapsed.add(id),    true);
+      btn.textContent = nowCollapsed ? '▸' : '▾';
+      const group = btn.closest('.sat-group');
+      group?.querySelector('.gs-net-rows')?.classList.toggle('gs-collapsed', nowCollapsed);
+    });
+  });
 }
 
 // Patch visibility + tracking state without rebuilding the list
@@ -52,11 +90,11 @@ function _patchSatList() {
   const list = document.getElementById('sat-list');
   if (!list) return;
   for (const sat of store.satellites) {
-    const item = list.querySelector(`[data-item-id="${sat.id}"]`);
-    if (!item) { renderSatList(); return; }
+    const group = list.querySelector(`[data-item-id="${sat.id}"]`);
+    if (!group) { renderSatList(); return; }
     const hidden = sat.visible === false;
-    item.classList.toggle('tracking', sat.id === store.trackedSatId);
-    const btn = item.querySelector('.vis-btn');
+    group.querySelector('.sat-item')?.classList.toggle('tracking', sat.id === store.trackedSatId);
+    const btn = group.querySelector('.vis-btn');
     if (btn) {
       btn.classList.toggle('vis-off', hidden);
       btn.title     = hidden ? 'Show' : 'Hide';
@@ -65,227 +103,235 @@ function _patchSatList() {
   }
 }
 
-// ─── GS side-panel list (visibility + footprint toggles) ─────────────────
-
-function renderGsList() {
-  const list = document.getElementById('gs-list');
+// Patch checkbox states without rebuilding the list (e.g. after seeding defaults)
+function _patchGsToggles() {
+  const list = document.getElementById('sat-list');
   if (!list) return;
-  list.innerHTML = '';
-  for (const gs of store.groundStations) {
-    const item = document.createElement('div');
-    item.className = 'gs-item';
-    item.dataset.itemId = gs.id;
-    item.style.setProperty('--gs-color', gs.color);
-    const hidden = gs.visible === false;
-    item.innerHTML = `
-      <span class="sat-dot" style="background:${gs.color}"></span>
-      <span class="gs-name">${gs.name}</span>
-      <button class="vis-btn ${hidden ? 'vis-off' : ''}" data-id="${gs.id}" title="${hidden ? 'Show station' : 'Hide station'}">${hidden ? SVG_EYE_OFF : SVG_EYE}</button>
-      <button class="fp-btn ${gs.showFootprint ? '' : 'fp-off'}" data-id="${gs.id}" title="${gs.showFootprint ? 'Hide coverage' : 'Show coverage'}">${SVG_CIRCLE}</button>
-    `;
-    list.appendChild(item);
-  }
-  list.querySelectorAll('.vis-btn').forEach(btn => {
-    btn.addEventListener('click', () => store.toggleGSVisibility(btn.dataset.id));
-  });
-  list.querySelectorAll('.fp-btn').forEach(btn => {
-    btn.addEventListener('click', () => store.toggleGSFootprint(btn.dataset.id));
+  list.querySelectorAll('.gs-net-toggle').forEach(cb => {
+    cb.checked = store.antennaToggles[`${cb.dataset.sat}:${cb.dataset.network}`] ?? true;
   });
 }
 
-// Patch visibility + footprint state without rebuilding the list
-function _patchGsList() {
-  const list = document.getElementById('gs-list');
-  if (!list) return;
-  for (const gs of store.groundStations) {
-    const item = list.querySelector(`[data-item-id="${gs.id}"]`);
-    if (!item) { renderGsList(); return; }
-    const hidden = gs.visible === false;
-    const visBtn = item.querySelector('.vis-btn');
-    if (visBtn) {
-      visBtn.classList.toggle('vis-off', hidden);
-      visBtn.title     = hidden ? 'Show station' : 'Hide station';
-      visBtn.innerHTML = hidden ? SVG_EYE_OFF : SVG_EYE;
-    }
-    const fpBtn = item.querySelector('.fp-btn');
-    if (fpBtn) {
-      fpBtn.classList.toggle('fp-off', !gs.showFootprint);
-      fpBtn.title = gs.showFootprint ? 'Hide coverage' : 'Show coverage';
-    }
-  }
-}
+// ─── Satellite component links modal ─────────────────────────────────────
 
-// ─── Settings ping status dots ───────────────────────────────────────────
-
-const _PING_TIPS = { ok: 'Server reachable', pending: 'Pinging…', timeout: 'Timeout', error: 'Unreachable', unconfigured: 'No server IP set' };
-
-function _applySettingsPingDot(el, satId) {
-  if (!el) return;
-  const ps = store.pingStatus[satId] ?? 'unconfigured';
-  el.className = 'st-ping-status st-ping-' + (ps === 'ok' ? 'ok' : ps === 'unconfigured' ? 'none' : 'err');
-  el.title = _PING_TIPS[ps] ?? ps;
-}
-
-function _updateSettingsPingDots() {
-  const list = document.getElementById('st-sat-list');
-  if (!list) return;
-  for (const sat of store.satellites) {
-    const dot = list.querySelector(`.st-ping-status[data-sat-id="${sat.id}"]`);
-    _applySettingsPingDot(dot, sat.id);
-  }
-}
-
-// ─── Settings view: full satellite list ──────────────────────────────────
-
-const TM_FIELDS = [
-  { key: 'sysMode',   label: 'SYS mode' },
-  { key: 'gncMode',   label: 'GNC mode' },
-  { key: 'battery',   label: 'Battery'  },
-  { key: 'battSoc',   label: 'SoC [%]', formula: model => model === 'FF'
-      ? '−361.07 + 18.55 × V<sub>Batt</sub>'
-      : '−361.5 + 27.86 × V<sub>Batt</sub>' },
-  { key: 'evtNormal', label: 'Evt Norm' },
-  { key: 'evtLow',    label: 'Evt Low'  },
-  { key: 'evtMed',    label: 'Evt Med'  },
-  { key: 'evtHigh',   label: 'Evt High' },
-  { key: 'rw1',       label: 'RW 1'     },
-  { key: 'rw2',       label: 'RW 2'     },
-  { key: 'rw3',       label: 'RW 3'     },
-  { key: 'rw4',       label: 'RW 4'     },
-  { key: 'uptime',    label: 'Uptime'   },
+const LINK_DEFS = [
+  { key: 'scc',     label: 'SCC',     subnet: 1, port: 15000 },  // .1 SCC machine
+  { key: 'fds',     label: 'FDS',     subnet: 5, port: 15500 },  // .5 FDS machine
+  { key: 'gnm',     label: 'GNM',     subnet: 3, port: 15602 },  // .3 GNM machine
+  { key: 'gnc',     label: 'GNC',     subnet: null, port: null },
+  { key: 'grafana', label: 'Grafana', subnet: 5, port: 3000  },  // .5 FDS Grafana
+  { key: 'custom',  label: 'Custom',  subnet: null, port: null },
 ];
+
+function _defUrl(ip, def) {
+  if (!ip || def.subnet == null || def.port == null) return '';
+  return `http://${ip.replace(/\.\d+$/, `.${def.subnet}`)}:${def.port}`;
+}
+
+function _getSatLinks(noradId) {
+  try { return JSON.parse(localStorage.getItem(`sat-links-${noradId}`) ?? '{}'); }
+  catch { return {}; }
+}
+
+function _setSatLink(noradId, key, val) {
+  const links = _getSatLinks(noradId);
+  links[key] = val;
+  localStorage.setItem(`sat-links-${noradId}`, JSON.stringify(links));
+}
+
+function _openSatLinksModal(sat) {
+  document.getElementById('sat-links-modal')?.remove();
+
+  const ip    = satBaseUrl(sat.noradId);
+  const saved = _getSatLinks(sat.noradId);
+
+  const modal = document.createElement('div');
+  modal.id = 'sat-links-modal';
+  modal.innerHTML = `
+    <div class="slm-backdrop"></div>
+    <div class="slm-card">
+      <div class="slm-header">
+        <span class="slm-dot" style="background:${sat.color}"></span>
+        <span class="slm-title">${sat.name}</span>
+        <span class="slm-meta">#${sat.noradId}</span>
+        <button class="slm-close" title="Close">×</button>
+      </div>
+      <div class="slm-links">
+        ${LINK_DEFS.map(def => {
+          const dflt = _defUrl(ip, def);
+          const val  = saved[def.key] ?? dflt;
+          return `<div class="slm-row" data-key="${def.key}">
+            <span class="slm-label">${def.label}</span>
+            <input class="slm-url" value="${val}" placeholder="http://…" spellcheck="false">
+            <button class="slm-reset" title="Reset to default" ${dflt ? '' : 'disabled'}>↺</button>
+            <button class="slm-open" title="Open in new tab" ${val ? '' : 'disabled'}>↗</button>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+
+  modal.querySelectorAll('.slm-row').forEach(row => {
+    const inp  = row.querySelector('.slm-url');
+    const open = row.querySelector('.slm-open');
+    const rst  = row.querySelector('.slm-reset');
+    const key  = row.dataset.key;
+    const def  = LINK_DEFS.find(d => d.key === key);
+    const dflt = _defUrl(ip, def);
+
+    const refresh = () => { open.disabled = !inp.value.trim(); };
+    inp.addEventListener('input',  refresh);
+    inp.addEventListener('blur',   () => { _setSatLink(sat.noradId, key, inp.value.trim()); refresh(); });
+    open.addEventListener('click', () => { const u = inp.value.trim(); if (u) window.open(u, '_blank', 'noopener'); });
+    rst.addEventListener('click',  () => { inp.value = dflt; _setSatLink(sat.noradId, key, dflt); refresh(); });
+  });
+
+  const close = () => modal.remove();
+  modal.querySelector('.slm-close').addEventListener('click', close);
+  modal.querySelector('.slm-backdrop').addEventListener('click', close);
+  const esc = e => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); } };
+  document.addEventListener('keydown', esc);
+}
+
+// ─── Satellite edit modal ────────────────────────────────────────────────
+
+const EDIT_COLORS = [
+  '#00d4ff', '#00ff9d', '#7DF9FF', '#26c6da',
+  '#ff6b35', '#ff3860', '#fb5607', '#ef476f',
+  '#c77dff', '#8338ec', '#7c4dff', '#a78bfa',
+  '#ffbe0b', '#ffd166', '#ff6d00', '#06d6a0',
+];
+
+function _openSatEditModal(sat) {
+  document.getElementById('sat-edit-modal')?.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'sat-edit-modal';
+  modal.innerHTML = `
+    <div class="sem-backdrop"></div>
+    <div class="sem-card">
+      <div class="sem-header">
+        <span class="sem-dot" id="sem-dot-preview" style="background:${sat.color}"></span>
+        <span class="sem-title">${sat.name}</span>
+        <span class="sem-meta">#${sat.noradId}</span>
+        <button class="sem-close" title="Close">×</button>
+      </div>
+      <div class="sem-body">
+
+        <div class="sem-label">Name</div>
+        <input class="sem-input" id="sem-name" value="${sat.name}" placeholder="Display name" maxlength="30" autocomplete="off">
+
+        <div class="sem-label">Color</div>
+        <div class="sem-colors">
+          ${EDIT_COLORS.map(c => `<button class="sem-swatch${c === sat.color ? ' sem-swatch-sel' : ''}" data-color="${c}" style="--c:${c}" title="${c}"></button>`).join('')}
+        </div>
+
+        <div class="sem-label">Type</div>
+        <div class="sem-model-row">
+          <button class="sem-model-btn${(sat.model ?? '12U') === '12U' ? ' sem-model-active' : ''}" data-model="12U">12U</button>
+          <button class="sem-model-btn${sat.model === 'FF' ? ' sem-model-active' : ''}" data-model="FF">FF</button>
+        </div>
+
+        <div class="sem-label">SCC IP</div>
+        <input class="sem-input" id="sem-ip" value="${satBaseUrl(sat.noradId)}" placeholder="172.17.x.1" spellcheck="false" autocomplete="off">
+
+        <div class="sem-label">JWT Token</div>
+        <input class="sem-input sem-jwt" id="sem-jwt" type="password" value="${satJwt(sat.noradId)}" placeholder="Bearer token">
+
+      </div>
+    </div>`;
+
+  document.body.appendChild(modal);
+
+  // Color swatches — apply immediately
+  modal.querySelectorAll('.sem-swatch').forEach(sw => {
+    sw.addEventListener('click', () => {
+      modal.querySelectorAll('.sem-swatch').forEach(s => s.classList.remove('sem-swatch-sel'));
+      sw.classList.add('sem-swatch-sel');
+      const c = sw.dataset.color;
+      modal.querySelector('#sem-dot-preview').style.background = c;
+      store.setSatColor(sat.id, c);
+      localStorage.setItem(`sat-color-${sat.noradId}`, c);
+    });
+  });
+
+  // Model buttons — apply immediately
+  modal.querySelectorAll('.sem-model-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      modal.querySelectorAll('.sem-model-btn').forEach(b => b.classList.remove('sem-model-active'));
+      btn.classList.add('sem-model-active');
+      const m = btn.dataset.model;
+      store.setSatModel(sat.id, m);
+      fetch(`/api/satellites/${sat.noradId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: m }),
+      }).catch(() => {});
+    });
+  });
+
+  // Name — save on blur/enter, update header title live
+  const nameIn = modal.querySelector('#sem-name');
+  const saveName = () => {
+    const v = nameIn.value.trim();
+    if (!v) return;
+    store.setSatName(sat.id, v);
+    modal.querySelector('.sem-title').textContent = v;
+    fetch(`/api/satellites/${sat.noradId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: v }),
+    }).catch(() => {});
+  };
+  nameIn.addEventListener('blur', saveName);
+  nameIn.addEventListener('keydown', e => { if (e.key === 'Enter') nameIn.blur(); });
+
+  // IP — save on blur/enter
+  const ipIn = modal.querySelector('#sem-ip');
+  const saveIp = () => {
+    setSatBaseUrl(sat.noradId, ipIn.value.trim());
+    store.setSatTelemetry(sat.id, null);
+    store.setSatPasses(sat.id, []);
+    pingSatellite(sat.id);
+  };
+  ipIn.addEventListener('blur', saveIp);
+  ipIn.addEventListener('keydown', e => { if (e.key === 'Enter') ipIn.blur(); });
+
+  // JWT — save on blur/enter
+  const jwtIn = modal.querySelector('#sem-jwt');
+  jwtIn.addEventListener('blur', () => setSatJwt(sat.noradId, jwtIn.value.trim()));
+  jwtIn.addEventListener('keydown', e => { if (e.key === 'Enter') jwtIn.blur(); });
+
+  const close = () => modal.remove();
+  modal.querySelector('.sem-close').addEventListener('click', close);
+  modal.querySelector('.sem-backdrop').addEventListener('click', close);
+  const esc = e => { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); } };
+  document.addEventListener('keydown', esc);
+}
+
+// ─── Settings view: satellite list ───────────────────────────────────────
 
 function renderSettingsSatList() {
   const list = document.getElementById('st-sat-list');
   if (!list) return;
   list.innerHTML = '';
   for (const sat of store.satellites) {
-    const cfg  = getTmConfig(sat.noradId, sat.model);
-    const item = document.createElement('div');
+    const model = sat.model ?? '12U';
+    const item  = document.createElement('div');
     item.className = 'st-item st-sat-item';
     item.style.setProperty('--sat-color', sat.color);
     item.innerHTML = `
-      <div class="st-item-row">
-        <div class="st-item-info">
-          <span class="st-item-name">${sat.name}</span>
-          <span class="st-item-meta">#${sat.noradId} · ${sat.model ?? '12U'}</span>
-        </div>
-        <span class="st-ping-status" data-sat-id="${sat.id}" title=""></span>
-        <input class="st-field-baseurl" value="${satBaseUrl(sat.noradId)}" placeholder="Server IP" title="API server IP — e.g. 172.17.206.1">
-        <input class="st-field-jwt" type="password" value="${satJwt(sat.noradId)}" placeholder="JWT token (attitude)" title="Bearer token for attitude endpoint — stored in browser localStorage only">
-        <button class="st-tm-toggle" title="Configure TM parameter mapping">▸ TM</button>
-        <button class="remove-btn" data-id="${sat.id}" data-norad="${sat.noradId}" title="Remove">×</button>
-      </div>
-      <div class="st-tm-config" hidden>
-        <div class="st-tm-grid">
-          <span></span>
-          <span class="st-tm-col-header">Packet</span>
-          <span class="st-tm-col-header">Parameter</span>
-          ${TM_FIELDS.map(f => f.formula
-            ? `<span class="st-tm-label">${f.label}</span><span class="st-tm-formula">${f.formula(sat.model)}</span>`
-            : `<span class="st-tm-label">${f.label}</span>
-            <input class="st-tm-field" data-key="${f.key}" data-sub="packet" value="${cfg[f.key].packet}" spellcheck="false">
-            <input class="st-tm-field" data-key="${f.key}" data-sub="param"  value="${cfg[f.key].param}"  spellcheck="false">`
-          ).join('')}
-        </div>
-        <button class="st-tm-save">Save</button>
-      </div>
+      <span class="st-sat-dot" style="background:${sat.color}"></span>
+      <span class="st-item-name">${sat.name}</span>
+      <span class="st-item-meta">#${sat.noradId}</span>
+      <span class="st-model-badge${model === 'FF' ? ' ff-active' : ''}">${model}</span>
+      <button class="st-gear-btn" title="Edit">⚙</button>
+      <button class="remove-btn" data-id="${sat.id}" data-norad="${sat.noradId}" title="Remove">×</button>
     `;
-
-    const ipIn  = item.querySelector('.st-field-baseurl');
-    const saveIp = () => {
-      setSatBaseUrl(sat.noradId, ipIn.value.trim());
-      store.setSatTelemetry(sat.id, null);  // clear stale data while reconnecting
-      store.setSatPasses(sat.id, []);
-      pingSatellite(sat.id);
-    };
-    ipIn.addEventListener('blur',    saveIp);
-    ipIn.addEventListener('keydown', e => { if (e.key === 'Enter') ipIn.blur(); });
-
-    const jwtIn   = item.querySelector('.st-field-jwt');
-    const saveJwt = () => setSatJwt(sat.noradId, jwtIn.value.trim());
-    jwtIn.addEventListener('blur',    saveJwt);
-    jwtIn.addEventListener('keydown', e => { if (e.key === 'Enter') jwtIn.blur(); });
-
-    const toggle    = item.querySelector('.st-tm-toggle');
-    const tmSection = item.querySelector('.st-tm-config');
-    toggle.addEventListener('click', () => {
-      const open = tmSection.hasAttribute('hidden');
-      tmSection.toggleAttribute('hidden', !open);
-      toggle.textContent = open ? '▾ TM' : '▸ TM';
-      toggle.classList.toggle('open', open);
-    });
-
-    const saveBtn = item.querySelector('.st-tm-save');
-    saveBtn.addEventListener('click', () => {
-      const newCfg = {};
-      item.querySelectorAll('.st-tm-field').forEach(inp => {
-        const { key, sub } = inp.dataset;
-        if (!newCfg[key]) newCfg[key] = { ...cfg[key] };
-        newCfg[key][sub] = inp.value.trim() || cfg[key][sub];
-      });
-      setTmConfig(sat.noradId, newCfg);
-      fetchSatTelemetry(sat);
-      saveBtn.textContent = 'Saved ✓';
-      saveBtn.disabled = true;
-      setTimeout(() => { saveBtn.textContent = 'Save'; saveBtn.disabled = false; }, 1500);
-    });
-
-    list.appendChild(item);
-  }
-  list.querySelectorAll('.remove-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      deleteServerSatellite(btn.dataset.norad);
-      store.removeSatellite(btn.dataset.id);
-    });
-  });
-}
-
-// ─── Settings view: full GS list ─────────────────────────────────────────
-
-let _skipGsSettingsRender = false;
-
-function renderSettingsGsList() {
-  const list = document.getElementById('st-gs-list');
-  if (!list) return;
-  list.innerHTML = '';
-  for (const gs of store.groundStations) {
-    const item = document.createElement('div');
-    item.className = 'st-item st-gs-editable';
-    item.style.setProperty('--gs-color', gs.color);
-    item.innerHTML = `
-      <input class="st-field-name" value="${gs.name}" maxlength="30" title="Name">
-      <input class="st-field-lat" type="number" value="${gs.lat}" min="-90" max="90" step="any" title="Latitude">
-      <input class="st-field-lon" type="number" value="${gs.lon}" min="-180" max="180" step="any" title="Longitude">
-      <button class="remove-btn" title="Remove">×</button>
-    `;
-
-    const nameIn = item.querySelector('.st-field-name');
-    const latIn  = item.querySelector('.st-field-lat');
-    const lonIn  = item.querySelector('.st-field-lon');
-
-    function tryUpdate() {
-      const name = nameIn.value.trim() || gs.name;
-      const lat  = parseFloat(latIn.value);
-      const lon  = parseFloat(lonIn.value);
-      if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) return;
-      if (name === gs.name && lat === gs.lat && lon === gs.lon) return;
-      _skipGsSettingsRender = true;
-      store.updateGroundStation(gs.id, { name, lat, lon });
-      _skipGsSettingsRender = false;
-      updateServerStation(gs.id, name, lat, lon);
-    }
-
-    [nameIn, latIn, lonIn].forEach(inp => {
-      inp.addEventListener('blur', tryUpdate);
-      inp.addEventListener('keydown', e => { if (e.key === 'Enter') inp.blur(); });
-    });
-
+    item.querySelector('.st-gear-btn').addEventListener('click', () => _openSatEditModal(sat));
     item.querySelector('.remove-btn').addEventListener('click', () => {
-      deleteServerStation(gs.id);
-      store.removeGroundStation(gs.id);
+      deleteServerSatellite(sat.noradId);
+      store.removeSatellite(sat.id);
     });
-
     list.appendChild(item);
   }
 }
@@ -374,135 +420,41 @@ function _flash(input, color) {
   setTimeout(() => (input.style.borderColor = ''), 1500);
 }
 
-// ─── Add ground station ───────────────────────────────────────────────────
-
-async function addGroundStation() {
-  const nameInput = document.getElementById('gs-name-input');
-  const latInput  = document.getElementById('gs-lat-input');
-  const lonInput  = document.getElementById('gs-lon-input');
-  const lat = parseFloat(latInput.value);
-  const lon = parseFloat(lonInput.value);
-  if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-    _flash(latInput, '#ff3860'); _flash(lonInput, '#ff3860');
-    return;
-  }
-  const localId = `gs-${Date.now()}`;
-  const color   = GS_PALETTE[store.groundStations.length % GS_PALETTE.length];
-  const name    = nameInput.value.trim() || `GS-${localId}`;
-  store.addGroundStation({ id: localId, name, lat, lon, color });
-  persistStation(name, '', lat, lon, localId).then(serverId => {
-    if (serverId !== localId) {
-      const gs = store.groundStations.find(g => g.id === localId);
-      if (gs) { gs.id = serverId; store.notify('groundStations'); }
-    }
-  });
-  nameInput.value = ''; latInput.value = ''; lonInput.value = '';
-}
-
 // ─── Init ─────────────────────────────────────────────────────────────────
 
 export function initInputPanel() {
   document.getElementById('add-sat-btn')?.addEventListener('click', addSatellite);
   document.getElementById('sat-ip-input')?.addEventListener('keydown', e => { if (e.key === 'Enter') addSatellite(); });
 
-  document.getElementById('add-gs-btn')?.addEventListener('click', addGroundStation);
-  document.getElementById('gs-lon-input')?.addEventListener('keydown', e => {
-    if (e.key === 'Enter') addGroundStation();
-  });
-
-  document.getElementById('gs-import-btn')?.addEventListener('click', () => {
-    document.getElementById('gs-import-file')?.click();
-  });
-  document.getElementById('gs-import-file')?.addEventListener('change', e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = evt => {
-      try {
-        const data = JSON.parse(evt.target.result);
-        if (!Array.isArray(data)) throw new Error('Expected an array');
-        for (const entry of data) {
-          const lat = parseFloat(entry.lat);
-          const lon = parseFloat(entry.lon);
-          if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) continue;
-          const id    = `gs-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-          const color = GS_PALETTE[store.groundStations.length % GS_PALETTE.length];
-          const name  = String(entry.name || entry.shortName || '').trim() || `GS-${id}`;
-          store.addGroundStation({ id, name, lat, lon, color });
-          persistStation(name, '', lat, lon, id).then(serverId => {
-            if (serverId !== id) {
-              const gs = store.groundStations.find(g => g.id === id);
-              if (gs) { gs.id = serverId; store.notify('groundStations'); }
-            }
-          });
-        }
-      } catch { /* invalid JSON — silent */ }
-      e.target.value = '';
-    };
-    reader.readAsText(file);
-  });
-
   document.getElementById('sat-toggle')?.addEventListener('click', () => {
     document.getElementById('sat-panel').classList.toggle('collapsed');
-  });
-  document.getElementById('gs-toggle')?.addEventListener('click', () => {
-    document.getElementById('gs-panel').classList.toggle('collapsed');
-  });
-
-  const satVisAllBtn = document.getElementById('sat-vis-all-btn');
-  satVisAllBtn?.addEventListener('click', () => {
-    const allOn = store.satellites.every(s => s.visible !== false);
-    for (const s of store.satellites) s.visible = !allOn;
-    store.notify('satellites');
-  });
-
-  const gsVisAllBtn  = document.getElementById('gs-vis-all-btn');
-  gsVisAllBtn?.addEventListener('click', () => {
-    const allOn = store.groundStations.every(g => g.visible !== false);
-    for (const gs of store.groundStations) gs.visible = !allOn;
-    store.notify('groundStations');
   });
 
   const allFpBtn = document.getElementById('gs-footprint-all-btn');
   allFpBtn?.addEventListener('click', () => {
-    const allOn = store.groundStations.every(g => g.showFootprint);
-    for (const gs of store.groundStations) gs.showFootprint = !allOn;
-    store.notify('groundStations');
+    store.setShowFootprints(!store.showFootprints);
   });
 
   store.subscribe((key) => {
-    if (key === 'pingStatus') {
-      _updateSettingsPingDots();
-    }
     if (key === 'satellites' || key === 'trackedSatId') {
       const newKey     = _satListKey();
       const idsChanged = newKey !== _satIdKey;
       _satIdKey = newKey;
       if (idsChanged) {
         renderSatList();
-        renderSettingsSatList();
-        _updateSettingsPingDots();
       } else {
         _patchSatList();
       }
-      const allSatVis = store.satellites.length > 0 && store.satellites.every(s => s.visible !== false);
-      satVisAllBtn?.classList.toggle('active', allSatVis);
+      renderSettingsSatList(); // always: catches color/model changes too
+    }
+    if (key === 'satAntennas') {
+      renderSatList();
+    }
+    if (key === 'antennaToggles') {
+      _patchGsToggles();
     }
     if (key === 'groundStations') {
-      const newKey     = _gsListKey();
-      const idsChanged = newKey !== _gsIdKey;
-      _gsIdKey = newKey;
-      if (idsChanged) {
-        renderGsList();
-        if (!_skipGsSettingsRender) renderSettingsGsList();
-      } else {
-        _patchGsList();
-        // Settings GS list only needs rebuild on add/remove, not vis/fp changes
-      }
-      const allGsVis = store.groundStations.length > 0 && store.groundStations.every(g => g.visible !== false);
-      const allFp    = store.groundStations.length > 0 && store.groundStations.every(g => g.showFootprint);
-      gsVisAllBtn?.classList.toggle('active', allGsVis);
-      allFpBtn?.classList.toggle('active', allFp);
+      allFpBtn?.classList.toggle('active', store.showFootprints);
     }
   });
 
@@ -521,9 +473,6 @@ export function initInputPanel() {
   }
 
   renderSatList();
-  renderGsList();
   renderSettingsSatList();
-  renderSettingsGsList();
   _satIdKey = _satListKey();
-  _gsIdKey  = _gsListKey();
 }

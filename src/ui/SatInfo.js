@@ -1,8 +1,6 @@
 import { store } from '../store.js';
 import { propagate } from '../tle.js';
 import { sunDirectionECI, isInEclipse } from '../sunVector.js';
-import { satJwt } from '../satPing.js';
-import { getAttStatus } from '../satAttitude.js';
 
 const card       = document.getElementById('sat-info');
 const nameEl     = document.getElementById('sat-info-name');
@@ -41,6 +39,7 @@ function fmt(n, dec = 2) {
   return n >= 0 ? ` ${n.toFixed(dec)}` : `${n.toFixed(dec)}`;
 }
 
+
 function update() {
   const sat = store.trackedSat; // O(1) Map lookup
   if (!sat) { card.classList.add('hidden'); return; }
@@ -72,41 +71,13 @@ function update() {
     badgeEl.textContent = '◈ FUTURE';
   }
 
-  // Orbit row — source only, no mode
+  // Orbit row
   orbitDot.style.color = DOT_GREEN;
-  orbitText.textContent = 'TLE (public)';
+  orbitText.textContent = 'TLE · FDS';
 
   // Attitude row
-  const att       = store.attitudes[sat.noradId];
-  const entries   = att?.entries;
-  const hasJwt    = !!satJwt(sat.noradId);
-  const attStatus = getAttStatus(sat.noradId);
-
-  if (entries?.length) {
-    const tNow = store.currentTime.getTime();
-    const tMin = entries[0].t;
-    const tMax = entries[entries.length - 1].t;
-    if (tNow >= tMin && tNow <= tMax) {
-      attDot.style.color  = DOT_GREEN;
-      attText.textContent = `Interpolated · ${att.source ?? 'apm'}`;
-    } else {
-      // sim time outside the fetched window — renderer falls back to sun pointing
-      attDot.style.color  = DOT_GREY;
-      attText.textContent = 'Default Sun Pointing — outside attitude window';
-    }
-  } else if (!hasJwt) {
-    attDot.style.color  = DOT_GREY;
-    attText.textContent = 'Default Sun Pointing — no JWT configured';
-  } else if (attStatus === 'no-data') {
-    attDot.style.color  = DOT_GREY;
-    attText.textContent = 'Default Sun Pointing — no attitude data';
-  } else if (attStatus !== 'ok' && attStatus !== 'pending') {
-    attDot.style.color  = '#ff3860';
-    attText.textContent = `APM · ${attStatus}`;
-  } else {
-    attDot.style.color  = DOT_AMBER;
-    attText.textContent = 'APM · Waiting for first fetch…';
-  }
+  attDot.style.color  = DOT_GREEN;
+  attText.textContent = 'Sun Pointing';
 
   // Eclipse icon next to satellite name
   const sun     = sunDirectionECI(store.currentTime);
@@ -116,7 +87,7 @@ function update() {
 
 export function initSatInfo() {
   store.subscribe((key) => {
-    if (key === 'currentTime' || key === 'trackedSatId' || key === 'satellites' || key === 'attitudes') update();
+    if (key === 'currentTime' || key === 'trackedSatId' || key === 'satellites') update();
   });
   update();
 }

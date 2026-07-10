@@ -71,6 +71,12 @@ function syncEntities() {
   for (const sat of store.satellites) {
     if (!entities.has(sat.id)) {
       entities.set(sat.id, new SatEntity(viewer, sat));
+    } else {
+      const ent = entities.get(sat.id);
+      if (ent._renderedColor !== sat.color) {
+        ent.destroy();
+        entities.set(sat.id, new SatEntity(viewer, sat));
+      }
     }
   }
 

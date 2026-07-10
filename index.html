@@ -16,28 +16,15 @@
       <!-- Side Panel Container (stacks panels vertically) -->
       <div id="side-panel">
 
-        <!-- Satellites Panel (visibility only) -->
+        <!-- Satellites + Ground Stations Panel (fused) -->
         <div id="sat-panel" class="panel">
           <div class="panel-header">
             <span>Satellites</span>
-            <button id="sat-vis-all-btn" class="panel-all-btn" title="Toggle all satellites">● All</button>
+            <button id="gs-footprint-all-btn" class="panel-all-btn" title="Toggle all footprints">◎ All</button>
             <button id="sat-toggle" class="panel-toggle" title="Collapse">◀</button>
           </div>
           <div class="panel-body">
             <div id="sat-list"></div>
-          </div>
-        </div>
-
-        <!-- Ground Stations Panel (visibility only) -->
-        <div id="gs-panel" class="panel">
-          <div class="panel-header">
-            <span>Ground Stations</span>
-            <button id="gs-vis-all-btn" class="panel-all-btn" title="Toggle all stations">● All</button>
-            <button id="gs-footprint-all-btn" class="panel-all-btn" title="Toggle all footprints">◎ All</button>
-            <button id="gs-toggle" class="panel-toggle" title="Collapse">◀</button>
-          </div>
-          <div class="panel-body">
-            <div id="gs-list"></div>
           </div>
         </div>
 
@@ -81,6 +68,16 @@
         <div class="track-subtab-bar">
           <button class="track-subtab active" data-tracksubtab="globe">3D Globe</button>
           <button class="track-subtab" data-tracksubtab="map">2D Planisphere</button>
+          <div class="track-subtab-controls">
+            <label class="tp-label">Scale</label>
+            <input id="scale-slider" type="range" min="1" max="1000" value="500" step="1" style="width:72px;accent-color:#c77dff" />
+            <input id="scale-field" type="number" min="1" max="1000" value="500" step="1" class="tp-num-field" style="color:#c77dff" />
+            <div class="tp-sep" style="height:18px"></div>
+            <label class="tp-label">Alt</label>
+            <input id="orbit-alt-slider" type="range" min="400" max="700" value="550" step="10" style="width:58px;accent-color:#4a90d9" />
+            <input id="orbit-alt-field" type="number" min="400" max="700" value="550" step="10" class="tp-num-field" />
+            <span class="tp-label">km</span>
+          </div>
         </div>
         <div id="globe-view" class="track-subtab-content active"></div>
         <div id="map-view" class="track-subtab-content"></div>
@@ -176,33 +173,6 @@
               <div id="st-sat-list" class="st-list"></div>
             </div>
 
-            <!-- Ground Stations section -->
-            <div class="st-section">
-              <div class="st-section-title">Ground Stations</div>
-              <div class="st-card">
-                <div class="st-card-label">Add Ground Station</div>
-                <input id="gs-name-input" type="text" placeholder="Name (optional)" maxlength="30" />
-                <div class="gs-coords">
-                  <input id="gs-lat-input" type="number" placeholder="Lat" min="-90" max="90" step="any" />
-                  <input id="gs-lon-input" type="number" placeholder="Lon" min="-180" max="180" step="any" />
-                </div>
-                <button id="add-gs-btn">Add</button>
-                <div class="gs-import-wrap">
-                  <button id="gs-import-btn" class="gs-import-btn">↑ Import JSON</button>
-                  <input type="file" id="gs-import-file" accept=".json" style="display:none">
-                  <div class="gs-import-tip">
-                    <div class="gs-import-tip-title">Expected JSON format</div>
-                    <pre class="gs-import-tip-code">[
-  { "name": "Toulouse", "lat": 43.60, "lon": 1.44 },
-  { "name": "Kourou",   "lat":  5.17, "lon": -52.68 }
-]</pre>
-                    <div class="gs-import-tip-note">name is optional · lat/lon in decimal degrees</div>
-                  </div>
-                </div>
-              </div>
-              <div id="st-gs-list" class="st-list"></div>
-            </div>
-
           </div>
 
         </div>
@@ -232,6 +202,35 @@
         </div>
       </div>
 
+      <!-- Gantt Timeline -->
+      <div id="timeline-gantt">
+        <button id="gantt-toggle" title="Collapse / expand">▲</button>
+        <div class="gantt-rows">
+          <div class="gantt-row">
+            <span class="gantt-label">Plans</span>
+            <div class="gantt-track" id="gantt-slots"></div>
+          </div>
+          <div class="gantt-row">
+            <span class="gantt-label">TMR</span>
+            <div class="gantt-track" id="gantt-tmr"></div>
+          </div>
+          <div class="gantt-row">
+            <span class="gantt-label">Passes</span>
+            <div class="gantt-track" id="gantt-passes"></div>
+          </div>
+          <div class="gantt-row">
+            <span class="gantt-label">Eclipse</span>
+            <div class="gantt-track" id="gantt-eclipse"></div>
+          </div>
+          <!-- Date ruler -->
+          <div class="gantt-row gantt-ruler-row">
+            <span class="gantt-label"></span>
+            <div class="gantt-track gantt-ruler" id="gantt-ruler"></div>
+          </div>
+          <div id="gantt-cursor"></div>
+        </div>
+      </div>
+
       <!-- Time Player -->
       <div id="time-player">
 
@@ -257,21 +256,12 @@
         <!-- Timeline scrub with step buttons -->
         <button class="step-btn" data-step="-86400" title="Back 1 day">−1d</button>
         <button class="step-btn" data-step="-3600"  title="Back 1 hour">−1h</button>
-        <input id="time-scrub" type="range" min="-604800" max="604800" value="0" step="60" title="Drag to scrub ±7 days" />
+        <div class="scrub-wrap">
+          <input id="time-scrub" type="range" min="-604800" max="604800" value="0" step="60" title="Drag to scrub ±7 days" />
+        </div>
         <button class="step-btn" data-step="3600"   title="Forward 1 hour">+1h</button>
         <button class="step-btn" data-step="86400"  title="Forward 1 day">+1d</button>
 
-        <div class="tp-sep"></div>
-
-        <!-- Scale & Altitude -->
-        <label class="tp-label">Scale</label>
-        <input id="scale-slider" type="range" min="1" max="1000" value="500" step="1" style="width:80px;accent-color:#c77dff" />
-        <input id="scale-field" type="number" min="1" max="1000" value="500" step="1" class="tp-num-field" style="color:#c77dff" />
-
-        <label class="tp-label" style="margin-left:4px">Alt</label>
-        <input id="orbit-alt-slider" type="range" min="400" max="700" value="550" step="10" style="width:65px;accent-color:#4a90d9" />
-        <input id="orbit-alt-field" type="number" min="400" max="700" value="550" step="10" class="tp-num-field" />
-        <span class="tp-label">km</span>
 
       </div>
     </div>

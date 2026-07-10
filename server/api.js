@@ -1,5 +1,4 @@
 import { createServer } from 'http';
-import { randomUUID }  from 'crypto';
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -18,7 +17,7 @@ function _load() {
 function _save() {
   try {
     mkdirSync(_dir, { recursive: true });
-    writeFileSync(_file, JSON.stringify({ satellites, stations }, null, 2));
+    writeFileSync(_file, JSON.stringify({ satellites }, null, 2));
   } catch (e) { console.warn('state save failed:', e.message); }
 }
 
@@ -26,12 +25,10 @@ const _saved = _load();
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const satellites = _saved.satellites ?? []; // { noradId, name, tle, model }
-const stations   = _saved.stations   ?? []; // { id, name, shortName, lat, lon }
 const attitudes  = {};                       // { [noradId]: { ... } } — not persisted (large)
 
 // Feed queues — items added while a page is already open
 const pendingSatellites = [];
-const pendingStations   = [];
 const pendingAttitudes  = [];
 
 function readBody(req) {
@@ -65,9 +62,10 @@ const SPEC = {
     title: 'chadOps API',
     version: '1.0.0',
     description:
-      'Inject satellites and ground stations into the live tracker. ' +
+      'Inject satellites into the live tracker. Ground stations are discovered automatically ' +
+      'per satellite via its own FDS server (/api/v1/data/antennas), not managed here. ' +
       'Data persists across page reloads (server-side memory). ' +
-      'The UI polls /api/feed every 2 s to pick up externally added items.',
+      'The UI polls /api/feed every 2 s to pick up externally added satellites.',
   },
   paths: {
     '/api/satellites': {
@@ -115,44 +113,6 @@ const SPEC = {
       delete: {
         summary: 'Remove a satellite by NORAD ID',
         parameters: [{ name: 'noradId', in: 'path', required: true, schema: { type: 'string' } }],
-        responses: { 200: { description: 'Deleted' }, 404: { description: 'Not found' } },
-      },
-    },
-
-    '/api/stations': {
-      get: {
-        summary: 'List all ground stations',
-        responses: {
-          200: {
-            description: 'All stored stations',
-            content: { 'application/json': { schema: { type: 'array', items: { $ref: '#/components/schemas/Station' } } } },
-          },
-        },
-      },
-      post: {
-        summary: 'Add one or more ground stations',
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: { oneOf: [{ $ref: '#/components/schemas/Station' }, { type: 'array', items: { $ref: '#/components/schemas/Station' } }] },
-              examples: {
-                single:   { summary: 'Single station',    value: { name: 'London', shortName: 'LON', lat: 51.5074, lon: -0.1278 } },
-                multiple: { summary: 'Multiple stations', value: [{ name: 'London', shortName: 'LON', lat: 51.5074, lon: -0.1278 }, { name: 'Tokyo', shortName: 'TYO', lat: 35.6762, lon: 139.6503 }] },
-              },
-            },
-          },
-        },
-        responses: {
-          201: { description: 'Station(s) stored', content: { 'application/json': { schema: { type: 'object', properties: { queued: { type: 'number' }, stations: { type: 'array', items: { $ref: '#/components/schemas/Station' } } } } } } },
-          400: { description: 'Missing or invalid lat/lon' },
-        },
-      },
-    },
-    '/api/stations/{id}': {
-      delete: {
-        summary: 'Remove a ground station by ID',
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { 200: { description: 'Deleted' }, 404: { description: 'Not found' } },
       },
     },
@@ -205,7 +165,6 @@ const SPEC = {
                   type: 'object',
                   properties: {
                     satellites: { type: 'array', items: { $ref: '#/components/schemas/Satellite' } },
-                    stations:   { type: 'array', items: { $ref: '#/components/schemas/Station'   } },
                     attitudes: {
                       type: 'array',
                       description: 'Lightweight attitude notifications — on receipt the client re-fetches GET /api/attitude for the full dataset',
@@ -241,37 +200,26 @@ const SPEC = {
           model:    { type: 'string', enum: ['12U', 'FF'], default: '12U', description: '3-D model to display' },
         },
       },
-      Station: {
-        type: 'object',
-        required: ['lat', 'lon'],
-        properties: {
-          id:        { type: 'string', readOnly: true },
-          name:      { type: 'string' },
-          shortName: { type: 'string', maxLength: 3 },
-          lat:       { type: 'number', minimum: -90,  maximum: 90  },
-          lon:       { type: 'number', minimum: -180, maximum: 180 },
-        },
-      },
     },
   },
 };
 
-// ── TLE auto-refresh ─────────────────────────────────────────────────────────
+// ── TLE auto-refresh via internal FDS endpoint ────────────────────────────────
 
-const _CELESTRAK = id =>
-  `https://celestrak.org/NORAD/elements/gp.php?CATNR=${id}&FORMAT=TLE`;
-
-async function _fetchFreshTle(noradId) {
+async function _fetchFreshTle(sat) {
+  const id   = sat.satelliteId || sat.name;
+  const base = sat.baseUrl;
+  if (!id || !base) return null;
+  const host = base.replace(/\.\d+$/, '.3');
+  const url  = `http://${host}:15602/api/v1/data/orbit/best-tle?satellite_id=${encodeURIComponent(id)}`;
   const ctrl  = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15_000);
   try {
-    const res = await fetch(_CELESTRAK(noradId), { signal: ctrl.signal });
+    const res = await fetch(url, { signal: ctrl.signal });
     if (!res.ok) return null;
-    const text  = (await res.text()).trim();
-    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-    const line1 = lines.find(l => l.startsWith('1 ') && l.length >= 60);
-    const line2 = lines.find(l => l.startsWith('2 ') && l.length >= 60);
-    return (line1 && line2) ? `${line1}\n${line2}` : null;
+    const data = await res.json();
+    if (!data.first_line || !data.second_line) return null;
+    return `${data.first_line}\n${data.second_line}`;
   } catch { return null; }
   finally { clearTimeout(timer); }
 }
@@ -279,17 +227,13 @@ async function _fetchFreshTle(noradId) {
 export async function refreshAllTles() {
   let updated = 0;
   for (const sat of satellites) {
-    if (!sat.noradId) continue;
-    const tle = await _fetchFreshTle(sat.noradId);
+    const tle = await _fetchFreshTle(sat);
     if (tle && tle !== sat.tle) {
       sat.tle = tle;
       sat.tleUpdatedAt = new Date().toISOString();
-      // tleUpdate flag tells the client to swap satrec on the existing entry
       pendingSatellites.push({ ...sat, tleUpdate: true });
       updated++;
     }
-    // 500 ms gap between requests — Celestrak rate-limit courtesy
-    await new Promise(r => setTimeout(r, 500));
   }
   if (updated > 0) _save();
   console.log(`[TLE] refreshed ${updated}/${satellites.length} at ${new Date().toUTCString()}`);
@@ -334,7 +278,7 @@ export function createApiMiddleware() {
       const noradId = line1.substring(2, 7).trim();
       const model   = body.model === 'FF' ? 'FF' : '12U'; // default 12U
       if (!satellites.some(s => s.noradId === noradId)) {
-        const entry = { noradId, name: body.name || null, tle, model };
+        const entry = { noradId, name: body.name || null, satelliteId: body.satelliteId || null, tle, model };
         satellites.push(entry);
         pendingSatellites.push(entry);
         _save();
@@ -351,6 +295,7 @@ export function createApiMiddleware() {
       const body = await readBody(req);
       if ('baseUrl' in body) sat.baseUrl = body.baseUrl || null;
       if ('name'    in body) sat.name    = body.name    || sat.name;
+      if ('model'   in body) sat.model   = body.model === 'FF' ? 'FF' : '12U';
       _save();
       return send(res, 200, sat);
     }
@@ -361,42 +306,6 @@ export function createApiMiddleware() {
       const idx = satellites.findIndex(s => s.noradId === noradId);
       if (idx === -1) return send(res, 404, { error: 'Not found' });
       satellites.splice(idx, 1);
-      _save();
-      return send(res, 200, { deleted: 1 });
-    }
-
-    // GET /api/stations
-    if (path === '/api/stations' && method === 'GET') {
-      return send(res, 200, stations);
-    }
-
-    // POST /api/stations
-    if (path === '/api/stations' && method === 'POST') {
-      const body  = await readBody(req);
-      const items = Array.isArray(body) ? body : [body];
-      for (const s of items) {
-        if (typeof s.lat !== 'number' || typeof s.lon !== 'number')
-          return send(res, 400, { error: 'Each station requires numeric lat and lon' });
-        if (s.lat < -90 || s.lat > 90 || s.lon < -180 || s.lon > 180)
-          return send(res, 400, { error: 'lat must be -90..90, lon must be -180..180' });
-      }
-      const created = items.map(s => {
-        const entry = { id: s.id || `gs-${randomUUID()}`, name: s.name || '', shortName: s.shortName || '', lat: s.lat, lon: s.lon };
-        stations.push(entry);
-        pendingStations.push(entry);
-        return entry;
-      });
-      _save();
-      return send(res, 201, { queued: created.length, stations: created });
-    }
-
-    // DELETE /api/stations/:id
-    const gsDel = path.match(/^\/api\/stations\/(.+)$/);
-    if (gsDel && method === 'DELETE') {
-      const id  = gsDel[1];
-      const idx = stations.findIndex(s => s.id === id);
-      if (idx === -1) return send(res, 404, { error: 'Not found' });
-      stations.splice(idx, 1);
       _save();
       return send(res, 200, { deleted: 1 });
     }
@@ -455,7 +364,6 @@ export function createApiMiddleware() {
       }));
       return send(res, 200, {
         satellites: pendingSatellites.splice(0),
-        stations:   pendingStations.splice(0),
         attitudes:  attNotifs,
       });
     }

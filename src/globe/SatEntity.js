@@ -30,6 +30,7 @@ export class SatEntity {
     this.viewer = viewer;
     this.sat = sat;
     this.cesiumColor = Cesium.Color.fromCssColorString(sat.color);
+    this._renderedColor = sat.color; // snapshot — GlobeView uses this to detect color changes
     this._entities = [];
     this._bodyEntity   = null;
     this._panelsEntity = null;
@@ -44,13 +45,17 @@ export class SatEntity {
     this._lastOrbitMs  = -Infinity;
     this._lastOrbitWall = -Infinity;
     this._inEclipse = false; // updated each frame; drives sun arrow colour + label
-    // Preallocated tip Cartesian3 objects — mutated in place, no per-frame allocation
+    // Preallocated Cartesian3 objects — mutated in place every frame, no per-frame allocation
+    this._xBase  = new Cesium.Cartesian3();
+    this._yBase  = new Cesium.Cartesian3();
+    this._zBase  = new Cesium.Cartesian3();
+    this._sunBase= new Cesium.Cartesian3();
     this._xTip   = new Cesium.Cartesian3();
     this._yTip   = new Cesium.Cartesian3();
     this._zTip   = new Cesium.Cartesian3();
     this._sunTip = new Cesium.Cartesian3();
-    // Stable two-element arrays whose [1] element is the tip above (reference never changes)
-    this._xPos   = null; // set to [origin, this._xTip] in _build
+    // Stable two-element arrays — both elements are stable Cartesian3 refs mutated in place
+    this._xPos   = null; // set to [this._xBase, this._xTip] in _build
     this._yPos   = null;
     this._zPos   = null;
     this._sunPos = null;
@@ -126,14 +131,18 @@ export class SatEntity {
       },
     });
 
-    // ECI-frame arrows — stable arrays; tip Cartesian3s are mutated in place each frame
+    // ECI-frame arrows — all Cartesian3 elements are stable refs mutated in place
     const initQ = this._computeOrientation(r, date);
+    Cesium.Cartesian3.clone(origin, this._xBase);
+    Cesium.Cartesian3.clone(origin, this._yBase);
+    Cesium.Cartesian3.clone(origin, this._zBase);
+    Cesium.Cartesian3.clone(origin, this._sunBase);
     this._computeArrowTips(origin, r, date, initQ);
     {
-      this._xPos   = [origin, this._xTip];
-      this._yPos   = [origin, this._yTip];
-      this._zPos   = [origin, this._zTip];
-      this._sunPos = [origin, this._sunTip];
+      this._xPos   = [this._xBase,   this._xTip];
+      this._yPos   = [this._yBase,   this._yTip];
+      this._zPos   = [this._zBase,   this._zTip];
+      this._sunPos = [this._sunBase, this._sunTip];
 
         this._xArrow   = this._addArrow(() => this._xPos,   Cesium.Color.RED);
       this._yArrow   = this._addArrow(() => this._yPos,   Cesium.Color.LIME);
@@ -152,32 +161,6 @@ export class SatEntity {
   // If current sim time falls inside the posted attitude table → SLERP.
   // Outside the table span → fall back to Default Sun Pointing.
   _computeOrientation(r, date) {
-    const att = store.attitudes[this.sat.noradId];
-    if (att?.entries?.length >= 2) {
-      const entries = att.entries;
-      const tNow = date.getTime();
-      const tMin = entries[0].t;
-      const tMax = entries[entries.length - 1].t;
-
-      if (tNow >= tMin && tNow <= tMax) {
-        // Find last entry with t <= tNow (correct bound covers all intervals)
-        let lo = 0;
-        for (let i = 1; i < entries.length; i++) {
-          if (entries[i].t <= tNow) lo = i; else break;
-        }
-        lo = Math.min(lo, entries.length - 2); // clamp for tNow === tMax edge
-        const e0 = entries[lo];
-        const e1 = entries[lo + 1];
-        const dt = e1.t - e0.t;
-        if (dt === 0) return new Cesium.Quaternion(e0.q.x, e0.q.y, e0.q.z, e0.q.w);
-        const t  = Math.max(0, Math.min(1, (tNow - e0.t) / dt));
-        const q0 = new Cesium.Quaternion(e0.q.x, e0.q.y, e0.q.z, e0.q.w);
-        const q1 = new Cesium.Quaternion(e1.q.x, e1.q.y, e1.q.z, e1.q.w);
-        return Cesium.Quaternion.slerp(q0, q1, t, new Cesium.Quaternion());
-      }
-      // Outside span → fall through to sun pointing
-    }
-
     const { eciPos, gmst } = r;
 
     const sun = sunDirectionECI(date); // unit vector in ECI
@@ -220,8 +203,10 @@ export class SatEntity {
 
   _updateArrows(origin, r, date, q) {
     if (!this._xPos) return;
-    // Update the base of every arrow to the current satellite position
-    this._xPos[0] = this._yPos[0] = this._zPos[0] = this._sunPos[0] = origin;
+    Cesium.Cartesian3.clone(origin, this._xBase);
+    Cesium.Cartesian3.clone(origin, this._yBase);
+    Cesium.Cartesian3.clone(origin, this._zBase);
+    Cesium.Cartesian3.clone(origin, this._sunBase);
     this._computeArrowTips(origin, r, date, q);
   }
 
@@ -334,7 +319,4 @@ export class SatEntity {
 
 function cross(a, b) {
   return { x: a.y*b.z - a.z*b.y, y: a.z*b.x - a.x*b.z, z: a.x*b.y - a.y*b.x };
-}
-function neg(v) {
-  return new Cesium.Cartesian3(-v.x, -v.y, -v.z);
 }

@@ -1,13 +1,21 @@
 import { store }                              from '../store.js';
 import { propagate }                          from '../tle.js';
 import { sunDirectionECI, isInEclipse }       from '../sunVector.js';
+import { fetchPassGsCoords, buildPolarSVG }    from './passPolar.js';
 import { getPingIntervalSec, getPingElapsedSec, getLastPingMs, satBaseUrl, pingSatellite } from '../satPing.js';
 
+// URL builders — subnet routing: .1=SCC, .3=GNM, .5=FDS
 const _grafanaUrl   = ip => ip
   ? `http://${ip.replace(/\.\d+$/, '.5')}:3000/?orgId=1&from=now-6h&to=now&timezone=browser`
   : null;
 const _dashboardUrl = ip => ip ? `http://${ip}/` : null;
-const _gnmUrl        = ip => ip ? `http://${ip.replace(/\.\d+$/, '.3')}:15602/` : null;
+const _gnmUrl       = ip => ip ? `http://${ip.replace(/\.\d+$/, '.3')}:15602/` : null;
+
+// Read a URL override saved by the component links modal; fall back to computed value
+function _satLink(noradId, key, fallback) {
+  try { return JSON.parse(localStorage.getItem(`sat-links-${noradId}`) ?? '{}')[key] || fallback; }
+  catch { return fallback; }
+}
 
 // ── Constants ─────────────────────────────────────────────────────
 
@@ -196,11 +204,12 @@ function _tooltipContent(pass, grafanaHost, sat) {
   const dur = pass.end && pass.start ? ` · ${_fmtDuration(pass.end - pass.start)}` : '';
   const hdr = `<div class="co-tt-header">${pass.station} · ${_fmtDateTimeShort(pass.start)}${dur}</div>`;
   const eclBar = _passEclipseBar(sat?.satrec, pass.start, pass.end);
+  const slot = '<div class="polar-slot"></div>';
   if (pass.future) {
-    return hdr + eclBar + `<div class="co-tt-future-status co-dot-future">○ SCHEDULED</div>`;
+    return hdr + eclBar + `<div class="co-tt-future-status co-dot-future">○ SCHEDULED</div>` + slot;
   }
   if (!pass.procedures?.length) {
-    return hdr + eclBar + `<div class="co-tt-proc co-tt-ok">● PASS OCCURRED</div>`;
+    return hdr + eclBar + `<div class="co-tt-proc co-tt-ok">● PASS OCCURRED</div>` + slot;
   }
   const procs = pass.procedures.map((pr, i) => {
     const cls     = _PROC_CLS[pr.status] ?? 'co-tt-ok';
@@ -213,7 +222,7 @@ function _tooltipContent(pass, grafanaHost, sat) {
     }
     return `<div class="co-tt-proc ${cls}" title="${pr.name}">${num}${name}${procDur}</div>`;
   }).join('');
-  return hdr + eclBar + `<div class="co-tt-sep"></div><div class="co-tt-procs">${procs}</div>`;
+  return hdr + eclBar + `<div class="co-tt-sep"></div><div class="co-tt-procs">${procs}</div>` + slot;
 }
 
 // ── Ping cell ────────────────────────────────────────────────────
@@ -344,7 +353,13 @@ function _rowHTML(sat, now, eclipse) {
     <td>${orbitCell}</td>
     <td class="co-alerts-cell"><span class="co-nil">—</span></td>
     <td class="co-alerts-cell">${_evtBadge(tm?.events)}</td>
-    <td class="co-links-cell">${_linkBadge('SCC', satBaseUrl(sat.noradId) ? `http://${satBaseUrl(sat.noradId)}:15000/` : null)}${_linkBadge('Grafana', _grafanaUrl(satBaseUrl(sat.noradId)))}${_linkBadge('Dashboard', _dashboardUrl(satBaseUrl(sat.noradId)))}${_linkBadge('GNM', _gnmUrl(satBaseUrl(sat.noradId)))}</td>
+    <td class="co-links-cell">${(() => {
+      const ip = satBaseUrl(sat.noradId);
+      return _linkBadge('SCC',      _satLink(sat.noradId, 'scc',     ip ? `http://${ip}:15000/` : null))
+           + _linkBadge('Grafana',  _satLink(sat.noradId, 'grafana', _grafanaUrl(ip)))
+           + _linkBadge('Dashboard',_dashboardUrl(ip))
+           + _linkBadge('GNM',      _satLink(sat.noradId, 'gnm',     _gnmUrl(ip)));
+    })()}</td>
   </tr>`;
 }
 
@@ -417,7 +432,7 @@ export function initChadOps() {
     tbody.querySelectorAll('.co-dot[data-idx]').forEach(dot => {
       const satId = dot.closest('[data-sat-id]')?.dataset.satId;
       const idx   = parseInt(dot.dataset.idx, 10);
-      dot.addEventListener('mouseenter', e => {
+      dot.addEventListener('mouseenter', async e => {
         _cancelHide();
         const sat  = store.satellites.find(s => s.id === satId);
         const pass = sat ? (store.satPasses[sat.id] ?? [])[idx] : null;
@@ -427,6 +442,14 @@ export function initChadOps() {
         tooltip.innerHTML     = _tooltipContent(pass, grafanaHost, sat);
         tooltip.style.display = 'block';
         _positionTooltip(e, tooltip);
+        // Async polar injection
+        if (sat?.satrec) {
+          const coords = await fetchPassGsCoords(sat, pass, store.groundStations);
+          if (coords && tooltip.style.display !== 'none') {
+            const slot = tooltip.querySelector('.polar-slot');
+            if (slot) slot.outerHTML = buildPolarSVG(pass, sat, coords.lat, coords.lon, coords.rxMask);
+          }
+        }
       });
       dot.addEventListener('mouseleave', _scheduleHide);
     });

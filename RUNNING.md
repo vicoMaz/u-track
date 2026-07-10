@@ -51,22 +51,7 @@ curl -X POST http://localhost:5173/api/satellites \
   }'
 ```
 
-### Add ground stations
+Ground stations are not managed via this API — each satellite's own FDS server exposes
+`/api/v1/data/antennas`, and the tracker discovers and groups them automatically per satellite.
 
-```bash
-# Single station
-curl -X POST http://localhost:5173/api/stations \
-  -H "Content-Type: application/json" \
-  -d '{"name": "London", "shortName": "LON", "lat": 51.5074, "lon": -0.1278}'
-
-# Multiple stations
-curl -X POST http://localhost:5173/api/stations \
-  -H "Content-Type: application/json" \
-  -d '[
-    {"name": "London",   "shortName": "LON", "lat": 51.5074, "lon": -0.1278},
-    {"name": "New York", "shortName": "NYC", "lat": 40.7128, "lon": -74.0060},
-    {"name": "Tokyo",    "shortName": "TYO", "lat": 35.6762, "lon": 139.6503}
-  ]'
-```
-
-Satellites and stations appear in the tracker within 2 seconds (the UI polls `/api/feed` automatically).
+Satellites appear in the tracker within 2 seconds (the UI polls `/api/feed` automatically).

@@ -9,9 +9,6 @@ const BIZ_START  = 8 * 60 + 30;    // 510 px
 const BIZ_END    = 18 * 60 + 30;   // 1110 px
 const MIN_PASS_H = 8;               // minimum pass block height in px
 
-const SAT_COLORS = ['#c77dff', '#00aaff', '#00cc66', '#ffaa00', '#ff6688', '#44ffdd', '#ff8844'];
-const STATIONS   = ['TRO', 'SVB', 'KIR', 'KST', 'AWS'];
-
 // ── Paris-time helpers ────────────────────────────────────────────
 
 function _parisOf(date) {
@@ -39,52 +36,20 @@ function _parisMinutes(date) {
   return h * 60 + m;
 }
 
-// ── Seeded dummy data ─────────────────────────────────────────────
+// ── Real pass data from store ─────────────────────────────────────
 
-function _seededRng(seed) {
-  let s = (seed | 0) ^ 0xdeadbeef;
-  return () => { s ^= s << 13; s ^= s >> 17; s ^= s << 5; return (s >>> 0) / 0x100000000; };
-}
-function _hashStr(str) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 0x01000193);
-  return h;
-}
-
-function _generateWeekPasses(weekStart) {
-  const passes = [];
-
-  store.satellites.forEach((sat, satIdx) => {
-    const color = SAT_COLORS[satIdx % SAT_COLORS.length];
-    let periodMs = 96 * 60000;
-    if (sat.satrec) {
-      const n = sat.satrec.no;
-      periodMs = (2 * Math.PI / n) * 60000;
+function _collectWeekPasses(weekStart) {
+  const weekEnd = new Date(weekStart.getTime() + 7 * 86400000);
+  const passes  = [];
+  for (const sat of store.satellites) {
+    for (const p of store.satPasses[sat.id] ?? []) {
+      const start = p.start instanceof Date ? p.start : new Date(p.start);
+      const end   = p.end   instanceof Date ? p.end   : new Date(p.end);
+      if (end < weekStart || start >= weekEnd) continue;
+      passes.push({ satId: sat.id, satName: sat.name, color: sat.color, station: p.station ?? '—', start, end });
     }
-
-    const weekKey = weekStart.toISOString().slice(0, 10);
-    const rng = _seededRng(_hashStr(sat.id + weekKey));
-    const weekEndMs = weekStart.getTime() + 7 * 86400000;
-
-    let t = weekStart.getTime() + Math.floor(rng() * periodMs);
-    while (t < weekEndMs) {
-      if (rng() > 0.40) {
-        const durationMs = Math.floor(rng() * 9 * 60000 + 5 * 60000); // 5–14 min
-        const station    = STATIONS[Math.floor(rng() * STATIONS.length)];
-        passes.push({
-          satId:   sat.id,
-          satName: sat.name,
-          color,
-          station,
-          start: new Date(t),
-          end:   new Date(t + durationMs),
-        });
-      }
-      t += periodMs + Math.floor((rng() - 0.5) * 4 * 60000); // minor jitter
-    }
-  });
-
-  return passes;
+  }
+  return passes.sort((a, b) => a.start - b.start);
 }
 
 // ── HTML builders ─────────────────────────────────────────────────
@@ -162,10 +127,9 @@ function _buildGrid(weekStart, passes) {
 }
 
 function _buildLegend() {
-  const sats = store.satellites.map((sat, i) => {
-    const color = SAT_COLORS[i % SAT_COLORS.length];
-    return `<span class="co-sched-legend-item"><span class="co-sched-legend-dot" style="background:${color}"></span>${sat.name}</span>`;
-  }).join('');
+  const sats = store.satellites.map(sat =>
+    `<span class="co-sched-legend-item"><span class="co-sched-legend-dot" style="background:${sat.color}"></span>${sat.name}</span>`
+  ).join('');
   return `<div class="co-sched-legend">
     <span class="co-sched-legend-item co-sched-legend-biz">
       <span class="co-sched-legend-biz-block"></span>Business hours (08:30–18:30 LT)
@@ -228,7 +192,7 @@ export function initWeeklySchedule() {
   function render() {
     const weekStart = _getMondayParis(weekOffset);
     const weekEnd   = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
-    const passes    = _generateWeekPasses(weekStart);
+    const passes    = _collectWeekPasses(weekStart);
 
     const fmtD = d => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
     const nav = `<div class="co-sched-nav">
@@ -287,5 +251,5 @@ export function initWeeklySchedule() {
     btn.addEventListener('click', () => { if (btn.dataset.tab !== 'chadops') stop(); });
   });
 
-  store.subscribe(key => { if (key === 'satellites' && _active) render(); });
+  store.subscribe(key => { if ((key === 'satellites' || key === 'satPasses') && _active) render(); });
 }

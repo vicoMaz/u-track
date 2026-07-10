@@ -1,14 +1,43 @@
+// Group raw /api/v1/data/antennas entries into one marker per (network, site_id),
+// averaging coordinates across antennas sharing a site. Virtual/database endpoints
+// (antenna_type !== 'rf') have no real location and are excluded.
+function _groupSites(rawList) {
+  const bySite = new Map(); // `${network}::${siteId}` → { network, siteId, latSum, lonSum, count }
+  for (const a of rawList) {
+    if (a.antenna_type !== 'rf') continue;
+    const siteId = a.location?.site_id;
+    const coords = a.location?.coordinates;
+    if (!siteId || !coords) continue;
+    const key = `${a.network}::${siteId}`;
+    let e = bySite.get(key);
+    if (!e) { e = { network: a.network, siteId, latSum: 0, lonSum: 0, count: 0 }; bySite.set(key, e); }
+    e.latSum += coords.latitude;
+    e.lonSum += coords.longitude;
+    e.count  += 1;
+  }
+  return [...bySite.values()].map(e => ({
+    network: e.network,
+    siteId:  e.siteId,
+    lat:     e.latSum / e.count,
+    lon:     e.lonSum / e.count,
+    count:   e.count,
+  }));
+}
+
 // Shared application state
 export const store = {
   currentTime: new Date(),
   satellites: [],      // { id, noradId, name, color, satrec }
-  groundStations: [],  // { id, name, lat, lon, color, showFootprint }
-  attitudes: {},       // { [noradId]: { source, entries:[{t(ms), q:{x,y,z,w}}] } }
-  positions: {},       // { [noradId]: last propagated result } — written by SatEntity, read by SatInfo
+  groundStations: [],  // DERIVED — rebuilt by _rebuildGroundStations(). { id, name, lat, lon, color, network, satId, showFootprint }
+  satAntennas: {},     // satId → raw array from GET /api/v1/data/antennas
+  antennaToggles: {},  // `${satId}:${network}` → bool (visible), default true when absent
+  showFootprints: false,
+positions: {},       // { [noradId]: last propagated result } — written by SatEntity, read by SatInfo
   _satById: new Map(), // id → sat, for O(1) lookups
   pingStatus: {},      // satId → 'ok' | 'pending' | 'timeout' | 'error' | 'unconfigured'
   satTelemetry: {},    // satId → { receptionTime, sysMode, gncMode, battVoltage, events }
   satPasses: {},       // satId → [{ id, start, end, aos5, los5, station, network, future }]
+  satTmr: {},          // satId → { rangeStart, rangeEnd, gapWindows: [{start,end}] }
   satScale: 500,
   orbitAlt: 550,       // km — shared by night shadow + GS footprint
   trackedSatId: null,
@@ -45,55 +74,81 @@ export const store = {
       delete this.positions[sat.noradId];
       delete this.satTelemetry[sat.id];
       delete this.satPasses[sat.id];
-      if (this.attitudes[sat.noradId]) {
-        delete this.attitudes[sat.noradId];
-        this.notify('attitudes');
+      delete this.satTmr[sat.id];
+      delete this.satAntennas[sat.id];
+      for (const key of Object.keys(this.antennaToggles)) {
+        if (key.startsWith(`${sat.id}:`)) delete this.antennaToggles[key];
       }
     }
+    this._rebuildGroundStations();
     this.notify('satellites');
+    this.notify('groundStations');
   },
 
   get trackedSat() {
     return this._satById.get(this.trackedSatId) ?? null;
   },
 
-  addGroundStation(gs) {
-    this.groundStations.push({ visible: true, showFootprint: false, ...gs });
-    this.notify('groundStations');
-  },
+  // ── Ground stations (derived from per-satellite antenna discovery) ─────
 
-  toggleGSVisibility(id) {
-    const gs = this.groundStations.find(g => g.id === id);
-    if (gs) { gs.visible = !gs.visible; this.notify('groundStations'); }
-  },
-
-  removeGroundStation(id) {
-    this.groundStations = this.groundStations.filter(g => g.id !== id);
-    this.notify('groundStations');
-  },
-
-  updateGroundStation(id, updates) {
-    const gs = this.groundStations.find(g => g.id === id);
-    if (!gs) return;
-    Object.assign(gs, updates);
-    this.notify('groundStations');
-  },
-
-  toggleGSFootprint(id) {
-    const gs = this.groundStations.find(g => g.id === id);
-    if (gs) { gs.showFootprint = !gs.showFootprint; this.notify('groundStations'); }
-  },
-
-  setAttitude(noradId, entry) {
-    if (entry === null) {
-      delete this.attitudes[noradId];
-    } else {
-      this.attitudes[noradId] = entry;
+  _rebuildGroundStations() {
+    const out = [];
+    for (const sat of this.satellites) {
+      const raw = this.satAntennas[sat.id];
+      if (!raw || !raw.length) continue;
+      for (const site of _groupSites(raw)) {
+        const visible = this.antennaToggles[`${sat.id}:${site.network}`] ?? true;
+        if (!visible) continue;
+        out.push({
+          id:            `${sat.id}:${site.network}:${site.siteId}`,
+          name:          site.siteId,
+          network:       site.network,
+          satId:         sat.id,
+          lat:           site.lat,
+          lon:           site.lon,
+          color:         sat.color,
+          showFootprint: this.showFootprints,
+          antennaCount:  site.count,
+        });
+      }
     }
-    this.notify('attitudes');
+    this.groundStations = out;
   },
 
-  setPingStatus(satId, status) {
+  setSatAntennas(satId, list) {
+    this.satAntennas[satId] = list;
+    this._rebuildGroundStations();
+    this.notify('satAntennas');
+    this.notify('groundStations');
+  },
+
+  setAntennaToggle(satId, network, visible) {
+    this.antennaToggles[`${satId}:${network}`] = visible;
+    this._rebuildGroundStations();
+    this.notify('antennaToggles');
+    this.notify('groundStations');
+  },
+
+  setShowFootprints(v) {
+    this.showFootprints = v;
+    this._rebuildGroundStations();
+    this.notify('groundStations');
+  },
+
+  // [{ network, siteCount }] for the given satellite — for panel rendering
+  getSatNetworks(satId) {
+    const raw = this.satAntennas[satId];
+    if (!raw || !raw.length) return [];
+    const perNetwork = new Map();
+    for (const site of _groupSites(raw)) {
+      perNetwork.set(site.network, (perNetwork.get(site.network) ?? 0) + 1);
+    }
+    return [...perNetwork.entries()]
+      .map(([network, siteCount]) => ({ network, siteCount }))
+      .sort((a, b) => a.network.localeCompare(b.network));
+  },
+
+setPingStatus(satId, status) {
     this.pingStatus[satId] = status;
     this.notify('pingStatus');
   },
@@ -108,9 +163,29 @@ export const store = {
     this.notify('satPasses');
   },
 
+  setTmrWindows(satId, windows) {
+    this.satTmr[satId] = windows;
+    this.notify('tmrData');
+  },
+
   updateSatTle(noradId, satrec) {
     const sat = this.satellites.find(s => s.noradId === noradId);
     if (sat) { sat.satrec = satrec; this.notify('satellites'); }
+  },
+
+  setSatModel(satId, model) {
+    const sat = this._satById.get(satId);
+    if (sat) { sat.model = model; this.notify('satellites'); }
+  },
+
+  setSatColor(satId, color) {
+    const sat = this._satById.get(satId);
+    if (sat) { sat.color = color; this.notify('satellites'); }
+  },
+
+  setSatName(satId, name) {
+    const sat = this._satById.get(satId);
+    if (sat && name) { sat.name = name; this.notify('satellites'); }
   },
 
   setOrbitAlt(v) {
@@ -133,9 +208,4 @@ export const store = {
 export const PALETTE = [
   '#00d4ff', '#ff6b35', '#00ff9d', '#ff3860',
   '#c77dff', '#ffbe0b', '#fb5607', '#8338ec',
-];
-
-export const GS_PALETTE = [
-  '#ff9f43', '#ee5a24', '#c4e538', '#009432',
-  '#a29bfe', '#fd79a8', '#fdcb6e', '#00cec9',
 ];

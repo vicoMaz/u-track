@@ -79,14 +79,16 @@ export async function fetchSatPasses(sat) {
           .filter(p => p.time >= passStart.getTime() && p.time <= passEnd.getTime())
           .sort((a, b) => a.startMs - b.startMs);
 
+        const rawP = e.pass ?? {};
         return {
           id:         e.id,
           start:      passStart,
           end:        passEnd,
-          aos5:       e.pass?.aos5 ? new Date(e.pass.aos5) : null,
-          los5:       e.pass?.los5 ? new Date(e.pass.los5) : null,
-          station:    e.pass?.groundStationId ?? e.content ?? '—',
-          network:    e.pass?.network ?? null,
+          aos5:       rawP.aos5 ? new Date(rawP.aos5) : null,
+          los5:       rawP.los5 ? new Date(rawP.los5) : null,
+          station:    rawP.groundStationId ?? e.content ?? '—',
+          network:    rawP.network ?? null,
+          gsRemoteId: rawP.remoteId ?? null,   // antenna ID for mask endpoint
           future:     isFuture,
           outcome:    isFuture ? null : _passOutcome(procs),
           procedures: procs,
