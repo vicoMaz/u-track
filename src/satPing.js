@@ -3,6 +3,7 @@ import { fetchSatTelemetry } from './satTelemetry.js';
 import { fetchSatPasses }    from './satPasses.js';
 import { fetchSatTle }       from './satTle.js';
 import { fetchSatAntennas } from './satAntennas.js';
+import { fetchSatGnss }    from './satGnss.js';
 
 const PING_TIMEOUT = 5_000;
 
@@ -91,7 +92,7 @@ async function _pingAndReschedule(sat) {
   try {
     await _ping(sat);
     if (store.pingStatus[sat.id] === 'ok') {
-      await Promise.all([fetchSatTelemetry(sat), fetchSatPasses(sat), fetchSatTle(sat), fetchSatAntennas(sat)]);
+      await Promise.all([fetchSatTelemetry(sat), fetchSatPasses(sat), fetchSatTle(sat), fetchSatAntennas(sat), fetchSatGnss(sat)]);
     }
   } catch { /* never let an error kill the cycle */ }
   _schedTimers[sat.id] = setTimeout(() => _pingAndReschedule(sat), getPingIntervalSec() * 1000);

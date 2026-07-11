@@ -1872,6 +1872,14 @@ body.tools-active #sat-info { display: none !important; }
 .co-rw-on      { color: #c0ccee; }
 .co-rw-off     { color: #ff4466; }
 .co-rw-unknown { color: #444; }
+.co-gnss-cell  { min-width: 80px; }
+.co-gnss-stack { display: flex; flex-direction: column; gap: 3px; }
+.co-gnss-row   { display: flex; align-items: baseline; gap: 5px; font-size: 11px; font-variant-numeric: tabular-nums; }
+.co-gnss-lbl   { font-size: 9px; font-weight: 700; letter-spacing: .06em; color: #445566; text-transform: uppercase; width: 18px; flex-shrink: 0; }
+.co-gnss-ok    { color: #00cc88; }
+.co-gnss-warn  { color: #ffcc00; }
+.co-gnss-stale { color: #ff4466; }
+
 .co-batt-ok   { color: #c0ccee; font-weight: 400; }
 .co-batt-watch { color: #a0d4ff; font-weight: 500; }
 .co-batt-warn { color: #ffcc00; font-weight: 600; }

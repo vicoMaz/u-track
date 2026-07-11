@@ -249,6 +249,20 @@ function _buildPingCell(satId) {
     </div>`;
 }
 
+// ── GNSS cell ─────────────────────────────────────────────────────
+
+function _gnssCell(gnss) {
+  if (!gnss) return '<span class="co-nil">—</span>';
+  const now = Date.now();
+  function _row(label, date) {
+    if (!date) return `<div class="co-gnss-row"><span class="co-gnss-lbl">${label}</span><span class="co-nil">—</span></div>`;
+    const ms  = now - date.getTime();
+    const cls = ms < 600_000 ? 'co-gnss-ok' : ms < 3_600_000 ? 'co-gnss-warn' : 'co-gnss-stale';
+    return `<div class="co-gnss-row"><span class="co-gnss-lbl">${label}</span><span class="${cls}">${_fmtAgo(ms)}</span></div>`;
+  }
+  return `<div class="co-gnss-stack">${_row('FS', gnss.lastFinesteering)}${_row('HW', gnss.lastValid)}</div>`;
+}
+
 // ── Reaction wheel cell ───────────────────────────────────────────
 
 function _rwOn(entry) {
@@ -351,6 +365,7 @@ function _rowHTML(sat, now, eclipse) {
     <td class="co-rw-cell">${_rwCell(tm?.rw)}</td>
     <td class="co-passes-cell" data-sat-id="${sat.id}">${_passDots(store.satPasses[sat.id])}</td>
     <td>${orbitCell}</td>
+    <td class="co-gnss-cell">${_gnssCell(store.satGnss[sat.id])}</td>
     <td class="co-alerts-cell"><span class="co-nil">—</span></td>
     <td class="co-alerts-cell">${_evtBadge(tm?.events)}</td>
     <td class="co-links-cell">${(() => {
@@ -552,6 +567,10 @@ export function initChadOps() {
         tleEl.textContent = `${age} ${icon}`;
       }
 
+      // GNSS timers advance every tick
+      const gnssEl = row.querySelector('.co-gnss-cell');
+      if (gnssEl) gnssEl.innerHTML = _gnssCell(store.satGnss[sat.id]);
+
     }
   }
 
@@ -610,7 +629,7 @@ export function initChadOps() {
   });
 
   store.subscribe(key => {
-    if ((key === 'satellites' || key === 'satTelemetry' || key === 'satPasses') && _active) render();
+    if ((key === 'satellites' || key === 'satTelemetry' || key === 'satPasses' || key === 'satGnss') && _active) render();
     if (key === 'pingStatus' && _active) _updatePingDots();
   });
 }
