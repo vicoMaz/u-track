@@ -38,7 +38,8 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
   satTelemetry: {},    // satId → { receptionTime, sysMode, gncMode, battVoltage, events }
   satPasses: {},       // satId → [{ id, start, end, aos5, los5, station, network, future }]
   satTmr: {},          // satId → { rangeStart, rangeEnd, gapWindows: [{start,end}] }
-  satGnss: {},         // satId → { lastFinesteering: Date|null, lastValid: Date|null }
+  satGnss: {},              // satId → { lastFinesteering: Date|null, hkIsValid: bool|null }
+  satEventBaseline: {},     // satId → { normal, low, med, high } — cumulative counts 24 h ago
   satScale: 500,
   orbitAlt: 550,       // km — shared by night shadow + GS footprint
   trackedSatId: null,
@@ -77,6 +78,7 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
       delete this.satPasses[sat.id];
       delete this.satTmr[sat.id];
       delete this.satGnss[sat.id];
+      delete this.satEventBaseline[sat.id];
       delete this.satAntennas[sat.id];
       for (const key of Object.keys(this.antennaToggles)) {
         if (key.startsWith(`${sat.id}:`)) delete this.antennaToggles[key];
@@ -173,6 +175,11 @@ setPingStatus(satId, status) {
   setSatGnss(satId, data) {
     this.satGnss[satId] = data;
     this.notify('satGnss');
+  },
+
+  setSatEventBaseline(satId, data) {
+    this.satEventBaseline[satId] = data;
+    // no extra notify needed — read on next satTelemetry render
   },
 
   updateSatTle(noradId, satrec) {

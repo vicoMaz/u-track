@@ -1,11 +1,8 @@
 import { store } from './store.js';
+import { satSubsystemOrigin } from './satSubsystems.js';
 
-function _satIp(noradId) {
-  return localStorage.getItem(`sat-baseurl-${noradId}`) ?? '';
-}
-
-async function _fetchJson(ip, path, signal) {
-  const res = await fetch(`http://${ip.replace(/\.\d+$/, '.5')}:15500${path}`, { signal });
+async function _fetchJson(fdsOrigin, path, signal) {
+  const res = await fetch(`${fdsOrigin}${path}`, { signal });
   return res.ok ? res.json() : null;
 }
 
@@ -19,7 +16,7 @@ function _passOutcome(procs) {
 }
 
 export async function fetchSatPasses(sat) {
-  const ip = _satIp(sat.noradId);
+  const ip = satSubsystemOrigin(sat.noradId, 'fds');
   if (!ip) return;
 
   const now   = new Date();

@@ -1,5 +1,5 @@
 import { store } from './store.js';
-import { satBaseUrl } from './satPing.js';
+import { satSubsystemOrigin } from './satSubsystems.js';
 
 // ── Toggle persistence (localStorage, keyed by noradId so it survives reload) ──
 
@@ -16,13 +16,12 @@ export function setNetworkVisible(sat, network, visible) {
 // ── Fetch ─────────────────────────────────────────────────────────────────
 
 export async function fetchSatAntennas(sat) {
-  const ip = satBaseUrl(sat.noradId);
-  if (!ip) return;
-  const host = ip.replace(/\.\d+$/, '.3');
+  const origin = satSubsystemOrigin(sat.noradId, 'gnm');
+  if (!origin) return;
   const ctrl  = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 10_000);
   try {
-    const res = await fetch(`http://${host}:15602/api/v1/data/antennas`, { signal: ctrl.signal });
+    const res = await fetch(`${origin}/api/v1/data/antennas`, { signal: ctrl.signal });
     if (!res.ok) return;
     const data = await res.json();
     const list = Array.isArray(data) ? data : [];

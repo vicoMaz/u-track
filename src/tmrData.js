@@ -1,3 +1,5 @@
+import { satSubsystemOrigin } from './satSubsystems.js';
+
 const FINE_MS = 90 * 60_000; // interpass gaps longer than this get sub-probed at this resolution
                               // instead of trusting one hit for the whole span
 const MIN_SEGMENT_MS = 20 * 60_000; // floor segment size — back-to-back passes shouldn't create sliver windows
@@ -11,16 +13,12 @@ const CONCURRENCY = 6; // keep in flight continuously — no barrier stalls betw
 const _ctrl     = new Map(); // noradId → AbortController
 const _debounce = new Map(); // noradId → timer handle
 
-function _ip(noradId) {
-  return localStorage.getItem(`sat-baseurl-${noradId}`) ?? '';
-}
-
 const _sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // Throws on a failed/errored request — callers must distinguish "confirmed empty"
 // from "we don't actually know" so a network blip doesn't get rendered as a real gap.
-async function _hasData(baseIp, startMs, endMs, signal) {
-  const url = `http://${baseIp}:15000/api/v1/parameters`
+async function _hasData(sccOrigin, startMs, endMs, signal) {
+  const url = `${sccOrigin}/api/v1/parameters`
     + `?start=${encodeURIComponent(new Date(startMs).toISOString())}`
     + `&end=${encodeURIComponent(new Date(endMs).toISOString())}`
     + `&orderBy=onBoardTime`
@@ -37,10 +35,10 @@ async function _hasData(baseIp, startMs, endMs, signal) {
 // Retries on failure (timeout, connection reset, non-2xx) before giving up and
 // treating the segment as uncovered — a single request now determines a whole
 // segment's color, so it needs to be trustworthy rather than fast-and-lucky.
-async function _probe(baseIp, startMs, endMs, signal) {
+async function _probe(sccOrigin, startMs, endMs, signal) {
   for (let attempt = 0; attempt <= RETRIES; attempt++) {
     try {
-      return await _hasData(baseIp, startMs, endMs, signal);
+      return await _hasData(sccOrigin, startMs, endMs, signal);
     } catch {
       if (signal.aborted || attempt === RETRIES) return false;
       await _sleep(RETRY_DELAY_MS);
@@ -127,7 +125,7 @@ async function _fetchTmrWindows(sat, pastPasses) {
   _ctrl.set(sat.noradId, ctrl);
   const { signal } = ctrl;
 
-  const ip = _ip(sat.noradId);
+  const ip = satSubsystemOrigin(sat.noradId, 'scc');
   if (!ip || !pastPasses.length) return null;
 
   const toMs       = t => (t instanceof Date ? t : new Date(t)).getTime();

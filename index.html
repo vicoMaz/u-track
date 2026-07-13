@@ -38,7 +38,7 @@
         <a class="tab-btn" data-tab="chadops" href="#chadops">Ops</a>
         <div class="tab-bar-sep"></div>
         <a class="tab-btn active" data-tab="tracking" href="#tracking">Tracking</a>
-        <a class="tab-btn" data-tab="tools" href="#tools">Tools</a>
+        <a class="tab-btn" data-tab="tools" href="#tools">Scheduler</a>
         <a class="tab-btn" data-tab="settings" href="#settings">Settings</a>
         <div id="nav-clocks">
           <div class="nc-box nc-box-utc">
@@ -83,17 +83,49 @@
         <div id="map-view" class="track-subtab-content"></div>
       </div>
 
-      <!-- Tools view -->
+      <!-- Scheduler view -->
       <div id="tools-view" class="view">
 
-        <!-- Orbit Inspector -->
-        <div id="tools-subtab-orbit">
-          <div class="oi-topbar">
-            <label class="oi-sat-label">Satellite</label>
-            <select id="oi-sat-select" class="oi-sat-select"></select>
-          </div>
-          <div id="oi-content" class="oi-scroll"></div>
+        <!-- Top bar: satellite selector + action -->
+        <div class="sc-topbar">
+          <label class="sc-topbar-lbl">Satellite</label>
+          <select id="sc-sat-select" class="sc-sat-select"></select>
+          <div class="sc-topbar-sep"></div>
+          <button class="sc-schedule-all-btn" disabled title="Wire up later">⚡ Schedule on all selected passes</button>
         </div>
+
+        <!-- Two-column layout -->
+        <div class="sc-body">
+
+          <!-- Left: pass timeline -->
+          <div class="sc-panel">
+            <div class="sc-panel-header">
+              <span class="sc-panel-title">Upcoming Passes</span>
+              <div class="sc-panel-actions">
+                <span id="sc-sel-count" class="sc-sel-count">No passes selected</span>
+                <button id="sc-select-all" class="sc-hdr-btn">Select all</button>
+              </div>
+            </div>
+            <div id="sc-pass-list" class="sc-pass-list"></div>
+          </div>
+
+          <!-- Right: procedure builder -->
+          <div class="sc-panel">
+            <div class="sc-panel-header">
+              <span class="sc-panel-title">Procedures</span>
+              <span id="sc-db-status" class="sc-db-status">Select a satellite</span>
+            </div>
+            <div class="sc-search-wrap">
+              <input id="sc-search-inp" class="sc-search-inp" type="text" placeholder="Search procedure…" autocomplete="off" />
+              <div id="sc-search-drop" class="sc-search-drop" style="display:none"></div>
+            </div>
+            <div id="sc-proc-list" class="sc-proc-list"></div>
+          </div>
+
+        </div>
+
+        <!-- Procedure editor modal -->
+        <div id="sc-proc-modal" class="sc-modal-backdrop" style="display:none"></div>
 
       </div>
 
@@ -119,11 +151,11 @@
                     <th class="co-th">Mode</th>
                     <th class="co-th">Battery</th>
                     <th class="co-th">RWH</th>
+                    <th class="co-th" id="co-gnss-th" style="cursor:default">GNSS <span class="co-passes-info">ⓘ</span></th>
                     <th class="co-th co-th-passes" id="co-passes-th" style="cursor:default">Passes <span class="co-passes-info">ⓘ</span></th>
                     <th class="co-th">Orbit</th>
-                    <th class="co-th" title="TM_3_25_OBSW_HK_GNSS_RTE — time since last FINESTEERING / VALID">GNSS</th>
                     <th class="co-th">Ground Alerts</th>
-                    <th class="co-th">Board Alerts</th>
+                    <th class="co-th" id="co-board-alerts-th" style="cursor:default">Board Alerts <span class="co-passes-info">ⓘ</span></th>
                     <th class="co-th">Links</th>
                   </tr>
                 </thead>

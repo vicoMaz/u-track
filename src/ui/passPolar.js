@@ -1,4 +1,5 @@
 import { propagate } from '../tle.js';
+import { satSubsystemOrigin } from '../satSubsystems.js';
 
 // ── GMST + Az/El ─────────────────────────────────────────────────────────────
 
@@ -48,7 +49,7 @@ const _antennaCache  = new Map();
 async function _getFdsAntennas(host) {
   if (_antennaCache.has(host)) return _antennaCache.get(host);
   if (_antennaPending.has(host)) return _antennaPending.get(host);
-  const p = fetch(`http://${host}:15602/api/v1/data/antennas`, { signal: AbortSignal.timeout(5000) })
+  const p = fetch(`${host}/api/v1/data/antennas`, { signal: AbortSignal.timeout(5000) })
     .then(r => r.ok ? r.json() : [])
     .catch(() => [])
     .then(data => {
@@ -64,7 +65,7 @@ async function _getFdsAntennas(host) {
 async function _fetchMask(host, antennaId) {
   try {
     const res = await fetch(
-      `http://${host}:15602/api/v1/data/antennas/mask/${encodeURIComponent(antennaId)}`,
+      `${host}/api/v1/data/antennas/mask/${encodeURIComponent(antennaId)}`,
       { signal: AbortSignal.timeout(5000) }
     );
     if (!res.ok) return null;
@@ -98,9 +99,8 @@ export async function fetchPassGsCoords(sat, pass, groundStations) {
   const station = pass.station;
   if (!station || station === '—') return null;
 
-  const ip = localStorage.getItem(`sat-baseurl-${sat.noradId}`) ?? '';
-  if (!ip) return null;
-  const host = ip.replace(/\.\d+$/, '.3');
+  const host = satSubsystemOrigin(sat.noradId, 'gnm');
+  if (!host) return null;
 
   const cacheKey = `${sat.noradId}:${station}`;
   if (_coordsCache.has(cacheKey)) return _coordsCache.get(cacheKey);

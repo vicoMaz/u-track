@@ -1062,6 +1062,12 @@ body.tools-active #sat-info { display: none !important; }
 }
 .sem-label:first-child { margin-top: 0; }
 
+.sem-subsys {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .sem-colors {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
@@ -1289,7 +1295,7 @@ body.tools-active #sat-info { display: none !important; }
   gap: 5px;
 }
 
-/* ── Orbit Inspector ─────────────────────────────────── */
+/* ── Scheduler ──────────────────────────────────────── */
 #tools-subtab-orbit {
   display: flex;
   flex-direction: column;
@@ -1455,6 +1461,349 @@ body.tools-active #sat-info { display: none !important; }
 .oi-no-events { color: #444; font-size: 11px; font-style: italic; }
 .oi-empty { color: #444; font-size: 12px; font-style: italic; padding: 20px; text-align: center; }
 
+/* ── Scheduler view ─────────────────────────────────────────────────── */
+#tools-view.active { display: flex; flex-direction: column; overflow: hidden; background: #08080f; }
+
+/* Top bar */
+.sc-topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 18px;
+  background: #0e0e18;
+  border-bottom: 1px solid #1a1a2a;
+  flex-shrink: 0;
+}
+.sc-topbar-lbl  { font-size: 10px; font-weight: 700; letter-spacing: .07em; color: #445566; text-transform: uppercase; }
+.sc-sat-select  {
+  background: #0d1520; border: 1px solid #2a3a4a; color: #c0ccee;
+  border-radius: 4px; padding: 4px 10px; font-size: 12px; outline: none; cursor: pointer;
+}
+.sc-sat-select:focus { border-color: #c77dff; }
+.sc-topbar-sep  { flex: 1; }
+.sc-schedule-all-btn {
+  background: #1a0a2e; border: 1px solid #6a3aaa; color: #c77dff;
+  padding: 5px 16px; border-radius: 4px; font-size: 11.5px; font-weight: 700;
+  cursor: not-allowed; opacity: .45; letter-spacing: .04em;
+}
+
+/* Body: two columns */
+.sc-body { display: flex; flex: 1; min-height: 0; gap: 0; }
+
+/* Panel */
+.sc-panel {
+  display: flex; flex-direction: column;
+  flex: 1; min-width: 0; border-right: 1px solid #141420;
+  overflow: hidden;
+}
+.sc-panel:last-child { border-right: none; }
+
+.sc-panel-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 16px;
+  background: #0c0c18; border-bottom: 1px solid #1a1a2a; flex-shrink: 0;
+}
+.sc-panel-title { font-size: 11px; font-weight: 700; letter-spacing: .07em; color: #8899bb; text-transform: uppercase; flex: 1; }
+.sc-panel-actions { display: flex; align-items: center; gap: 8px; }
+.sc-sel-count { font-size: 10px; color: #445566; }
+
+.sc-hdr-btn {
+  background: transparent; border: 1px solid #2a3a4a; color: #6a8899;
+  padding: 3px 10px; border-radius: 3px; font-size: 10.5px; cursor: pointer;
+  transition: color .12s, border-color .12s;
+}
+.sc-hdr-btn:hover { color: #aac8dd; border-color: #4a6a88; }
+.sc-hdr-btn-add { color: #5a9a77; border-color: #2a5a3a; }
+.sc-hdr-btn-add:hover { color: #7acca0; border-color: #4a8a6a; }
+
+/* Pass list */
+.sc-pass-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 8px; }
+.sc-pass-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px; border-radius: 4px; cursor: pointer;
+  border: 1px solid transparent; border-left: 3px solid transparent;
+  margin-bottom: 4px; user-select: none;
+  transition: background .1s, border-color .1s;
+}
+.sc-pass-row:hover { background: #111120; border-color: #2a2a3a; border-left-color: #2a2a3a; }
+.sc-pass-sel {
+  background: #0a1a30 !important;
+  border-color: #1a3a5a !important;
+  border-left-color: #4a9adf !important;
+}
+.sc-pass-sel .sc-pass-time { color: #6ab4ff !important; }
+.sc-pass-check {
+  width: 16px; height: 16px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 900; flex-shrink: 0;
+  border: 1px solid #223; color: transparent;
+  transition: background .1s, border-color .1s, color .1s;
+}
+.sc-pass-sel .sc-pass-check {
+  background: #4a9adf; border-color: #4a9adf; color: #fff;
+}
+.sc-pass-info { display: flex; flex-direction: column; gap: 2px; }
+.sc-pass-time { font-size: 12px; font-weight: 600; font-family: 'Courier New', monospace; color: #c0ccee; transition: color .1s; }
+.sc-pass-meta { font-size: 10.5px; color: #445566; }
+
+.sc-empty { color: #334; font-size: 11.5px; font-style: italic; padding: 24px 16px; text-align: center; }
+
+/* Procedure list */
+.sc-proc-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 8px; }
+.sc-proc-item {
+  background: #0d0d1a; border: 1px solid #1e1e30; border-radius: 5px;
+  padding: 8px 10px; margin-bottom: 6px;
+}
+.sc-proc-item-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.sc-proc-name { font-size: 12px; font-weight: 700; color: #c0ccee; font-family: 'Courier New', monospace; flex: 1; }
+.sc-proc-actions { display: flex; gap: 4px; }
+.sc-proc-btn {
+  background: transparent; border: 1px solid #2a2a4a; color: #556;
+  padding: 1px 6px; border-radius: 3px; font-size: 11px; cursor: pointer;
+  transition: color .1s, border-color .1s;
+}
+.sc-proc-edit:hover { color: #c77dff; border-color: #8a5aaa; }
+.sc-proc-del:hover  { color: #ff4466; border-color: #882244; }
+.sc-params-summary { display: flex; flex-wrap: wrap; gap: 4px; }
+.sc-param-chip {
+  font-size: 9px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  color: #778899; background: #12121e; border: 1px solid #2a2a3a;
+  padding: 1px 5px; border-radius: 2px;
+}
+
+/* Procedure editor modal */
+.sc-modal-backdrop {
+  position: fixed; inset: 0; z-index: 99998;
+  background: rgba(0,0,0,.65); display: flex; align-items: center; justify-content: center;
+}
+.sc-modal-card {
+  background: #0f0f1e; border: 1px solid #2a2a4a; border-radius: 8px;
+  width: 620px; max-width: 94vw; max-height: 80vh;
+  display: flex; flex-direction: column; box-shadow: 0 8px 40px #00000088;
+}
+.sc-modal-header {
+  display: flex; align-items: center; padding: 14px 18px;
+  border-bottom: 1px solid #1e1e30; font-size: 13px; font-weight: 700; color: #aaa;
+}
+.sc-modal-header span { flex: 1; }
+.sc-modal-close {
+  background: transparent; border: none; color: #445; font-size: 14px; cursor: pointer;
+  transition: color .1s;
+}
+.sc-modal-close:hover { color: #ff4466; }
+.sc-modal-body { flex: 1; overflow-y: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+.sc-modal-footer {
+  display: flex; gap: 10px; justify-content: flex-end;
+  padding: 12px 18px; border-top: 1px solid #1e1e30;
+}
+.sc-modal-lbl { font-size: 10px; font-weight: 700; letter-spacing: .07em; color: #556677; text-transform: uppercase; margin-bottom: 4px; display: block; }
+.sc-modal-field { display: flex; flex-direction: column; }
+.sc-proc-name-inp {
+  background: #0d1520; border: 1px solid #2a3a4a; color: #c0ccee;
+  border-radius: 4px; padding: 6px 10px; font-size: 12.5px; font-family: 'Courier New', monospace; outline: none;
+}
+.sc-proc-name-inp:focus { border-color: #c77dff; }
+.sc-inp-error { border-color: #ff4466 !important; }
+
+.sc-params-header { display: flex; align-items: center; gap: 10px; }
+.sc-add-param-btn {
+  background: transparent; border: 1px solid #2a5a3a; color: #5a9a77;
+  padding: 3px 10px; border-radius: 3px; font-size: 10.5px; cursor: pointer;
+  transition: color .1s, border-color .1s; margin-left: auto;
+}
+.sc-add-param-btn:hover { color: #7acca0; border-color: #4a8a6a; }
+
+.sc-param-col-hdr {
+  display: grid; grid-template-columns: 2fr 1fr 2fr 24px;
+  gap: 6px; padding: 0 2px; margin-bottom: -6px;
+}
+.sc-param-col-hdr span { font-size: 9px; font-weight: 700; letter-spacing: .06em; color: #334; text-transform: uppercase; }
+
+.sc-param-row {
+  display: grid; grid-template-columns: 2fr 1fr 2fr 24px;
+  gap: 6px; align-items: center; padding: 4px 0;
+  border-bottom: 1px solid #121220;
+}
+.sc-param-row:last-child { border-bottom: none; }
+.sc-param-name-inp, .sc-param-val-inp {
+  background: #0a0a18; border: 1px solid #1e2a3a; color: #c0ccee;
+  border-radius: 3px; padding: 4px 7px; font-size: 11px; font-family: 'Courier New', monospace; outline: none; width: 100%;
+}
+.sc-param-name-inp:focus, .sc-param-val-inp:focus { border-color: #4a7aaa; }
+.sc-param-type-sel {
+  background: #0a0a18; border: 1px solid #1e2a3a; color: #8899aa;
+  border-radius: 3px; padding: 4px 5px; font-size: 10.5px; outline: none; width: 100%;
+}
+.sc-param-del {
+  background: transparent; border: 1px solid #2a1a2a; color: #445;
+  border-radius: 3px; font-size: 11px; cursor: pointer; padding: 2px 4px; width: 24px; text-align: center;
+  transition: color .1s;
+}
+.sc-param-del:hover { color: #ff4466; border-color: #882244; }
+.sc-modal-cancel {
+  background: transparent; border: 1px solid #2a2a4a; color: #556677;
+  padding: 6px 18px; border-radius: 4px; font-size: 12px; cursor: pointer;
+}
+.sc-modal-cancel:hover { border-color: #445566; color: #8899aa; }
+.sc-modal-save {
+  background: #1a0a2e; border: 1px solid #6a3aaa; color: #c77dff;
+  padding: 6px 20px; border-radius: 4px; font-size: 12px; font-weight: 700; cursor: pointer;
+  transition: background .1s;
+}
+.sc-modal-save:hover { background: #2a1040; }
+
+/* Scheduler — procedure search ─────────────────────────────── */
+.sc-db-status {
+  font-size: 10px; color: #334455; font-style: italic; flex-shrink: 0;
+}
+.sc-search-wrap {
+  position: relative; padding: 6px 8px; border-bottom: 1px solid #181828;
+  flex-shrink: 0;
+}
+.sc-search-inp {
+  width: 100%; box-sizing: border-box;
+  background: #0d0d18; border: 1px solid #2a2a40; border-radius: 4px;
+  color: #c0ccee; font-size: 12px; padding: 6px 10px;
+  outline: none;
+}
+.sc-search-inp:focus { border-color: #4a6aaa; }
+.sc-search-inp::placeholder { color: #334455; }
+.sc-search-drop {
+  position: absolute; left: 8px; right: 8px; top: calc(100% - 6px);
+  background: #0d0d18; border: 1px solid #2a3a55; border-top: none;
+  border-radius: 0 0 4px 4px; max-height: 240px; overflow-y: auto;
+  z-index: 200; box-shadow: 0 8px 20px rgba(0,0,0,.6);
+}
+.sc-drop-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px; cursor: pointer; border-bottom: 1px solid #181828;
+}
+.sc-drop-item:hover { background: #111122; }
+.sc-drop-short {
+  font-size: 11.5px; color: #c0ccee; font-family: 'Courier New', monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
+}
+.sc-drop-short mark {
+  background: none; color: #c77dff; font-weight: 700;
+}
+.sc-drop-nparams {
+  font-size: 10px; color: #334455; flex-shrink: 0; margin-left: 8px;
+}
+
+/* Scheduler — procedure items ───────────────────────────────── */
+.sc-proc-item {
+  border: 1px solid #1a2030; border-radius: 4px; margin-bottom: 6px;
+  overflow: hidden;
+}
+.sc-proc-item-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px; background: #0d0d1a; gap: 8px;
+}
+.sc-proc-name {
+  font-size: 11.5px; font-weight: 700; color: #a0b8ee;
+  font-family: 'Courier New', monospace; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; flex: 1;
+}
+.sc-proc-del {
+  background: none; border: 1px solid #2a1a1a; border-radius: 3px;
+  color: #553333; font-size: 10px; padding: 1px 5px; cursor: pointer;
+  flex-shrink: 0; transition: color .1s, border-color .1s;
+}
+.sc-proc-del:hover { color: #ff4466; border-color: #882244; }
+.sc-params-group {
+  padding: 6px 10px; display: flex; flex-direction: column; gap: 4px;
+  border-top: 1px solid #181828;
+}
+.sc-params-sched { background: #09090f; }
+.sc-param-row2 {
+  display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto;
+  gap: 2px 6px; align-items: center;
+}
+.sc-pv-lbl {
+  font-size: 10px; color: #8899aa; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.sc-pv-type {
+  font-size: 9px; color: #334455; font-style: italic;
+  text-align: right; white-space: nowrap;
+}
+.sc-pv-inp {
+  grid-column: 1 / -1;
+  width: 100%; box-sizing: border-box;
+  background: #0d0d18; border: 1px solid #2a2a3a; border-radius: 3px;
+  color: #c0ccee; font-size: 11px; padding: 3px 6px; outline: none;
+}
+.sc-pv-inp:focus { border-color: #4a6aaa; }
+.sc-pv-area { resize: vertical; min-height: 42px; font-family: 'Courier New', monospace; }
+
+/* AbsoluteTime — wrap spans full grid width */
+.sc-dt-wrap {
+  grid-column: 1 / -1;
+  display: flex; flex-direction: column; gap: 4px;
+}
+/* Row with the datetime input + calendar button */
+.sc-dt-abs-row { display: flex; align-items: center; gap: 4px; }
+.sc-dt-wrap .sc-pv-inp { grid-column: unset; flex: 1; min-width: 0; }
+.sc-dt-wrap .sc-pv-inp::-webkit-calendar-picker-indicator {
+  filter: invert(0.6) sepia(1) saturate(2) hue-rotate(180deg); cursor: pointer;
+}
+.sc-dt-btn {
+  background: #1a1a28; border: 1px solid #2a2a40; border-radius: 3px;
+  color: #8899aa; cursor: pointer; padding: 3px 7px; font-size: 13px;
+  flex-shrink: 0; line-height: 1; transition: border-color .1s, color .1s;
+}
+.sc-dt-btn:hover { color: #c0ccee; border-color: #4a6aaa; }
+
+/* Row showing the active relative expression ("AOS0 + 30 s") */
+.sc-dt-rel-row {
+  display: flex; align-items: center; gap: 6px;
+}
+.sc-dt-rel-badge {
+  font-size: 11px; font-weight: 700; font-family: 'Courier New', monospace;
+  color: #4a9adf; background: #0a1828; border: 1px solid #1a3a5a;
+  border-radius: 3px; padding: 2px 8px; flex: 1;
+}
+.sc-dt-rel-clear {
+  background: none; border: 1px solid #2a1a1a; border-radius: 3px;
+  color: #553333; font-size: 11px; padding: 1px 6px; cursor: pointer; flex-shrink: 0;
+  transition: color .1s, border-color .1s;
+}
+.sc-dt-rel-clear:hover { color: #ff4466; border-color: #882244; }
+
+/* AOS0 / LOS0 pill buttons + offset */
+.sc-dt-pills {
+  display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+}
+.sc-dt-q {
+  background: #0e0e1c; border: 1px solid #252535; border-radius: 3px;
+  color: #5a7a99; font-size: 9.5px; font-weight: 700; letter-spacing: .05em;
+  padding: 2px 8px; cursor: pointer; text-transform: uppercase; white-space: nowrap;
+  transition: color .1s, border-color .1s, background .1s; user-select: none;
+}
+.sc-dt-q:hover { color: #7ab4df; border-color: #3a6a9a; background: #0c1a28; }
+.sc-dt-off-wrap { display: flex; align-items: center; gap: 3px; margin-left: 4px; }
+.sc-dt-off-lbl { font-size: 9.5px; color: #334455; }
+.sc-dt-off {
+  width: 52px; background: #0d0d18; border: 1px solid #2a2a3a; border-radius: 3px;
+  color: #aabbcc; font-size: 10px; padding: 2px 4px; text-align: center; outline: none;
+}
+.sc-dt-off:focus { border-color: #4a6aaa; }
+
+/* Drag-and-drop reorder */
+.sc-drag-handle {
+  color: #2a3a55; font-size: 14px; cursor: grab; flex-shrink: 0;
+  line-height: 1; padding: 0 2px; user-select: none;
+  transition: color .1s;
+}
+.sc-proc-item:hover .sc-drag-handle { color: #4a6a88; }
+.sc-proc-num {
+  font-size: 10px; font-weight: 700; color: #334455;
+  min-width: 16px; text-align: right; flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+.sc-drag-src { opacity: .4; }
+.sc-drag-over {
+  border-color: #4a7aff !important;
+  box-shadow: 0 0 0 1px #4a7aff44;
+}
 
 /* ═══════════════════════════════════════════════════════════════
    chadOps — Operational Status Dashboard
@@ -1667,6 +2016,8 @@ body.tools-active #sat-info { display: none !important; }
   font-size: 9px; font-weight: 700; letter-spacing: 0.08em;
   color: #445566; min-width: 24px; text-transform: uppercase;
 }
+.co-evt-stack  { display: grid; grid-template-columns: 28px auto auto; gap: 3px 6px; align-items: center; }
+.co-evt-delta  { font-size: 10px; font-weight: 700; color: #ffaa22; font-variant-numeric: tabular-nums; }
 
 .co-pill {
   display: inline-block;
@@ -1872,13 +2223,16 @@ body.tools-active #sat-info { display: none !important; }
 .co-rw-on      { color: #c0ccee; }
 .co-rw-off     { color: #ff4466; }
 .co-rw-unknown { color: #444; }
-.co-gnss-cell  { min-width: 80px; }
-.co-gnss-stack { display: flex; flex-direction: column; gap: 3px; }
-.co-gnss-row   { display: flex; align-items: baseline; gap: 5px; font-size: 11px; font-variant-numeric: tabular-nums; }
-.co-gnss-lbl   { font-size: 9px; font-weight: 700; letter-spacing: .06em; color: #445566; text-transform: uppercase; width: 18px; flex-shrink: 0; }
+.co-gnss-cell  { min-width: 90px; }
+.co-gnss-stack { display: flex; flex-direction: column; gap: 6px; }
+.co-gnss-row   { display: flex; align-items: center; gap: 7px; }
+.co-gnss-led   { font-size: 9px; line-height: 1; flex-shrink: 0; }
+.co-gnss-val   { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+.co-gnss-sub   { font-size: 9px; font-weight: 600; letter-spacing: .06em; color: #445566; text-transform: uppercase; margin-bottom: -2px; }
 .co-gnss-ok    { color: #00cc88; }
 .co-gnss-warn  { color: #ffcc00; }
 .co-gnss-stale { color: #ff4466; }
+.co-gnss-nil   { color: #2e3e4e; }
 
 .co-batt-ok   { color: #c0ccee; font-weight: 400; }
 .co-batt-watch { color: #a0d4ff; font-weight: 500; }
@@ -2047,18 +2401,18 @@ a.co-link:hover {
   font-size: 10px;
 }
 
-/* ── Scrollable outer ──────────────────────────────────────────── */
+/* ── Outer — no scroll, fills remaining height ─────────────────── */
 .co-sched-outer {
   flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow: hidden;
+  min-height: 0;
 }
 
 /* ── Grid layout ───────────────────────────────────────────────── */
 .co-sched-grid {
   display: flex;
   flex-direction: row;
-  min-height: 100%;
+  height: 100%;
 }
 
 /* Time column */
@@ -2067,12 +2421,12 @@ a.co-link:hover {
   flex-shrink: 0;
   background: #0a0a0f;
   border-right: 1px solid #1a1a2a;
-  position: sticky;
-  left: 0;
-  z-index: 5;
+  display: flex;
+  flex-direction: column;
 }
 .co-sched-time-body {
   position: relative;
+  flex: 1;
 }
 .co-sched-time-label {
   position: absolute;
@@ -2094,13 +2448,13 @@ a.co-link:hover {
   flex: 1;
   min-width: 80px;
   border-right: 1px solid #111118;
+  display: flex;
+  flex-direction: column;
 }
 .co-sched-today-col { background: #0d0d16; }
 
 .co-sched-day-hdr {
-  position: sticky;
-  top: 0;
-  z-index: 4;
+  flex-shrink: 0;
   background: #0e0e18;
   border-bottom: 1px solid #1a1a2a;
   padding: 5px 4px;
@@ -2123,7 +2477,10 @@ a.co-link:hover {
 
 .co-sched-day-body {
   position: relative;
+  flex: 1;
+  min-height: 0;
 }
+.co-sched-pass { min-height: 8px; }
 
 /* ── Hour grid lines ───────────────────────────────────────────── */
 .co-sched-hour-line {
@@ -2182,7 +2539,7 @@ a.co-link:hover {
   border-radius: 2px;
   padding: 1px 3px;
   overflow: hidden;
-  cursor: default;
+  cursor: help;
   z-index: 2;
   transition: filter 0.1s;
 }

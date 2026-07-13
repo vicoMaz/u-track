@@ -1,20 +1,17 @@
 import { store } from './store.js';
+import { satSubsystemOrigin } from './satSubsystems.js';
 
-const PACKET    = 'TM_3_25_OBSW_HK_GNSS_RTE';
-const LOOKBACK  = 7 * 86400_000; // 7 days
-const MAX_ROWS  = 1000;
+const PACKET      = 'TM_3_25_OBSW_HK_GNSS_RTE';
+const LOOKBACK_MS = 7 * 86400_000;     // how far back we're willing to search
+const MAX_ROWS    = 1000;              // per-request cap
+const INITIAL_WINDOW_MS = 10 * 60_000; // 10 min — safely under MAX_ROWS even for the
+                                        // busiest satellite observed (~3.5k rows/h)
+const MIN_WINDOW_MS     = 60_000;      // floor — stop shrinking and just use what we get
 
-function _satIp(noradId) {
-  return localStorage.getItem(`sat-baseurl-${noradId}`) ?? '';
-}
-
-async function _queryParam(ip, param, signal) {
-  const now   = Date.now();
-  const start = new Date(now - LOOKBACK).toISOString();
-  const end   = new Date(now + 10_000).toISOString();
-  const url   = `http://${ip}:15000/api/v1/parameters`
-    + `?start=${encodeURIComponent(start)}`
-    + `&end=${encodeURIComponent(end)}`
+async function _queryParam(sccOrigin, param, startMs, endMs, signal) {
+  const url = `${sccOrigin}/api/v1/parameters`
+    + `?start=${encodeURIComponent(new Date(startMs).toISOString())}`
+    + `&end=${encodeURIComponent(new Date(endMs).toISOString())}`
     + `&orderBy=onBoardTime`
     + `&filter=${encodeURIComponent(PACKET)}`
     + `&requestedParameters=${encodeURIComponent(param)}`
@@ -39,40 +36,90 @@ function _rowValue(row, param) {
   if (row == null) return null;
   // Direct key (CSV-style or flat object)
   if (row[param] !== undefined) return String(row[param]);
-  // Yamcs physicalValue / engValue wrappers
+  // SCC format: { parameter: { physicalValue: { value: "..." }, ... }, onBoardTime, ... }
+  const pParam = row.parameter;
+  if (pParam) {
+    const pv = pParam.physicalValue ?? pParam.engValue;
+    if (pv != null) return String(pv.value ?? pv.stringValue ?? pv);
+    if (pParam.value !== undefined) return String(pParam.value);
+  }
+  // Flat physicalValue / engValue wrappers
   const pv = row.physicalValue ?? row.engValue;
   if (pv != null) return String(pv.value ?? pv.stringValue ?? pv);
   if (row.value !== undefined) return String(row.value);
   return null;
 }
 
-function _lastMatch(rows, param, target) {
-  if (!rows?.length) return null;
-  const tgt = target.toUpperCase();
-  // Walk backwards — rows are in ascending time order
-  for (let i = rows.length - 1; i >= 0; i--) {
-    const v = _rowValue(rows[i], param);
-    if (v?.toUpperCase() === tgt) return _rowTime(rows[i]);
+// Searches backward from "now" for the most recent row matching `matchFn`. Starts
+// with a narrow recent slice and widens whenever a slice comes back empty but fully
+// seen — cheap for the common case (a recent match resolves in one request), and
+// correctly reaches the full LOOKBACK_MS window regardless of how bursty the
+// satellite's sample rate is. A flat row cap alone silently truncates the effective
+// search depth on busy satellites (confirmed: one satellite's 1000-row cap covered
+// 7 days-in-theory but only ~17 minutes in practice at its peak rate) — so if a
+// slice comes back AT the cap, we can't trust "no match" for it and retry that same
+// slice narrower instead of advancing past data we never actually saw.
+async function _searchBackward(origin, param, signal, matchFn) {
+  const now     = Date.now();
+  const floorMs = now - LOOKBACK_MS;
+  let sliceEnd  = now + 10_000; // small buffer for clock skew
+  let sliceMs   = INITIAL_WINDOW_MS;
+
+  while (sliceEnd > floorMs) {
+    const sliceStart = Math.max(floorMs, sliceEnd - sliceMs);
+    const rows = await _queryParam(origin, param, sliceStart, sliceEnd, signal);
+    if (rows === null) return null; // request failed — don't loop forever on a dead link
+
+    if (rows.length >= MAX_ROWS && sliceMs > MIN_WINDOW_MS) {
+      // Denser than assumed — can't trust "no match" here, retry this slice narrower.
+      // Shrink hard (÷4, not ÷2): a capped request still costs a full MAX_ROWS
+      // transfer regardless of the divisor, so converging in fewer capped attempts
+      // matters more than a smooth shrink curve — halving needed 3 full-cap requests
+      // in a row against real dense data before finding a usable slice.
+      sliceMs = Math.max(MIN_WINDOW_MS, Math.floor(sliceMs / 4));
+      continue;
+    }
+
+    const match = rows.find(matchFn);
+    if (match) return match;
+
+    // Fully saw this slice, no match — advance the cursor back and widen for the next one.
+    sliceEnd = sliceStart;
+    sliceMs  = Math.min(sliceMs * 2, LOOKBACK_MS);
   }
   return null;
 }
 
+// Cancel a satellite's still-running search rather than let it pile up alongside a
+// new one — e.g. a manual "force ping" click while a slow widening search is still
+// in flight would otherwise start a second, fully independent search chain.
+const _ctrl = new Map(); // noradId → AbortController
+
 export async function fetchSatGnss(sat) {
-  const ip = _satIp(sat.noradId);
+  const ip = satSubsystemOrigin(sat.noradId, 'scc');
   if (!ip) return;
 
-  const ctrl  = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15_000);
+  _ctrl.get(sat.noradId)?.abort();
+  const ctrl = new AbortController();
+  _ctrl.set(sat.noradId, ctrl);
+
+  const timer = setTimeout(() => ctrl.abort(), 45_000); // widening search may take a few round-trips
   try {
-    const [tsRows, hwRows] = await Promise.all([
-      _queryParam(ip, 'GNSS_AM_TIMESYNC_STATUS', ctrl.signal),
-      _queryParam(ip, 'GNSS_AM_HW_HK_VALID',     ctrl.signal),
+    const [tsMatch, hwMatch] = await Promise.all([
+      _searchBackward(ip, 'GNSS_AM_TIMESYNC_STATUS', ctrl.signal,
+        row => _rowValue(row, 'GNSS_AM_TIMESYNC_STATUS')?.toUpperCase() === 'FINESTEERING'),
+      _searchBackward(ip, 'GNSS_AM_HW_HK_VALID', ctrl.signal, () => true), // just the latest row
     ]);
 
+    if (ctrl.signal.aborted) return; // superseded or timed out — don't overwrite with a stale/partial result
+    const hwValue = hwMatch ? _rowValue(hwMatch, 'GNSS_AM_HW_HK_VALID') : null;
     store.setSatGnss(sat.id, {
-      lastFinesteering: _lastMatch(tsRows, 'GNSS_AM_TIMESYNC_STATUS', 'FINESTEERING'),
-      lastValid:        _lastMatch(hwRows,  'GNSS_AM_HW_HK_VALID',    'VALID'),
+      lastFinesteering: tsMatch ? _rowTime(tsMatch) : null,
+      hkIsValid:        hwValue == null ? null : hwValue.toUpperCase() === 'VALID',
     });
   } catch { /* offline or aborted */ }
-  finally { clearTimeout(timer); }
+  finally {
+    clearTimeout(timer);
+    if (_ctrl.get(sat.noradId) === ctrl) _ctrl.delete(sat.noradId);
+  }
 }

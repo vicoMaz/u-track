@@ -2,13 +2,7 @@ import { store, PALETTE } from '../store.js';
 import { parseTLE, propagate } from '../tle.js';
 import { persistSatellite, deleteServerSatellite } from '../apiPoller.js';
 import { satBaseUrl, setSatBaseUrl, satJwt, setSatJwt, pingSatellite, getPingIntervalSec, restartPingPoller } from '../satPing.js';
-
-// ─── Subnet routing reference ─────────────────────────────────────────────
-// Base IP stored per satellite is the SCC machine (.1):
-//   .1  = SCC  — telemetry (port 15000), used as-is
-//   .3  = GNM  — TLE + antennas (port 15602)
-//   .4  = FDS  (second FDS node, currently unused)
-//   .5  = FDS  — ping target, passes, attitude (port 15500); Grafana (:3000)
+import { SUBSYSTEMS, satSubsystemIp, satSubsystemOverride, setSatSubsystemIp, derivedSubsystemIp } from '../satSubsystems.js';
 import { setNetworkVisible } from '../satAntennas.js';
 
 // ─── Icons ────────────────────────────────────────────────────────────────
@@ -233,8 +227,19 @@ function _openSatEditModal(sat) {
           <button class="sem-model-btn${sat.model === 'FF' ? ' sem-model-active' : ''}" data-model="FF">FF</button>
         </div>
 
-        <div class="sem-label">SCC IP</div>
+        <div class="sem-label">Base IP</div>
         <input class="sem-input" id="sem-ip" value="${satBaseUrl(sat.noradId)}" placeholder="172.17.x.1" spellcheck="false" autocomplete="off">
+
+        <div class="sem-label">Subsystem IPs</div>
+        <div class="sem-subsys">
+          ${Object.entries(SUBSYSTEMS).map(([key, def]) => `
+            <div class="slm-row" data-key="${key}">
+              <span class="slm-label">${def.label}</span>
+              <input class="slm-url" id="sem-ip-${key}" value="${satSubsystemIp(sat.noradId, key)}"
+                     placeholder="${derivedSubsystemIp(satBaseUrl(sat.noradId), key) || '—'}" spellcheck="false" autocomplete="off">
+              <button class="slm-reset" title="Reset to derived default" ${satSubsystemOverride(sat.noradId, key) ? '' : 'disabled'}>↺</button>
+            </div>`).join('')}
+        </div>
 
         <div class="sem-label">JWT Token</div>
         <input class="sem-input sem-jwt" id="sem-jwt" type="password" value="${satJwt(sat.noradId)}" placeholder="Bearer token">
@@ -285,13 +290,53 @@ function _openSatEditModal(sat) {
   nameIn.addEventListener('blur', saveName);
   nameIn.addEventListener('keydown', e => { if (e.key === 'Enter') nameIn.blur(); });
 
-  // IP — save on blur/enter
+  // Subsystem IP overrides — each input shows the effective value (override, else
+  // derived from Base IP); editing it saves an override, the reset button clears it.
+  const subsysRows = modal.querySelectorAll('.sem-subsys .slm-row');
+  const _refreshSubsysRow = row => {
+    const key = row.dataset.key;
+    const inp = row.querySelector('.slm-url');
+    const rst = row.querySelector('.slm-reset');
+    inp.placeholder = derivedSubsystemIp(ipIn.value.trim(), key) || '—';
+    rst.disabled = !satSubsystemOverride(sat.noradId, key);
+  };
+  subsysRows.forEach(row => {
+    const key = row.dataset.key;
+    const inp = row.querySelector('.slm-url');
+    const rst = row.querySelector('.slm-reset');
+    const save = () => {
+      const v       = inp.value.trim();
+      const derived = derivedSubsystemIp(ipIn.value.trim(), key);
+      setSatSubsystemIp(sat.noradId, key, v && v !== derived ? v : '');
+      _refreshSubsysRow(row);
+    };
+    inp.addEventListener('blur', save);
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') inp.blur(); });
+    rst.addEventListener('click', () => {
+      setSatSubsystemIp(sat.noradId, key, '');
+      inp.value = derivedSubsystemIp(ipIn.value.trim(), key);
+      _refreshSubsysRow(row);
+    });
+  });
+
+  // Base IP — save on blur/enter; re-derives every subsystem row that has no override.
+  // Skip the reset-and-reping when the value is unchanged — otherwise just clicking
+  // into this field and away again restarts the satellite's ping cycle early.
   const ipIn = modal.querySelector('#sem-ip');
   const saveIp = () => {
-    setSatBaseUrl(sat.noradId, ipIn.value.trim());
+    const v = ipIn.value.trim();
+    if (v === satBaseUrl(sat.noradId)) return;
+    setSatBaseUrl(sat.noradId, v);
     store.setSatTelemetry(sat.id, null);
     store.setSatPasses(sat.id, []);
     pingSatellite(sat.id);
+    subsysRows.forEach(row => {
+      const key = row.dataset.key;
+      if (!satSubsystemOverride(sat.noradId, key)) {
+        row.querySelector('.slm-url').value = derivedSubsystemIp(v, key);
+      }
+      _refreshSubsysRow(row);
+    });
   };
   ipIn.addEventListener('blur', saveIp);
   ipIn.addEventListener('keydown', e => { if (e.key === 'Enter') ipIn.blur(); });

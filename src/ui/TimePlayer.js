@@ -2,8 +2,9 @@ import { store }                        from '../store.js';
 import { propagate }                    from '../tle.js';
 import { sunDirectionECI, isInEclipse } from '../sunVector.js';
 import { scheduleTmrFetch }             from '../tmrData.js';
+import { requestTmrGapDownload }        from '../tmrGapDownload.js';
 import { fetchPassGsCoords, buildPolarSVG } from './passPolar.js';
-import { satBaseUrl }                   from '../satPing.js';
+import { satSubsystemHost }             from '../satSubsystems.js';
 
 function _grafanaLokiUrl(grafanaHost, fromMs, toMs) {
   return `http://${grafanaHost}:3000/a/grafana-lokiexplore-app/explore/service/-scc/logs`
@@ -19,8 +20,7 @@ function _grafanaLokiUrl(grafanaHost, fromMs, toMs) {
 }
 
 function _grafanaHost() {
-  const ip = satBaseUrl(store.trackedSat?.noradId);
-  return ip ? ip.replace(/\.\d+$/, '.5') : null;
+  return satSubsystemHost(store.trackedSat?.noradId, 'fds') || null;
 }
 
 
@@ -177,11 +177,11 @@ function _gapTooltipHTML(gap) {
   const hdr   = `<div class="co-tt-header">TMR GAP · ${_fmtGapDuration(end - start)}</div>`;
   const times = `<div class="co-tt-time-row"><span class="co-tt-time-lbl">FROM</span>${_fmtDT(start)}</div>`
               + `<div class="co-tt-time-row"><span class="co-tt-time-lbl">TO</span>${_fmtDT(end)}</div>`;
-  const btn   = `<button type="button" class="co-tt-gap-btn">Request for TMR gap in the next pass</button>`;
+  const btn   = `<button type="button" class="co-tt-gap-btn">Download Gap TMR</button>`;
   return hdr + times + btn;
 }
 
-function _showGapTooltip(e, gap) {
+function _showGapTooltip(e, gap, sat) {
   _ttAnchorX = e.clientX;
   _ttAnchorY = e.clientY;
   clearTimeout(_ttHideTimer);
@@ -189,8 +189,20 @@ function _showGapTooltip(e, gap) {
   _ganttTooltip.style.display = 'block';
   _posTooltipAt(_ttAnchorX, _ttAnchorY);
   const btn = _ganttTooltip.querySelector('.co-tt-gap-btn');
-  if (btn) btn.addEventListener('click', () => {
-    _showInfoToast('Not wired up yet — no request was sent.');
+  if (btn) btn.addEventListener('click', async () => {
+    btn.disabled    = true;
+    btn.textContent = 'Requesting…';
+    try {
+      const { linkEstablished } = await requestTmrGapDownload(sat, gap);
+      _showInfoToast(linkEstablished
+        ? 'TM/TC link + TMR gap download scheduled on the next pass.'
+        : 'TMR gap download scheduled on the next pass.');
+    } catch (err) {
+      _showInfoToast(`Request failed: ${err.message}`);
+    } finally {
+      btn.disabled    = false;
+      btn.textContent = 'Download Gap TMR';
+    }
   });
 }
 
@@ -413,7 +425,7 @@ function _renderGanttTmr() {
     bar.style.left       = `${lc.toFixed(3)}%`;
     bar.style.width      = `${(rc - lc).toFixed(3)}%`;
     bar.style.background = '#12121e';
-    bar.addEventListener('mouseenter', e => _showGapTooltip(e, { start, end }));
+    bar.addEventListener('mouseenter', e => _showGapTooltip(e, { start, end }, sat));
     bar.addEventListener('mouseleave', _hidePassTooltipSoon);
     ganttTmr.appendChild(bar);
   }
@@ -593,7 +605,7 @@ export function initTimePlayer() {
       if (ganttTmr) ganttTmr.innerHTML = '';
       _eclipseJobSat = null;
       _updateGanttEclipse();
-      requestAnimationFrame(_syncLayout); // gantt visibility changes when tracking activates/deactivates
+      // ResizeObserver handles _syncLayout when gantt visibility/height changes
     }
     if (key === 'tmrData') {
       _renderGanttTmr();
@@ -659,11 +671,14 @@ export function initTimePlayer() {
   ganttToggleBtn?.addEventListener('click', () => {
     const collapsed = document.body.classList.toggle('gantt-collapsed');
     if (ganttToggleBtn) ganttToggleBtn.textContent = collapsed ? '▼' : '▲';
-    requestAnimationFrame(_syncLayout);
+    // ResizeObserver handles the layout sync after height changes
   });
 
-  // Align gantt tracks to scrubber after layout is complete, and on resize
-  requestAnimationFrame(() => { _alignGantt(); _syncLayout(); });
+  // ResizeObserver fires whenever the gantt's actual rendered height changes
+  // (initial layout, collapse/expand, content updates) — no rAF race condition
+  if (ganttEl) new ResizeObserver(_syncLayout).observe(ganttEl);
+
+  // Keep window resize for gantt track alignment (scrubber position-dependent)
   window.addEventListener('resize', () => { _alignGantt(); _syncLayout(); });
 
   speed = Number(speedSel.value);

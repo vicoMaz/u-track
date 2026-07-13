@@ -3,13 +3,21 @@ import { propagate }                          from '../tle.js';
 import { sunDirectionECI, isInEclipse }       from '../sunVector.js';
 import { fetchPassGsCoords, buildPolarSVG }    from './passPolar.js';
 import { getPingIntervalSec, getPingElapsedSec, getLastPingMs, satBaseUrl, pingSatellite } from '../satPing.js';
+import { satSubsystemOrigin, satSubsystemHost } from '../satSubsystems.js';
+import {
+  passTooltipContent  as _tooltipContent,
+  positionTooltip     as _positionTooltip,
+} from './passTooltip.js';
 
-// URL builders — subnet routing: .1=SCC, .3=GNM, .5=FDS
-const _grafanaUrl   = ip => ip
-  ? `http://${ip.replace(/\.\d+$/, '.5')}:3000/?orgId=1&from=now-6h&to=now&timezone=browser`
-  : null;
+// URL builders — subnet routing: .1=SCC, .3=GNM, .4=MIC, .5=FDS (see satSubsystems.js).
+// FDS/GNM/SCC may be overridden as bare IPs OR full URLs (e.g. a hostname+HTTPS
+// deployment), so these read the resolved origin rather than assuming an IP.
+const _grafanaUrl   = noradId => {
+  const host = satSubsystemHost(noradId, 'fds'); // Grafana is hosted on the FDS box, port 3000
+  return host ? `http://${host}:3000/?orgId=1&from=now-6h&to=now&timezone=browser` : null;
+};
 const _dashboardUrl = ip => ip ? `http://${ip}/` : null;
-const _gnmUrl       = ip => ip ? `http://${ip.replace(/\.\d+$/, '.3')}:15602/` : null;
+const _gnmUrl       = noradId => satSubsystemOrigin(noradId, 'gnm') || null;
 
 // Read a URL override saved by the component links modal; fall back to computed value
 function _satLink(noradId, key, fallback) {
@@ -70,22 +78,25 @@ function _monPillCls(status) {
   return 'co-pill-crit';
 }
 
-// Real on-board event counts from TM
-function _evtBadge(events) {
+// Real on-board event counts from TM; baseline = counts 24 h ago for delta display
+function _evtBadge(events, baseline) {
   if (!events) return '<span class="co-nil">—</span>';
   const rows = [
-    { label: 'HIGH', v: events.high   },
-    { label: 'MED',  v: events.med    },
-    { label: 'LOW',  v: events.low    },
-    { label: 'NOM',  v: events.normal },
+    { label: 'HIGH', v: events.high,   b: baseline?.high   },
+    { label: 'MED',  v: events.med,    b: baseline?.med    },
+    { label: 'LOW',  v: events.low,    b: baseline?.low    },
+    { label: 'NOM',  v: events.normal, b: baseline?.normal },
   ];
+  // Flat grid children — 3 cols: label | pill | delta — all rows align together
   return `<div class="co-evt-stack">${rows.map(r => {
     const val = r.v?.value ?? null;
     const cls = r.v?.status ? _monPillCls(r.v.status) : '';
     const valHtml = val != null
       ? `<span class="co-pill ${cls}">${val}</span>`
       : '<span class="co-nil">—</span>';
-    return `<div class="co-mode-row"><span class="co-mode-label">${r.label}</span>${valHtml}</div>`;
+    const d = (val != null && r.b != null) ? Number(val) - r.b : 0;
+    const deltaHtml = d > 0 ? `<span class="co-evt-delta">+${d}</span>` : '<span></span>';
+    return `<span class="co-mode-label">${r.label}</span>${valHtml}${deltaHtml}`;
   }).join('')}</div>`;
 }
 
@@ -114,12 +125,6 @@ function _passDots(passes) {
     return `<span class="co-dot ${cls}" data-idx="${i}">${ch}</span>`;
   }).join('');
   return `<div class="co-dots-grid">${html}</div>`;
-}
-
-function _fmtDuration(ms) {
-  const m = Math.floor(ms / 60000);
-  const s = Math.floor((ms % 60000) / 1000);
-  return `${m}m ${String(s).padStart(2, '0')}s`;
 }
 
 function _battMonTooltip(mon) {
@@ -153,78 +158,6 @@ function _battMonTooltip(mon) {
   return rows || '<div class="co-nil">No monitoring defined</div>';
 }
 
-const _PROC_CLS = { SUCCESS: 'co-tt-ok', FAILURE: 'co-tt-fail', CANCELLED: 'co-tt-cancelled' };
-const _PROC_CH  = { SUCCESS: '●', FAILURE: '✗', CANCELLED: '◌' };
-
-function _grafanaLokiUrl(grafanaHost, fromMs, toMs) {
-  return `http://${grafanaHost}:3000/a/grafana-lokiexplore-app/explore/service/-scc/logs`
-    + `?patterns=%5B%5D&from=${fromMs}&to=${toMs}`
-    + `&var-lineFormat=&var-ds=P8E80F9AEF21F6940`
-    + `&var-filters=service_name%7C%3D%7C%2Fscc`
-    + `&var-fields=&var-levels=&var-metadata=&var-jsonFields=`
-    + `&var-patterns=&var-lineFilterV2=&var-lineFilters=`
-    + `&timezone=browser&var-all-fields=&userDisplayedFields=false`
-    + `&displayedFields=%5B%5D&urlColumns=%5B%5D`
-    + `&visualizationType=%22logs%22&prettifyLogMessage=false`
-    + `&sortOrder=%22Descending%22&wrapLogMessage=false`;
-}
-
-function _passEclipseBar(satrec, start, end) {
-  if (!satrec || !start || !end) return '';
-  const STEP = 30_000; // 30s samples
-  let shadow = 0, sun = 0;
-  for (let t = start.getTime(); t <= end.getTime(); t += STEP) {
-    const d = new Date(t);
-    const r = propagate(satrec, d);
-    if (!r?.eciPos) continue;
-    if (isInEclipse(r.eciPos, sunDirectionECI(d))) shadow++; else sun++;
-  }
-  const total = shadow + sun;
-  if (!total) return '';
-  const eclPct = Math.round((shadow / total) * 100);
-  const sunPct = 100 - eclPct;
-  const fmtMin = m => `${m}m`;
-  const durMin = Math.round((end - start) / 60_000);
-  const eclMin = Math.round(shadow / total * durMin);
-  const sunMin = durMin - eclMin;
-  return `
-    <div class="co-tt-ecl-bar">
-      <div class="oi-eclipse-bar">
-        <div class="oi-eclipse-seg oi-seg-shadow" style="width:${eclPct}%">${eclPct > 15 ? fmtMin(eclMin) : ''}</div>
-        <div class="oi-eclipse-seg oi-seg-sun"    style="width:${sunPct}%">${sunPct > 15 ? fmtMin(sunMin) : ''}</div>
-      </div>
-      <div class="oi-eclipse-legend">
-        <span class="oi-ecl-shadow">● ${eclPct}% shadow</span>
-        <span class="oi-ecl-sun">☀ ${sunPct}% sun</span>
-      </div>
-    </div>`;
-}
-
-function _tooltipContent(pass, grafanaHost, sat) {
-  const dur = pass.end && pass.start ? ` · ${_fmtDuration(pass.end - pass.start)}` : '';
-  const hdr = `<div class="co-tt-header">${pass.station} · ${_fmtDateTimeShort(pass.start)}${dur}</div>`;
-  const eclBar = _passEclipseBar(sat?.satrec, pass.start, pass.end);
-  const slot = '<div class="polar-slot"></div>';
-  if (pass.future) {
-    return hdr + eclBar + `<div class="co-tt-future-status co-dot-future">○ SCHEDULED</div>` + slot;
-  }
-  if (!pass.procedures?.length) {
-    return hdr + eclBar + `<div class="co-tt-proc co-tt-ok">● PASS OCCURRED</div>` + slot;
-  }
-  const procs = pass.procedures.map((pr, i) => {
-    const cls     = _PROC_CLS[pr.status] ?? 'co-tt-ok';
-    const num     = `<span class="co-tt-num">${i + 1}</span>`;
-    const name    = `<span class="co-tt-pname">${pr.name}</span>`;
-    const procDur = pr.endMs && pr.startMs ? `<span class="co-tt-dur">${_fmtDuration(pr.endMs - pr.startMs)}</span>` : '';
-    if (grafanaHost) {
-      const url = _grafanaLokiUrl(grafanaHost, pr.startMs - 1000, pr.endMs + 1000);
-      return `<a href="${url}" target="_blank" rel="noopener" class="co-tt-proc co-tt-link ${cls}" title="${pr.name}">${num}${name}${procDur}</a>`;
-    }
-    return `<div class="co-tt-proc ${cls}" title="${pr.name}">${num}${name}${procDur}</div>`;
-  }).join('');
-  return hdr + eclBar + `<div class="co-tt-sep"></div><div class="co-tt-procs">${procs}</div>` + slot;
-}
-
 // ── Ping cell ────────────────────────────────────────────────────
 
 function _buildPingCell(satId) {
@@ -254,13 +187,21 @@ function _buildPingCell(satId) {
 function _gnssCell(gnss) {
   if (!gnss) return '<span class="co-nil">—</span>';
   const now = Date.now();
-  function _row(label, date) {
-    if (!date) return `<div class="co-gnss-row"><span class="co-gnss-lbl">${label}</span><span class="co-nil">—</span></div>`;
-    const ms  = now - date.getTime();
-    const cls = ms < 600_000 ? 'co-gnss-ok' : ms < 3_600_000 ? 'co-gnss-warn' : 'co-gnss-stale';
-    return `<div class="co-gnss-row"><span class="co-gnss-lbl">${label}</span><span class="${cls}">${_fmtAgo(ms)}</span></div>`;
+  let fsCls, fsVal;
+  if (!gnss.lastFinesteering) {
+    fsCls = 'co-gnss-nil'; fsVal = '—';
+  } else {
+    const ms = now - gnss.lastFinesteering.getTime();
+    fsCls = ms < 43_200_000 ? 'co-gnss-ok' : ms < 86_400_000 ? 'co-gnss-warn' : 'co-gnss-stale';
+    fsVal = _fmtAgo(ms);
   }
-  return `<div class="co-gnss-stack">${_row('FS', gnss.lastFinesteering)}${_row('HW', gnss.lastValid)}</div>`;
+  const hkCls = gnss.hkIsValid == null ? 'co-gnss-nil' : gnss.hkIsValid ? 'co-gnss-ok' : 'co-gnss-stale';
+  const hkVal = gnss.hkIsValid == null ? '—' : gnss.hkIsValid ? 'HK VALID' : 'HK INVALID';
+  return `<div class="co-gnss-stack">
+    <span class="co-gnss-sub">FINESTEERING</span>
+    <div class="co-gnss-row ${fsCls}" title="Time since last FINESTEERING"><span class="co-gnss-led">●</span><span class="co-gnss-val">${fsVal}</span></div>
+    <div class="co-gnss-row ${hkCls}" title="HK validity — last received packet"><span class="co-gnss-led">●</span><span class="co-gnss-val">${hkVal}</span></div>
+  </div>`;
 }
 
 // ── Reaction wheel cell ───────────────────────────────────────────
@@ -363,33 +304,19 @@ function _rowHTML(sat, now, eclipse) {
     <td class="co-mode-cell">${modeCell}</td>
     <td class="co-batt-cell">${battCell}</td>
     <td class="co-rw-cell">${_rwCell(tm?.rw)}</td>
+    <td class="co-gnss-cell">${_gnssCell(store.satGnss[sat.id])}</td>
     <td class="co-passes-cell" data-sat-id="${sat.id}">${_passDots(store.satPasses[sat.id])}</td>
     <td>${orbitCell}</td>
-    <td class="co-gnss-cell">${_gnssCell(store.satGnss[sat.id])}</td>
     <td class="co-alerts-cell"><span class="co-nil">—</span></td>
-    <td class="co-alerts-cell">${_evtBadge(tm?.events)}</td>
+    <td class="co-alerts-cell">${_evtBadge(tm?.events, store.satEventBaseline[sat.id])}</td>
     <td class="co-links-cell">${(() => {
       const ip = satBaseUrl(sat.noradId);
-      return _linkBadge('SCC',      _satLink(sat.noradId, 'scc',     ip ? `http://${ip}:15000/` : null))
-           + _linkBadge('Grafana',  _satLink(sat.noradId, 'grafana', _grafanaUrl(ip)))
+      return _linkBadge('SCC',      _satLink(sat.noradId, 'scc',     satSubsystemOrigin(sat.noradId, 'scc') || null))
+           + _linkBadge('Grafana',  _satLink(sat.noradId, 'grafana', _grafanaUrl(sat.noradId)))
            + _linkBadge('Dashboard',_dashboardUrl(ip))
-           + _linkBadge('GNM',      _satLink(sat.noradId, 'gnm',     _gnmUrl(ip)));
+           + _linkBadge('GNM',      _satLink(sat.noradId, 'gnm',     _gnmUrl(sat.noradId)));
     })()}</td>
   </tr>`;
-}
-
-// ── Tooltip positioning ───────────────────────────────────────────
-
-function _positionTooltip(e, el) {
-  const pad = 14;
-  let x = e.clientX + pad;
-  let y = e.clientY + pad;
-  const w = el.offsetWidth  || 230;
-  const h = el.offsetHeight || 120;
-  if (x + w > window.innerWidth  - 8) x = e.clientX - w - pad;
-  if (y + h > window.innerHeight - 8) y = e.clientY - h - pad;
-  el.style.left = x + 'px';
-  el.style.top  = y + 'px';
 }
 
 // ── Init ──────────────────────────────────────────────────────────
@@ -443,6 +370,49 @@ export function initChadOps() {
     passesHeader.addEventListener('mouseleave', _scheduleHide);
   }
 
+  const GNSS_LEGEND_HTML = `
+    <div class="co-legend-title">TM_3_25_OBSW_HK_GNSS_RTE</div>
+    <div class="co-legend-title co-legend-gap">FINESTEERING — GNSS_AM_TIMESYNC_STATUS</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:#00cc88">●</span> &lt; 12 h</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:#ffcc00">●</span> &lt; 24 h</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:#ff4466">●</span> ≥ 24 h</div>
+    <div class="co-legend-title co-legend-gap">HK VALID — GNSS_AM_HW_HK_VALID</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:#00cc88">●</span> Last packet = VALID</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:#ff4466">●</span> Last packet = INVALID</div>`;
+
+  const gnssHeader = document.getElementById('co-gnss-th');
+  if (gnssHeader) {
+    gnssHeader.addEventListener('mouseenter', e => {
+      _cancelHide();
+      tooltip.innerHTML     = GNSS_LEGEND_HTML;
+      tooltip.style.display = 'block';
+      _positionTooltip(e, tooltip);
+    });
+    gnssHeader.addEventListener('mousemove',  e => _positionTooltip(e, tooltip));
+    gnssHeader.addEventListener('mouseleave', _scheduleHide);
+  }
+
+  const BOARD_ALERTS_HTML = `
+    <div class="co-legend-title">Packet: TM_3_25_OBSW_HK_PLT</div>
+    <div class="co-legend-sub">Cumulative on-board event counters since last OBC boot. The <span style="color:#ffcc00;font-weight:600">+N</span> delta shows how many new events occurred in the last 24 h.</div>
+    <div class="co-legend-title co-legend-gap">Severity levels</div>
+    <div class="co-legend-row"><span class="co-mode-label">HIGH</span> OBSW_AM_NB_HIGH_SEV_EVT</div>
+    <div class="co-legend-row"><span class="co-mode-label">MED</span> OBSW_AM_NB_MED_SEV_EVT</div>
+    <div class="co-legend-row"><span class="co-mode-label">LOW</span> OBSW_AM_NB_LOW_SEV_EVT</div>
+    <div class="co-legend-row"><span class="co-mode-label">NOM</span> OBSW_AM_NB_NORMAL_EVT</div>`;
+
+  const boardAlertsHeader = document.getElementById('co-board-alerts-th');
+  if (boardAlertsHeader) {
+    boardAlertsHeader.addEventListener('mouseenter', e => {
+      _cancelHide();
+      tooltip.innerHTML     = BOARD_ALERTS_HTML;
+      tooltip.style.display = 'block';
+      _positionTooltip(e, tooltip);
+    });
+    boardAlertsHeader.addEventListener('mousemove',  e => _positionTooltip(e, tooltip));
+    boardAlertsHeader.addEventListener('mouseleave', _scheduleHide);
+  }
+
   function _wireDots() {
     tbody.querySelectorAll('.co-dot[data-idx]').forEach(dot => {
       const satId = dot.closest('[data-sat-id]')?.dataset.satId;
@@ -452,8 +422,7 @@ export function initChadOps() {
         const sat  = store.satellites.find(s => s.id === satId);
         const pass = sat ? (store.satPasses[sat.id] ?? [])[idx] : null;
         if (!pass) return;
-        const ip          = satBaseUrl(sat.noradId);
-        const grafanaHost = ip ? ip.replace(/\.\d+$/, '.5') : null;
+        const grafanaHost = satSubsystemHost(sat.noradId, 'fds') || null;
         tooltip.innerHTML     = _tooltipContent(pass, grafanaHost, sat);
         tooltip.style.display = 'block';
         _positionTooltip(e, tooltip);
@@ -653,10 +622,6 @@ function _fmtAgo(ms) {
   const h = Math.floor(m / 60);
   if (h < 24)  return `${h}h ${m % 60}m ago`;
   return `${Math.floor(h / 24)}d ago`;
-}
-
-function _fmtDateTimeShort(d) {
-  return d.toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
 }
 
 function _fmtIn(ms) {

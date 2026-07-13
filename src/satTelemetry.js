@@ -1,9 +1,5 @@
 import { store } from './store.js';
-
-// Inline to avoid circular dep with satPing.js
-function _satIp(noradId) {
-  return localStorage.getItem(`sat-baseurl-${noradId}`) ?? '';
-}
+import { satSubsystemOrigin } from './satSubsystems.js';
 
 // ── Per-satellite TM parameter mapping ───────────────────────────
 
@@ -115,10 +111,10 @@ function _extract(param) {
   return { value, status, monitoring };
 }
 
-async function _fetchPacket(ip, packetName) {
+async function _fetchPacket(fdsOrigin, packetName) {
   const end   = new Date(Date.now() + 10_000).toISOString();
   const start = new Date(Date.now() - 24 * 3_600_000).toISOString();
-  const url   = `http://${ip.replace(/\.\d+$/, '.5')}:15500/api/v1/tm-packets`
+  const url   = `${fdsOrigin}/api/v1/tm-packets`
     + `?start=${encodeURIComponent(start)}`
     + `&end=${encodeURIComponent(end)}`
     + `&orderBy=OnBoardTime&sortDir=DESC`
@@ -136,7 +132,7 @@ async function _fetchPacket(ip, packetName) {
 }
 
 export async function fetchSatTelemetry(sat) {
-  const ip = _satIp(sat.noradId);
+  const ip = satSubsystemOrigin(sat.noradId, 'fds');
   if (!ip) return;
 
   const cfg = getTmConfig(sat.noradId, sat.model);

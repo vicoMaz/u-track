@@ -1,13 +1,12 @@
 import { store } from '../store.js';
+import { createPassTooltip } from './passTooltip.js';
 
 // ── Constants ─────────────────────────────────────────────────────
 
-const TZ         = 'Europe/Paris';
-const MIN_PX     = 1;               // 1 px per minute → 60 px/h, 1440 px/day
-const TOTAL_PX   = 24 * 60 * MIN_PX;
-const BIZ_START  = 8 * 60 + 30;    // 510 px
-const BIZ_END    = 18 * 60 + 30;   // 1110 px
-const MIN_PASS_H = 8;               // minimum pass block height in px
+const TZ        = 'Europe/Paris';
+const BIZ_START = 8 * 60 + 30;   // minutes from midnight
+const BIZ_END   = 18 * 60 + 30;
+const _pct      = min => `${(min / 1440 * 100).toFixed(3)}%`;
 
 // ── Paris-time helpers ────────────────────────────────────────────
 
@@ -46,7 +45,10 @@ function _collectWeekPasses(weekStart) {
       const start = p.start instanceof Date ? p.start : new Date(p.start);
       const end   = p.end   instanceof Date ? p.end   : new Date(p.end);
       if (end < weekStart || start >= weekEnd) continue;
-      passes.push({ satId: sat.id, satName: sat.name, color: sat.color, station: p.station ?? '—', start, end });
+      // Keep the raw pass + sat so the hover tooltip has everything it needs
+      // (outcome, procedures, satrec for the eclipse bar/trajectory plot) —
+      // not just the handful of fields the grid itself renders.
+      passes.push({ sat, pass: p, satId: sat.id, satName: sat.name, color: sat.color, station: p.station ?? '—', start, end });
     }
   }
   return passes.sort((a, b) => a.start - b.start);
@@ -63,30 +65,29 @@ function _buildGrid(weekStart, passes) {
 
   const todayStr = _parisDateStr(new Date());
 
-  // Time column labels
-  const timeLabels = Array.from({ length: 25 }, (_, h) => {
-    const isBiz = h === 8 || h === 9; // near 8:30
-    const top   = h * 60;
-    return `<div class="co-sched-time-label" style="top:${top}px">${String(h % 24).padStart(2,'0')}:00</div>`;
+  // Time column labels — every 2 h to avoid crowding at compressed scale
+  const timeLabels = Array.from({ length: 13 }, (_, i) => {
+    const h   = i * 2;
+    return `<div class="co-sched-time-label" style="top:${_pct(h * 60)}">${String(h).padStart(2,'0')}:00</div>`;
   }).join('') +
-    `<div class="co-sched-time-label co-sched-biz-label" style="top:${BIZ_START}px">08:30</div>` +
-    `<div class="co-sched-time-label co-sched-biz-label" style="top:${BIZ_END}px">18:30</div>`;
+    `<div class="co-sched-time-label co-sched-biz-label" style="top:${_pct(BIZ_START)}">08:30</div>` +
+    `<div class="co-sched-time-label co-sched-biz-label" style="top:${_pct(BIZ_END)}">18:30</div>`;
 
-  // Hour lines (shared across all columns — rendered inside each column)
+  // Hour lines
   const hourLinesFn = () => Array.from({ length: 25 }, (_, h) =>
-    `<div class="co-sched-hour-line" style="top:${h * 60}px"></div>`
+    `<div class="co-sched-hour-line" style="top:${_pct(h * 60)}"></div>`
   ).join('');
 
   const dayCols = days.map(day => {
-    const dayStr   = _parisDateStr(day);
-    const isToday  = dayStr === todayStr;
+    const dayStr    = _parisDateStr(day);
+    const isToday   = dayStr === todayStr;
     const dayPasses = passes.filter(p => _parisDateStr(p.start) === dayStr);
 
     const passBlocks = dayPasses.map(p => {
-      const startMin = _parisMinutes(p.start);
-      const endMin   = _parisMinutes(p.end);
-      const height   = Math.max(endMin - startMin, MIN_PASS_H);
-      return `<div class="co-sched-pass" style="top:${startMin}px;height:${height}px;border-left-color:${p.color};background:${p.color}1a" title="${p.satName} · ${p.station}">
+      const startMin   = _parisMinutes(p.start);
+      const durationMin = Math.max((_parisMinutes(p.end) - startMin + 1440) % 1440, 1);
+      const idx = passes.indexOf(p);
+      return `<div class="co-sched-pass" data-pass-idx="${idx}" style="top:${_pct(startMin)};height:${_pct(durationMin)};border-left-color:${p.color};background:${p.color}1a">
         <span class="co-sched-pass-name" style="color:${p.color}">${p.satName}</span>
         <span class="co-sched-pass-sta">${p.station}</span>
       </div>`;
@@ -94,23 +95,23 @@ function _buildGrid(weekStart, passes) {
 
     let nowLine = '';
     if (isToday) {
-      const nowPx = _parisMinutes(new Date());
-      nowLine = `<div class="co-sched-now-line" id="co-sched-now" style="top:${nowPx}px">
+      const nowMin = _parisMinutes(new Date());
+      nowLine = `<div class="co-sched-now-line" id="co-sched-now" style="top:${_pct(nowMin)}">
         <span class="co-sched-now-label">${new Date().toLocaleTimeString('en-GB', { timeZone: TZ, hour:'2-digit', minute:'2-digit', hour12: false })}</span>
       </div>`;
     }
 
-    const label   = day.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+    const label    = day.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
     const todayCls = isToday ? ' co-sched-today-col' : '';
 
     return `<div class="co-sched-day-col${todayCls}">
       <div class="co-sched-day-hdr">${label}</div>
-      <div class="co-sched-day-body" style="height:${TOTAL_PX}px">
+      <div class="co-sched-day-body">
         ${hourLinesFn()}
-        <div class="co-sched-offhours" style="top:0;height:${BIZ_START}px"></div>
-        <div class="co-sched-offhours" style="top:${BIZ_END}px;height:${TOTAL_PX - BIZ_END}px"></div>
-        <div class="co-sched-biz-border" style="top:${BIZ_START}px"></div>
-        <div class="co-sched-biz-border" style="top:${BIZ_END}px"></div>
+        <div class="co-sched-offhours" style="top:0;height:${_pct(BIZ_START)}"></div>
+        <div class="co-sched-offhours" style="top:${_pct(BIZ_END)};height:${_pct(1440 - BIZ_END)}"></div>
+        <div class="co-sched-biz-border" style="top:${_pct(BIZ_START)}"></div>
+        <div class="co-sched-biz-border" style="top:${_pct(BIZ_END)}"></div>
         ${passBlocks}
         ${nowLine}
       </div>
@@ -120,7 +121,7 @@ function _buildGrid(weekStart, passes) {
   return `<div class="co-sched-grid">
     <div class="co-sched-time-col">
       <div class="co-sched-day-hdr"></div>
-      <div class="co-sched-time-body" style="height:${TOTAL_PX}px">${timeLabels}</div>
+      <div class="co-sched-time-body">${timeLabels}</div>
     </div>
     ${dayCols}
   </div>`;
@@ -185,14 +186,18 @@ export function initWeeklySchedule() {
   const container = document.getElementById('co-sched-content');
   if (!container) return;
 
-  let weekOffset = 0;
-  let _active    = false;
-  let _timer     = null;
+  let weekOffset  = 0;
+  let _active     = false;
+  let _timer      = null;
+  let _weekPasses = []; // kept in sync with the array handed to _buildGrid, for hover lookups
+
+  const tooltip = createPassTooltip();
 
   function render() {
     const weekStart = _getMondayParis(weekOffset);
     const weekEnd   = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
     const passes    = _collectWeekPasses(weekStart);
+    _weekPasses = passes;
 
     const fmtD = d => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
     const nav = `<div class="co-sched-nav">
@@ -206,24 +211,23 @@ export function initWeeklySchedule() {
     container.innerHTML = nav + _buildLegend() +
       `<div class="co-sched-outer" id="co-sched-outer">${_buildGrid(weekStart, passes)}</div>`;
 
-    document.getElementById('co-sched-prev')?.addEventListener('click', () => { weekOffset--; render(); _scrollToBiz(); });
-    document.getElementById('co-sched-next')?.addEventListener('click', () => { weekOffset++; render(); _scrollToBiz(); });
-    document.getElementById('co-sched-today')?.addEventListener('click', () => { weekOffset = 0; render(); _scrollToBiz(); });
+    document.getElementById('co-sched-prev')?.addEventListener('click', () => { weekOffset--; render(); });
+    document.getElementById('co-sched-next')?.addEventListener('click', () => { weekOffset++; render(); });
+    document.getElementById('co-sched-today')?.addEventListener('click', () => { weekOffset = 0; render(); });
     document.getElementById('co-sched-gcal')?.addEventListener('click', () => _downloadIcs(passes, weekStart));
-  }
 
-  function _scrollToBiz() {
-    requestAnimationFrame(() => {
-      const el = document.getElementById('co-sched-outer');
-      if (el) el.scrollTop = BIZ_START - 60; // reveal ~1h before business hours
+    container.querySelectorAll('.co-sched-pass[data-pass-idx]').forEach(el => {
+      const entry = _weekPasses[parseInt(el.dataset.passIdx, 10)];
+      if (!entry) return;
+      el.addEventListener('mouseenter', e => tooltip.showForPass(e, entry.pass, entry.sat, store.groundStations));
+      el.addEventListener('mouseleave', tooltip.scheduleHide);
     });
   }
 
   function _updateNow() {
     const el = document.getElementById('co-sched-now');
     if (!el) return;
-    const px = _parisMinutes(new Date());
-    el.style.top = px + 'px';
+    el.style.top = _pct(_parisMinutes(new Date()));
     const lbl = el.querySelector('.co-sched-now-label');
     if (lbl) lbl.textContent = new Date().toLocaleTimeString('en-GB', { timeZone: TZ, hour:'2-digit', minute:'2-digit', hour12:false });
   }
@@ -231,12 +235,12 @@ export function initWeeklySchedule() {
   function start() {
     _active = true;
     render();
-    _scrollToBiz();
     _timer  = setInterval(_updateNow, 60000);
   }
   function stop() {
     _active = false;
     if (_timer) { clearInterval(_timer); _timer = null; }
+    tooltip.element.style.display = 'none';
   }
 
   // Listen to chadops subtab switches
