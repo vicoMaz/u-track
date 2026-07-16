@@ -8,6 +8,7 @@ import { fetchProcedureReport, procedureReportHTML } from './procedureReport.js'
 import { fetchEbn0Series, ebn0HTML } from './ebn0.js';
 import { wireLinkedCursor } from './passCursor.js';
 import { satSubsystemHost }             from '../satSubsystems.js';
+import { satSunExclDeg, satEarthExclDeg } from '../satStarTracker.js';
 import { showActionToast }              from './actionToast.js';
 
 function _grafanaLokiUrl(grafanaHost, fromMs, toMs) {
@@ -46,6 +47,7 @@ const ganttEl       = document.getElementById('timeline-gantt');
 const ganttCursor   = document.getElementById('gantt-cursor');
 const ganttPasses   = document.getElementById('gantt-passes');
 const ganttEclipse  = document.getElementById('gantt-eclipse');
+const ganttStt      = document.getElementById('gantt-stt');
 const ganttTmr      = document.getElementById('gantt-tmr');
 const ganttSlots    = document.getElementById('gantt-slots');
 const ganttRuler    = document.getElementById('gantt-ruler');
@@ -75,8 +77,25 @@ let viewEndSec   =  604800;  // initial: +7 days
 
 // Eclipse windows computed once per satellite, for a fixed ±14-day range around EPOCH
 const ECLIPSE_HALF_SEC = 14 * 86400;
+const R_EARTH_KM = 6371;
 let _eclipseWindows = [];
+let _sttWindows     = [];
 let _eclipseJobSat  = null;
+
+// Mirrors SatEntity.js's _stViolated check (kept in ECI — angle-between and
+// magnitude are rotation-invariant, so no ECEF/gmst conversion is needed
+// here). sunAngleDeg is always exactly 180° by construction (boresight is
+// defined as -sun), so it can never be < satSunExclDeg — included anyway for
+// parity with the 3-D cone's exact condition.
+function _isSttBlinded(eciPos, sunDir, noradId) {
+  const rMag = Math.sqrt(eciPos.x ** 2 + eciPos.y ** 2 + eciPos.z ** 2);
+  const zenith = { x: eciPos.x / rMag, y: eciPos.y / rMag, z: eciPos.z / rMag };
+  const dotSZ = sunDir.x * zenith.x + sunDir.y * zenith.y + sunDir.z * zenith.z;
+  const earthAngleDeg  = Math.acos(Math.max(-1, Math.min(1, dotSZ))) * 180 / Math.PI;
+  const earthRadiusDeg = Math.asin(Math.max(-1, Math.min(1, R_EARTH_KM / rMag))) * 180 / Math.PI;
+  const sunAngleDeg = 180;
+  return sunAngleDeg < satSunExclDeg(noradId) || earthAngleDeg < earthRadiusDeg + satEarthExclDeg(noradId);
+}
 let _passWindows    = []; // [{ start: ms, end: ms, pass: fullPassObj }]
 
 // ── Pass tooltip ──────────────────────────────────────────────────
@@ -194,11 +213,11 @@ async function _showPassTooltip(e, pass) {
   const polarEl = _ganttTooltip.querySelector('.pass-polar');
 
   const ebn0Slot = _ganttTooltip.querySelector('.ebn0-slot');
-  if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers);
+  if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers, pass.procedures);
   const ebn0El = _ganttTooltip.querySelector('.ebn0-chart');
 
   _posTooltipAt(_ttAnchorX, _ttAnchorY); // re-anchor: tooltip may now be taller
-  wireLinkedCursor(polarEl, polarPoints, ebn0El, series);
+  wireLinkedCursor(polarEl, polarPoints, ebn0El, series, pass.procedures);
 }
 
 function _hidePassTooltipSoon() {
@@ -417,6 +436,10 @@ function _renderGanttEclipse() {
   _renderBars(ganttEclipse, _eclipseWindows, '#2244cc', '0 0 8px #4466ffcc');
 }
 
+function _renderGanttStt() {
+  _renderBars(ganttStt, _sttWindows, '#ff3030', '0 0 8px #ff6060cc');
+}
+
 function _renderGanttTmr() {
   if (!ganttTmr) return;
   ganttTmr.innerHTML = '';
@@ -523,7 +546,11 @@ function _updateGanttPasses() {
   _renderGanttPasses();
 }
 
-// Compute eclipse windows for a fixed ±14-day range then render
+// Compute eclipse + STT-blinding windows for a fixed ±14-day range then render.
+// Both share the same propagate()/sunDirectionECI() per-step results — STT
+// blinding just adds a couple of dot products + one acos + one asin on top
+// of samples already being computed for the eclipse line, so it's a small
+// fraction of extra work, not extra propagate() calls.
 function _updateGanttEclipse() {
   const sat = store.trackedSat;
   if (!sat?.satrec || !ganttEclipse) return;
@@ -534,19 +561,29 @@ function _updateGanttEclipse() {
     const tMax = EPOCH.getTime() + ECLIPSE_HALF_SEC * 1000;
     const STEP = 5 * 60 * 1000;
     const windows = [];
+    const sttWindows = [];
     let inEcl = false, wStart = 0;
+    let inStt = false, sttStart = 0;
     const d = new Date();
     for (let t = tMin; t <= tMax; t += STEP) {
       d.setTime(t);
       const r = propagate(sat.satrec, d);
       if (!r) continue;
-      const ecl = isInEclipse(r.eciPos, sunDirectionECI(d));
+      const sunDir = sunDirectionECI(d);
+      const ecl = isInEclipse(r.eciPos, sunDir);
       if (ecl && !inEcl)      { wStart = t; inEcl = true; }
       else if (!ecl && inEcl) { windows.push({ start: wStart, end: t }); inEcl = false; }
+
+      const blinded = _isSttBlinded(r.eciPos, sunDir, sat.noradId);
+      if (blinded && !inStt)      { sttStart = t; inStt = true; }
+      else if (!blinded && inStt) { sttWindows.push({ start: sttStart, end: t }); inStt = false; }
     }
     if (inEcl) windows.push({ start: wStart, end: tMax });
+    if (inStt) sttWindows.push({ start: sttStart, end: tMax });
     _eclipseWindows = windows;
+    _sttWindows     = sttWindows;
     _renderGanttEclipse();
+    _renderGanttStt();
     _eclipseJobSat = null;
   }, 0);
 }
@@ -558,6 +595,7 @@ function _applyView() {
   _renderGanttTmr();
   _renderGanttPasses();
   _renderGanttEclipse();
+  _renderGanttStt();
   _updateGanttRuler();
   _updateGanttCursor();
 }
@@ -634,6 +672,7 @@ export function initTimePlayer() {
     }
     if (key === 'trackedSatId') {
       if (ganttTmr) ganttTmr.innerHTML = '';
+      if (ganttStt) ganttStt.innerHTML = '';
       _eclipseJobSat = null;
       _updateGanttEclipse();
       // ResizeObserver handles _syncLayout when gantt visibility/height changes

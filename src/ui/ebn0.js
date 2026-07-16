@@ -11,7 +11,7 @@
 // many rows back, no hidden cap). It also doesn't need satellite_id/pass_id —
 // each satellite has its own GNM host, so the origin alone scopes the query.
 import { satSubsystemOrigin } from '../satSubsystems.js';
-import { MARKER_COLORS } from './passPolar.js';
+import { MARKER_COLORS, MARKER_PX_RADIUS } from './passPolar.js';
 
 async function _fetchMetric(noradId, name, startMs, endMs, limit) {
   const origin = satSubsystemOrigin(noradId, 'gnm');
@@ -64,14 +64,43 @@ export async function fetchEbn0Series(noradId, startMs, endMs, network) {
 export const CHART_W = 300, CHART_H = 190;
 export const PAD_L = 26, PAD_R = 6, PAD_T = 8, PAD_B = 14;
 
-// Matches passPolar.js's marker dot sizes exactly (apogee is drawn slightly
-// larger there too) so the same moment reads as the same-sized dot on both charts.
-const MARKER_RADIUS = { aos: 2.5, los: 2.5, maskEntry: 2.5, maskExit: 2.5, apogee: 3 };
+// Procedure-execution strip drawn below the main plot area (only when the
+// pass has procedures) — numbered bars 1,2,3... spanning each procedure's
+// start→end, on the same time axis as the Eb/N0 curve above them. Anchored
+// to the x-axis line itself (CHART_H - PAD_B), not the outer CHART_H — PAD_B
+// exists to leave room for the y-axis "lo" label, which sits to the left of
+// the axis, not below it, so the bars can sit right under the line.
+const BAR_ROW_GAP = 3, BAR_ROW_H = 11, BAR_BOTTOM_PAD = 2;
+const _PROC_BAR_COLOR = { SUCCESS: '#00cc66', FAILURE: '#ff4455', CANCELLED: '#ff8c00' };
+
+// Initial guess for marker/cursor dot radius (viewBox units, assumes ~1:1
+// render scale) — corrected to an exact pixel match with the polar plot's
+// dots once mounted, via syncEbn0DotSizes() below, since this chart's actual
+// viewBox-unit-to-pixel ratio isn't known until it's actually laid out.
+const MARKER_RADIUS = {
+  aos: MARKER_PX_RADIUS.standard, los: MARKER_PX_RADIUS.standard,
+  maskEntry: MARKER_PX_RADIUS.standard, maskExit: MARKER_PX_RADIUS.standard,
+  apogee: MARKER_PX_RADIUS.apogee,
+};
 
 // Exported so passCursor.js can compute x/y for an arbitrary point (e.g. one
 // snapped from the polar plot) without re-deriving the value/time scale.
-export function ebn0Scales(series) {
-  const t0 = series[0].t, t1 = series[series.length - 1].t;
+//
+// `procedures`, if given, extends the time domain to cover every procedure's
+// start→end too — a procedure often starts executing right at AOS or keeps
+// running past LOS, outside the window where the GNM actually reported Eb/N0
+// samples, so without this the procedure bars would fall entirely outside
+// [t0,t1] and never draw. Passing the same `procedures` wherever `ebn0Scales`
+// is called (buildEbn0SVG, passCursor.js) keeps the curve, markers, cursor,
+// and bars all mapped through one consistent scale.
+export function ebn0Scales(series, procedures) {
+  let t0 = series[0].t, t1 = series[series.length - 1].t;
+  if (procedures?.length) {
+    for (const pr of procedures) {
+      if (pr.startMs != null) t0 = Math.min(t0, pr.startMs);
+      if (pr.endMs   != null) t1 = Math.max(t1, pr.endMs);
+    }
+  }
   const vMin = Math.min(...series.map(s => s.v));
   const vMax = Math.max(...series.map(s => s.v));
   const vPad = Math.max(0.2, (vMax - vMin) * 0.15);
@@ -94,42 +123,85 @@ function _nearestByTime(points, t) {
 // marks (see passPolar.js's computePolarMarkers), in the same colors, snapped
 // to the nearest actual Eb/N0 sample — so a dip/spike here can be read
 // against a specific point in the pass geometry.
-function _markerDots(series, markers) {
+function _markerDots(series, markers, xScale, yScale) {
   if (!markers) return '';
   return Object.entries(MARKER_COLORS).map(([key, color]) => {
     const marker = markers[key];
     if (!marker) return '';
-    const { xScale, yScale } = ebn0Scales(series);
     const p = _nearestByTime(series, marker.t);
     const x = xScale(p.t), y = yScale(p.v);
-    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${MARKER_RADIUS[key]}" fill="${color}" stroke="#12121e" stroke-width="0.6"/>`;
+    return `<circle class="ebn0-marker-dot" data-marker="${key}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${MARKER_RADIUS[key]}" fill="${color}" stroke="#12121e" stroke-width="0.6"/>`;
+  }).join('');
+}
+
+// Numbered bars (1, 2, 3…) spanning each procedure's start→end time, drawn in
+// their own strip below the main plot — same numbering as the tooltip's
+// "Procedure history" list, so a dip/spike in Eb/N0 can be tied to whichever
+// procedure was executing at that moment. `xScale`/`t0`/`t1` come from the
+// SAME ebn0Scales(series, procedures) call used for the curve above, whose
+// domain already extends to cover every procedure (see ebn0Scales) — so this
+// clamp is just a safety margin, not what makes the bars visible.
+function _procedureBars(procedures, xScale, t0, t1) {
+  if (!procedures?.length) return '';
+  const y = CHART_H - PAD_B + BAR_ROW_GAP;
+  return procedures.map((pr, i) => {
+    if (pr.startMs == null || pr.endMs == null) return '';
+    const s = Math.max(pr.startMs, t0), e = Math.min(pr.endMs, t1);
+    if (e <= s) return '';
+    const x1 = xScale(s);
+    const w  = Math.max(xScale(e) - x1, 1.5);
+    const color = _PROC_BAR_COLOR[pr.status] ?? _PROC_BAR_COLOR.SUCCESS;
+    const cx = x1 + w / 2;
+    return `<g class="ebn0-proc-bar">
+      <rect x="${x1.toFixed(1)}" y="${y}" width="${w.toFixed(1)}" height="${BAR_ROW_H}" rx="2" fill="${color}" fill-opacity="0.28" stroke="${color}" stroke-width="0.7"><title>${i + 1}. ${pr.name ?? ''}</title></rect>
+      <text class="ebn0-proc-num" x="${cx.toFixed(1)}" y="${(y + BAR_ROW_H / 2 + 2.6).toFixed(1)}" text-anchor="middle">${i + 1}</text>
+    </g>`;
   }).join('');
 }
 
 // No background/border — sits directly on the tooltip's own dark background,
 // like the polar plot. A transparent hit-rect drives the shared hover cursor
 // (see passCursor.js), wired up separately once this markup is in the live DOM.
-export function buildEbn0SVG(series, markers) {
+export function buildEbn0SVG(series, markers, procedures) {
   if (!series?.length) return '';
-  const { xScale, yScale, lo, hi } = ebn0Scales(series);
+  const { xScale, yScale, lo, hi, t0, t1 } = ebn0Scales(series, procedures);
   const pathD = series.map((p, i) => `${i ? 'L' : 'M'}${xScale(p.t).toFixed(1)},${yScale(p.v).toFixed(1)}`).join('');
+  const hasBars = procedures?.some(pr => pr.startMs != null && pr.endMs != null);
+  const totalH = hasBars ? (CHART_H - PAD_B + BAR_ROW_GAP + BAR_ROW_H + BAR_BOTTOM_PAD) : CHART_H;
 
-  return `<svg width="100%" height="${CHART_H}" viewBox="0 0 ${CHART_W} ${CHART_H}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" class="ebn0-chart">
+  return `<svg width="100%" height="${totalH}" viewBox="0 0 ${CHART_W} ${totalH}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" class="ebn0-chart">
     <text x="${PAD_L - 4}" y="${PAD_T + 3}" text-anchor="end" fill="#5a5a8a" font-size="7" font-family="monospace">${hi.toFixed(1)}</text>
     <text x="${PAD_L - 4}" y="${CHART_H - PAD_B}" text-anchor="end" fill="#5a5a8a" font-size="7" font-family="monospace">${lo.toFixed(1)}</text>
     <line x1="${PAD_L}" y1="${PAD_T}" x2="${PAD_L}" y2="${CHART_H - PAD_B}" stroke="#2a2a44" stroke-width="0.7"/>
     <line x1="${PAD_L}" y1="${CHART_H - PAD_B}" x2="${CHART_W - PAD_R}" y2="${CHART_H - PAD_B}" stroke="#2a2a44" stroke-width="0.7"/>
     <path d="${pathD}" fill="none" stroke="#a78bfa" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
-    ${_markerDots(series, markers)}
+    ${_markerDots(series, markers, xScale, yScale)}
+    ${hasBars ? _procedureBars(procedures, xScale, t0, t1) : ''}
     <line class="ebn0-cursor-line" x1="0" y1="${PAD_T}" x2="0" y2="${CHART_H - PAD_B}" stroke="#ffffff" stroke-opacity="0.5" stroke-width="0.7" stroke-dasharray="2,2" visibility="hidden"/>
-    <circle class="ebn0-cursor-dot" r="3" fill="#fff" stroke="#a78bfa" stroke-width="0.8" visibility="hidden"/>
+    <circle class="ebn0-cursor-dot" r="${MARKER_PX_RADIUS.cursor}" fill="#fff" stroke="#a78bfa" stroke-width="0.8" visibility="hidden"/>
     <rect class="ebn0-cursor-label-bg" width="1" height="10" rx="2" fill="#12121e" stroke="#2a2a4a" stroke-width="0.6" visibility="hidden"/>
     <text class="ebn0-cursor-text" x="0" y="${PAD_T - 2}" font-size="6.5" font-family="monospace" fill="#ddd" text-anchor="middle" visibility="hidden"></text>
     <rect class="ebn0-hit" x="${PAD_L}" y="${PAD_T}" width="${CHART_W - PAD_L - PAD_R}" height="${CHART_H - PAD_T - PAD_B}" fill="transparent"/>
   </svg>`;
 }
 
-export function ebn0HTML(series, markers) {
+// Corrects marker/cursor dot sizes to an exact pixel match with the polar
+// plot's dots, once this chart is actually laid out (its rendered width isn't
+// known at HTML-string-build time — it stretches to fill variable flex space).
+export function syncEbn0DotSizes(ebn0El) {
+  if (!ebn0El) return;
+  const rect = ebn0El.getBoundingClientRect();
+  if (!rect.width) return;
+  const scale = CHART_W / rect.width; // viewBox units per actual rendered px
+  ebn0El.querySelectorAll('.ebn0-marker-dot').forEach(el => {
+    const px = el.dataset.marker === 'apogee' ? MARKER_PX_RADIUS.apogee : MARKER_PX_RADIUS.standard;
+    el.setAttribute('r', (px * scale).toFixed(2));
+  });
+  const cursorDot = ebn0El.querySelector('.ebn0-cursor-dot');
+  if (cursorDot) cursorDot.setAttribute('r', (MARKER_PX_RADIUS.cursor * scale).toFixed(2));
+}
+
+export function ebn0HTML(series, markers, procedures) {
   if (!series?.length) {
     return `<div class="ebn0-block">
       <div class="co-tt-note">No Eb/N0 data found</div>
@@ -140,7 +212,10 @@ export function ebn0HTML(series, markers) {
   const max = Math.max(...vals).toFixed(2);
   const avg = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2);
   return `<div class="ebn0-block">
-    ${buildEbn0SVG(series, markers)}
-    <div class="ebn0-stats">min ${min} · avg ${avg} · max ${max} dB</div>
+    ${buildEbn0SVG(series, markers, procedures)}
+    <div class="ebn0-legend">
+      <span class="ebn0-legend-swatch"></span><span class="ebn0-legend-label">TM Eb/N0</span>
+      <span class="ebn0-stats">min ${min} · mean ${avg} · max ${max} dB</span>
+    </div>
   </div>`;
 }

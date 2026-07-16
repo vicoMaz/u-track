@@ -309,13 +309,10 @@ function _rowHTML(sat, now, eclipse) {
 
   const lastContactMs = tm?.receptionTime ? new Date(tm.receptionTime).getTime() : null;
   const elapsed = lastContactMs !== null ? now - lastContactMs : null;
-  const isLive  = elapsed !== null && elapsed < 20000;
 
   const lastLine = elapsed === null
     ? '<span class="co-nil">—</span>'
-    : isLive
-      ? '<span class="co-live-badge">● LIVE</span>'
-      : `<span class="co-contact-time">${_fmtAgo(elapsed)}</span>`;
+    : `<span class="co-contact-time">${_fmtAgo(elapsed)}</span>`;
   const nextPass = (store.satPasses[sat.id] ?? []).find(p => p.future);
   const nextLine = nextPass
     ? `<span class="co-next-contact">Next ${_fmtIn(nextPass.start - now)}</span>`
@@ -556,11 +553,11 @@ export function initChadOps() {
         const polarEl = tooltip.querySelector('.pass-polar');
 
         const ebn0Slot = tooltip.querySelector('.ebn0-slot');
-        if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers);
+        if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers, pass.procedures);
         const ebn0El = tooltip.querySelector('.ebn0-chart');
 
         _positionTooltip(e, tooltip);
-        wireLinkedCursor(polarEl, polarPoints, ebn0El, series);
+        wireLinkedCursor(polarEl, polarPoints, ebn0El, series, pass.procedures);
       });
       dot.addEventListener('mouseleave', _scheduleHide);
     });
@@ -643,12 +640,9 @@ export function initChadOps() {
       if (contactEl) {
         const lastMs  = tm?.receptionTime ? new Date(tm.receptionTime).getTime() : null;
         const elapsed = lastMs !== null ? now - lastMs : null;
-        const isLive  = elapsed !== null && elapsed < 20000;
         const lastLine = elapsed === null
           ? '<span class="co-nil">—</span>'
-          : isLive
-            ? '<span class="co-live-badge">● LIVE</span>'
-            : `<span class="co-contact-time">${_fmtAgo(elapsed)}</span>`;
+          : `<span class="co-contact-time">${_fmtAgo(elapsed)}</span>`;
         const nextPass = (store.satPasses[sat.id] ?? []).find(p => p.future);
         const nextLine = nextPass
           ? `<span class="co-next-contact">Next ${_fmtIn(nextPass.start - now)}</span>`

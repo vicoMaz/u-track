@@ -4,11 +4,20 @@ import { persistSatellite, deleteServerSatellite } from '../apiPoller.js';
 import { satBaseUrl, setSatBaseUrl, satJwt, setSatJwt, pingSatellite, getPingIntervalSec, restartPingPoller } from '../satPing.js';
 import { SUBSYSTEMS, satSubsystemIp, satSubsystemOverride, setSatSubsystemIp, derivedSubsystemIp } from '../satSubsystems.js';
 import { setNetworkVisible } from '../satAntennas.js';
+import {
+  satSunExclDeg, setSatSunExclDeg, satEarthExclDeg, setSatEarthExclDeg,
+  satStarTrackerConesVisible, setSatStarTrackerConesVisible,
+} from '../satStarTracker.js';
 
 // ─── Icons ────────────────────────────────────────────────────────────────
 
 const SVG_EYE     = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
 const SVG_EYE_OFF = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+
+// Eye-looking-at-a-star — toggles the star tracker FOV cone. Same eye outline
+// as SVG_EYE, with the pupil swapped for a small sparkle/star.
+const SVG_EYE_STAR     = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><path d="M12 8.5 L13.1 10.9 L15.5 12 L13.1 13.1 L12 15.5 L10.9 13.1 L8.5 12 L10.9 10.9 Z" fill="currentColor" stroke="none"/></svg>`;
+const SVG_EYE_STAR_OFF = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
 
 // ─── ID-key helpers for change detection ─────────────────────────────────
 
@@ -26,6 +35,7 @@ function renderSatList() {
   list.innerHTML = '';
   for (const sat of store.satellites) {
     const hidden     = sat.visible === false;
+    const stHidden   = !satStarTrackerConesVisible(sat.noradId);
     const networks   = store.getSatNetworks(sat.id);
     const group = document.createElement('div');
     group.className = 'sat-group';
@@ -37,6 +47,7 @@ function renderSatList() {
         <span class="sat-dot" style="background:${sat.color}"></span>
         <span class="sat-name" data-id="${sat.id}" title="Centre view">${sat.name}</span>
         ${networks.length ? `<button class="gs-collapse-btn" data-id="${sat.id}" title="Toggle stations">${collapsed ? '▸' : '▾'}</button>` : ''}
+        <button class="vis-btn st-vis-btn ${stHidden ? 'vis-off' : ''}" data-id="${sat.id}" title="${stHidden ? 'Show' : 'Hide'} star tracker cones">${stHidden ? SVG_EYE_STAR_OFF : SVG_EYE_STAR}</button>
         <button class="vis-btn ${hidden ? 'vis-off' : ''}" data-id="${sat.id}" title="${hidden ? 'Show' : 'Hide'}">${hidden ? SVG_EYE_OFF : SVG_EYE}</button>
       </div>
       ${networks.length ? `<div class="gs-net-rows${collapsed ? ' gs-collapsed' : ''}">${networks.map(n => {
@@ -57,8 +68,20 @@ function renderSatList() {
       store.setTrackedSat(id === store.trackedSatId ? null : id);
     });
   });
-  list.querySelectorAll('.vis-btn').forEach(btn => {
+  list.querySelectorAll('.vis-btn:not(.st-vis-btn)').forEach(btn => {
     btn.addEventListener('click', () => store.toggleSatVisibility(btn.dataset.id));
+  });
+  list.querySelectorAll('.st-vis-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      const sat = store._satById.get(id);
+      if (!sat) return;
+      const nowVisible = !satStarTrackerConesVisible(sat.noradId);
+      setSatStarTrackerConesVisible(sat.noradId, nowVisible);
+      btn.classList.toggle('vis-off', !nowVisible);
+      btn.title = `${nowVisible ? 'Hide' : 'Show'} star tracker cones`;
+      btn.innerHTML = nowVisible ? SVG_EYE_STAR : SVG_EYE_STAR_OFF;
+    });
   });
   list.querySelectorAll('.gs-net-toggle').forEach(cb => {
     cb.addEventListener('change', () => {
@@ -88,11 +111,18 @@ function _patchSatList() {
     if (!group) { renderSatList(); return; }
     const hidden = sat.visible === false;
     group.querySelector('.sat-item')?.classList.toggle('tracking', sat.id === store.trackedSatId);
-    const btn = group.querySelector('.vis-btn');
+    const btn = group.querySelector('.vis-btn:not(.st-vis-btn)');
     if (btn) {
       btn.classList.toggle('vis-off', hidden);
       btn.title     = hidden ? 'Show' : 'Hide';
       btn.innerHTML = hidden ? SVG_EYE_OFF : SVG_EYE;
+    }
+    const stHidden = !satStarTrackerConesVisible(sat.noradId);
+    const stBtn = group.querySelector('.st-vis-btn');
+    if (stBtn) {
+      stBtn.classList.toggle('vis-off', stHidden);
+      stBtn.title     = `${stHidden ? 'Show' : 'Hide'} star tracker cones`;
+      stBtn.innerHTML = stHidden ? SVG_EYE_STAR_OFF : SVG_EYE_STAR;
     }
   }
 }
@@ -249,6 +279,22 @@ function _openSatEditModal(sat) {
         <div class="sem-label">JWT Token</div>
         <input class="sem-input sem-jwt" id="sem-jwt" type="password" value="${satJwt(sat.noradId)}" placeholder="Bearer token">
 
+        <div class="sem-label">Star Tracker Exclusion Angles</div>
+        <div class="sem-excl-row">
+          <label class="sem-excl-field">
+            <span>Sun</span>
+            <input class="sem-input sem-excl-input" id="sem-sun-excl" type="number" min="0" max="90" step="1"
+                   value="${satSunExclDeg(sat.noradId)}">
+            <span>°</span>
+          </label>
+          <label class="sem-excl-field">
+            <span>Earth</span>
+            <input class="sem-input sem-excl-input" id="sem-earth-excl" type="number" min="0" max="90" step="1"
+                   value="${satEarthExclDeg(sat.noradId)}">
+            <span>°</span>
+          </label>
+        </div>
+
       </div>
     </div>`;
 
@@ -356,6 +402,16 @@ function _openSatEditModal(sat) {
   const jwtIn = modal.querySelector('#sem-jwt');
   jwtIn.addEventListener('blur', () => setSatJwt(sat.noradId, jwtIn.value.trim()));
   jwtIn.addEventListener('keydown', e => { if (e.key === 'Enter') jwtIn.blur(); });
+
+  // Star tracker exclusion angles — save on blur/enter. Cesium reads these
+  // fresh every render tick (satStarTracker.js), so the cones update live.
+  const sunExclIn = modal.querySelector('#sem-sun-excl');
+  sunExclIn.addEventListener('blur', () => setSatSunExclDeg(sat.noradId, sunExclIn.value));
+  sunExclIn.addEventListener('keydown', e => { if (e.key === 'Enter') sunExclIn.blur(); });
+
+  const earthExclIn = modal.querySelector('#sem-earth-excl');
+  earthExclIn.addEventListener('blur', () => setSatEarthExclDeg(sat.noradId, earthExclIn.value));
+  earthExclIn.addEventListener('keydown', e => { if (e.key === 'Enter') earthExclIn.blur(); });
 
   const close = () => modal.remove();
   modal.querySelector('.sem-close').addEventListener('click', close);

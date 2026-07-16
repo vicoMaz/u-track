@@ -1140,6 +1140,17 @@ body.tools-active #sat-info { display: none !important; }
 .sem-input:focus  { border-color: #3a5a7a; color: #ddeeff; background: #0a0a14; }
 .sem-jwt:focus    { border-color: #3a5a3a; color: #aaccaa; }
 
+.sem-excl-row { display: flex; gap: 10px; }
+.sem-excl-field {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #7a8aa0;
+}
+.sem-excl-field .sem-excl-input { width: 56px; text-align: right; }
+
 /* ── Satellite links modal ───────────────────────────── */
 #sat-links-modal {
   position: fixed;
@@ -2031,17 +2042,6 @@ body.tools-active #sat-info { display: none !important; }
   color: #99aacc;
 }
 
-.co-live-badge {
-  color: #2db872;
-  font-weight: 700;
-  font-size: 11px;
-  animation: co-pulse 1.4s ease-in-out infinite;
-}
-@keyframes co-pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.4; }
-}
-
 .co-contact-time { color: #888; font-size: 11.5px; }
 .co-uptime { font-size: 11px; color: #aaa; }
 .co-uptime-raw { font-size: 10px; color: #556; margin-left: 4px; }
@@ -2147,6 +2147,26 @@ body.tools-active #sat-info { display: none !important; }
   flex: 1 1 auto;
   min-width: 0;
 }
+.ebn0-legend {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 2px;
+}
+.ebn0-legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 2px;
+  border-radius: 1px;
+  background: #a78bfa;
+  flex-shrink: 0;
+}
+.ebn0-legend-label {
+  font-size: 9.5px;
+  color: #a78bfa;
+  font-weight: 600;
+}
 .ebn0-stats {
   font-size: 9.5px;
   color: #8888aa;
@@ -2156,6 +2176,8 @@ body.tools-active #sat-info { display: none !important; }
 }
 .ebn0-chart { display: block; width: 100%; }
 .ebn0-chart .ebn0-hit { cursor: crosshair; }
+.ebn0-proc-bar rect { cursor: default; }
+.ebn0-proc-num { font-size: 7px; font-family: 'Courier New', monospace; fill: #f0f0f8; font-weight: 700; paint-order: stroke; stroke: #12121e; stroke-width: 0.5px; pointer-events: none; }
 .co-tt-header {
   font-weight: 600;
   color: #aaa;

@@ -108,6 +108,11 @@ export function positionTooltip(e, el) {
   const h = el.offsetHeight || 120;
   if (x + w > window.innerWidth  - 8) x = e.clientX - w - pad;
   if (y + h > window.innerHeight - 8) y = e.clientY - h - pad;
+  // Content can grow asynchronously (procedure report, polar plot, Eb/N0 chart)
+  // after this is first called — clamp so a tall tooltip never gets pushed
+  // past the viewport edge by the flip above, regardless of cursor position.
+  x = Math.max(8, Math.min(x, window.innerWidth  - w - 8));
+  y = Math.max(8, Math.min(y, window.innerHeight - h - 8));
   el.style.left = x + 'px';
   el.style.top  = y + 'px';
 }
@@ -168,11 +173,11 @@ export function createPassTooltip() {
     const polarEl = el.querySelector('.pass-polar');
 
     const ebn0Slot = el.querySelector('.ebn0-slot');
-    if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers);
+    if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers, pass.procedures);
     const ebn0El = el.querySelector('.ebn0-chart');
 
     positionTooltip(e, el);
-    wireLinkedCursor(polarEl, polarPoints, ebn0El, series);
+    wireLinkedCursor(polarEl, polarPoints, ebn0El, series, pass.procedures);
   }
 
   return { element: el, showForPass, cancelHide, scheduleHide };

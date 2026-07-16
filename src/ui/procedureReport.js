@@ -80,6 +80,20 @@ export async function fetchProcedureReport(grafanaHost, startMs, endMs) {
 
 const _STATUS_CLS = { SUCCESS: 'co-tt-preport-success', FAILURE: 'co-tt-preport-failure' };
 
+// "Pass plan" step's INFO packs two Y/N flags from the pass-plan generator:
+//   Point — antenna pointing (mechanical steering) was used for this pass
+//   BX    — this was an X-band pass (vs. the default S-band)
+const INFO_FLAG_LABEL = { Point: 'Antenna pointing', BX: 'X-band pass' };
+
+// Expands known "Key:Y" / "Key:N" flags (see INFO_FLAG_LABEL) into a readable
+// tooltip, e.g. "Point:Y BX:N" → "Antenna pointing: Y · X-band pass: N".
+// Returns null for INFO values that don't match this shape (nothing to add).
+function _decodeInfo(info) {
+  const flags = [...info.matchAll(/(\w+):([YN])\b/g)];
+  if (!flags.length) return null;
+  return flags.map(([, key, val]) => `${INFO_FLAG_LABEL[key] ?? key}: ${val}`).join(' · ');
+}
+
 export function procedureReportHTML(report) {
   if (!report?.steps?.length) {
     return `<div class="co-tt-sep"></div>
@@ -87,8 +101,13 @@ export function procedureReportHTML(report) {
       <div class="co-tt-note">No routine report found</div>`;
   }
   const rows = report.steps.map(s => {
-    const cls  = _STATUS_CLS[s.status.toUpperCase()] ?? 'co-tt-preport-other';
-    const info = s.info === '-' ? '' : `<span class="co-tt-preport-opt">${s.info}</span>`;
+    const cls = _STATUS_CLS[s.status.toUpperCase()] ?? 'co-tt-preport-other';
+    let info = '';
+    if (s.info !== '-') {
+      const decoded = _decodeInfo(s.info);
+      const title = decoded ? ` title="${decoded}"` : '';
+      info = `<span class="co-tt-preport-opt"${title}>${s.info}</span>`;
+    }
     return `<tr>
       <td class="co-tt-preport-step">${s.step}</td>
       <td class="co-tt-preport-status ${cls}">${s.status}</td>

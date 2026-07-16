@@ -148,7 +148,22 @@ export async function fetchPassGsCoords(sat, pass, groundStations) {
 // can convert between mouse position and canvas coordinates without duplicating
 // these constants.
 export const POLAR_VIEWBOX = 130;
+const POLAR_RENDER_PX = 200; // <svg width="200"> below — the polar plot's fixed rendered size
 const CX = 65, CY = 65, R = 54;
+const DOT_R = 2.5, APOGEE_DOT_R = 3, CURSOR_DOT_R = 3; // in viewBox units
+
+// Marker/cursor dot sizes as ACTUAL RENDERED PIXELS (not viewBox units) — the
+// polar plot renders at a fixed 200px regardless of viewBox, so this scale
+// factor is constant. Exported so ebn0.js can size its own dots to match:
+// the Eb/N0 chart stretches to fill variable flex space (width:100%, viewBox
+// 300 units), so its viewBox-unit-to-pixel ratio is different and changes
+// with layout — using the same *number* of viewBox units on both charts does
+// NOT produce the same *visual* size.
+export const MARKER_PX_RADIUS = {
+  standard: DOT_R * (POLAR_RENDER_PX / POLAR_VIEWBOX),
+  apogee: APOGEE_DOT_R * (POLAR_RENDER_PX / POLAR_VIEWBOX),
+  cursor: CURSOR_DOT_R * (POLAR_RENDER_PX / POLAR_VIEWBOX),
+};
 
 function _toXY(az, el) {
   const r = R * (1 - el / 90);
@@ -254,9 +269,9 @@ export function buildPolarSVG(pass, sat, lat, lon, rxMask) {
     const elIn  = (rxMask[Math.round(maskEntry.az) % 360] ?? maskEntry.el).toFixed(0);
     const elOut = (rxMask[Math.round(maskExit.az)  % 360] ?? maskExit.el ).toFixed(0);
     maskMarkerSVG = `
-    <circle cx="${mex}" cy="${mey}" r="2.5" fill="${MARKER_COLORS.maskEntry}"/>
+    <circle cx="${mex}" cy="${mey}" r="${DOT_R}" fill="${MARKER_COLORS.maskEntry}"/>
     ${radLabel(mex, mey, `▲${elIn}°`, MARKER_COLORS.maskEntry)}
-    <circle cx="${mlx}" cy="${mly}" r="2.5" fill="${MARKER_COLORS.maskExit}"/>
+    <circle cx="${mlx}" cy="${mly}" r="${DOT_R}" fill="${MARKER_COLORS.maskExit}"/>
     ${radLabel(mlx, mly, `▼${elOut}°`, MARKER_COLORS.maskExit)}`;
   }
 
@@ -274,12 +289,12 @@ export function buildPolarSVG(pass, sat, lat, lon, rxMask) {
     <text x="${CX+r30+2}" y="${CY-1}" fill="#2e2e52" font-size="6" font-family="monospace">30°</text>
     <text x="${CX+r60+2}" y="${CY-1}" fill="#2e2e52" font-size="6" font-family="monospace">60°</text>
     <path d="${pathD}" fill="none" stroke="#ff3060" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="${ax}" cy="${ay}" r="2.5" fill="${MARKER_COLORS.aos}"/>
-    <circle cx="${lx}" cy="${ly}" r="2.5" fill="${MARKER_COLORS.los}"/>
+    <circle cx="${ax}" cy="${ay}" r="${DOT_R}" fill="${MARKER_COLORS.aos}"/>
+    <circle cx="${lx}" cy="${ly}" r="${DOT_R}" fill="${MARKER_COLORS.los}"/>
     ${maskMarkerSVG}
-    <circle cx="${apx}" cy="${apy}" r="3" fill="${MARKER_COLORS.apogee}"/>
+    <circle cx="${apx}" cy="${apy}" r="${APOGEE_DOT_R}" fill="${MARKER_COLORS.apogee}"/>
     ${radLabel(apx, apy, `${apogee.el.toFixed(0)}°`, MARKER_COLORS.apogee)}
-    <circle class="polar-cursor-dot" r="3" fill="#fff" stroke="#ff3060" stroke-width="1" visibility="hidden"/>
+    <circle class="polar-cursor-dot" r="${CURSOR_DOT_R}" fill="#fff" stroke="#ff3060" stroke-width="1" visibility="hidden"/>
     <rect class="polar-cursor-label-bg" width="1" height="9" rx="2" fill="#12121e" stroke="#2a2a4a" stroke-width="0.6" visibility="hidden"/>
     <text class="polar-cursor-text" x="0" y="0" font-size="6" font-family="monospace" fill="#ddd" text-anchor="middle" visibility="hidden"></text>
     <circle class="polar-hit" cx="${CX}" cy="${CY}" r="${R}" fill="transparent"/>

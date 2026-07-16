@@ -8,7 +8,7 @@
 // Hovering the Eb/N0 chart works the other way: mouse x → time → nearest
 // sample, and that timestamp drives the polar dot (nearest point by time).
 import { POLAR_VIEWBOX } from './passPolar.js';
-import { CHART_W, PAD_L, PAD_R, ebn0Scales } from './ebn0.js';
+import { CHART_W, PAD_L, PAD_R, ebn0Scales, syncEbn0DotSizes } from './ebn0.js';
 
 function _nearestByTime(points, t) {
   let best = points[0], bestDiff = Infinity;
@@ -49,14 +49,14 @@ function _hidePolarCursor(polarEl) {
   });
 }
 
-function _showEbn0Cursor(ebn0El, series, point) {
+function _showEbn0Cursor(ebn0El, series, point, procedures) {
   if (!point) return;
   const line = ebn0El.querySelector('.ebn0-cursor-line');
   const dot  = ebn0El.querySelector('.ebn0-cursor-dot');
   const text = ebn0El.querySelector('.ebn0-cursor-text');
   const bg   = ebn0El.querySelector('.ebn0-cursor-label-bg');
   if (!line || !dot || !text || !bg) return;
-  const { xScale, yScale } = ebn0Scales(series);
+  const { xScale, yScale } = ebn0Scales(series, procedures);
   const x = xScale(point.t), y = yScale(point.v);
   line.setAttribute('x1', x); line.setAttribute('x2', x);
   dot.setAttribute('cx', x);  dot.setAttribute('cy', y);
@@ -81,14 +81,15 @@ function _hideEbn0Cursor(ebn0El) {
 // elements (already in the DOM); polarPoints/ebn0Series are their respective
 // data arrays. Either side may be absent (no coords resolved, or no metrics
 // for this pass/network) — wiring degrades gracefully to a single-chart cursor.
-export function wireLinkedCursor(polarEl, polarPoints, ebn0El, ebn0Series) {
+export function wireLinkedCursor(polarEl, polarPoints, ebn0El, ebn0Series, procedures) {
   const hasPolar = !!(polarEl && polarPoints?.length);
   const hasEbn0  = !!(ebn0El && ebn0Series?.length);
+  if (hasEbn0) syncEbn0DotSizes(ebn0El); // match the polar plot's actual dot pixel size
   if (!hasPolar && !hasEbn0) return;
 
   function driveFromTime(t) {
     if (hasPolar) _showPolarCursor(polarEl, _nearestByTime(polarPoints, t));
-    if (hasEbn0)  _showEbn0Cursor(ebn0El, ebn0Series, _nearestByTime(ebn0Series, t));
+    if (hasEbn0)  _showEbn0Cursor(ebn0El, ebn0Series, _nearestByTime(ebn0Series, t), procedures);
   }
   function clearAll() {
     if (hasPolar) _hidePolarCursor(polarEl);
@@ -114,7 +115,7 @@ export function wireLinkedCursor(polarEl, polarPoints, ebn0El, ebn0Series) {
   if (hasEbn0) {
     const hit = ebn0El.querySelector('.ebn0-hit');
     hit?.addEventListener('mousemove', ev => {
-      const { t0, t1 } = ebn0Scales(ebn0Series);
+      const { t0, t1 } = ebn0Scales(ebn0Series, procedures);
       const rect = ebn0El.getBoundingClientRect();
       const px = (ev.clientX - rect.left) / rect.width * CHART_W;
       const frac = Math.min(1, Math.max(0, (px - PAD_L) / (CHART_W - PAD_L - PAD_R)));
