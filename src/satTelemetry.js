@@ -132,7 +132,7 @@ async function _fetchPacket(fdsOrigin, packetName) {
 }
 
 export async function fetchSatTelemetry(sat) {
-  const ip = satSubsystemOrigin(sat.noradId, 'fds');
+  const ip = satSubsystemOrigin(sat.noradId, 'sccRo');
   if (!ip) return;
 
   const cfg = getTmConfig(sat.noradId, sat.model);

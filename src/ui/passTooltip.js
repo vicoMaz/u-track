@@ -4,7 +4,10 @@
 // tooltip instead of re-deriving a thinner copy.
 import { propagate }                    from '../tle.js';
 import { sunDirectionECI, isInEclipse } from '../sunVector.js';
-import { fetchPassGsCoords, buildPolarSVG } from './passPolar.js';
+import { fetchPassGsCoords, buildPolarSVG, computePolarPoints, computePolarMarkers } from './passPolar.js';
+import { fetchProcedureReport, procedureReportHTML } from './procedureReport.js';
+import { fetchEbn0Series, ebn0HTML } from './ebn0.js';
+import { wireLinkedCursor } from './passCursor.js';
 import { satSubsystemHost } from '../satSubsystems.js';
 
 const _PROC_CLS = { SUCCESS: 'co-tt-ok', FAILURE: 'co-tt-fail', CANCELLED: 'co-tt-cancelled' };
@@ -64,15 +67,24 @@ export function passEclipseBar(satrec, start, end) {
 }
 
 export function passTooltipContent(pass, grafanaHost, sat) {
-  const dur = pass.end && pass.start ? ` · ${fmtDuration(pass.end - pass.start)}` : '';
-  const hdr = `<div class="co-tt-header">${pass.station} · ${fmtDateTimeShort(pass.start)}${dur}</div>`;
+  const netTag = pass.network ? `<span class="co-tt-network">${pass.network}</span>` : '';
+  const hdr = `<div class="co-tt-header">${pass.station}${netTag}</div>`;
   const eclBar = passEclipseBar(sat?.satrec, pass.start, pass.end);
-  const slot = '<div class="polar-slot"></div>';
+  const details = `<div class="co-tt-section-title">Pass details</div>
+    <div class="co-tt-time-row"><span class="co-tt-time-lbl">DATE</span>${fmtDateTimeShort(pass.start)}</div>
+    <div class="co-tt-time-row"><span class="co-tt-time-lbl">DUR</span>${fmtDuration(pass.end - pass.start)}</div>
+    ${eclBar}
+    <div class="co-tt-details-row">
+      <div class="polar-slot"></div>
+      <div class="ebn0-slot"></div>
+    </div>`;
+  const reportSlot = '<div class="proc-report-slot"></div>';
   if (pass.future) {
-    return hdr + eclBar + `<div class="co-tt-future-status co-dot-future">○ SCHEDULED</div>` + slot;
+    return hdr + details + `<div class="co-tt-future-status co-dot-future">○ SCHEDULED</div>`;
   }
+  const historyTitle = `<div class="co-tt-sep"></div><div class="co-tt-section-title">Procedure history</div>`;
   if (!pass.procedures?.length) {
-    return hdr + eclBar + `<div class="co-tt-proc co-tt-ok">● PASS OCCURRED</div>` + slot;
+    return hdr + details + historyTitle + `<div class="co-tt-proc co-tt-ok">● PASS OCCURRED</div>` + reportSlot;
   }
   const procs = pass.procedures.map((pr, i) => {
     const cls     = _PROC_CLS[pr.status] ?? 'co-tt-ok';
@@ -85,7 +97,7 @@ export function passTooltipContent(pass, grafanaHost, sat) {
     }
     return `<div class="co-tt-proc ${cls}" title="${pr.name}">${num}${name}${procDur}</div>`;
   }).join('');
-  return hdr + eclBar + `<div class="co-tt-sep"></div><div class="co-tt-procs">${procs}</div>` + slot;
+  return hdr + details + historyTitle + `<div class="co-tt-procs">${procs}</div>` + reportSlot;
 }
 
 export function positionTooltip(e, el) {
@@ -120,17 +132,47 @@ export function createPassTooltip() {
 
   async function showForPass(e, pass, sat, groundStations) {
     cancelHide();
-    const grafanaHost = sat ? (satSubsystemHost(sat.noradId, 'fds') || null) : null;
+    const grafanaHost = sat ? (satSubsystemHost(sat.noradId, 'sccRo') || null) : null;
     el.innerHTML = passTooltipContent(pass, grafanaHost, sat);
     el.style.display = 'block';
     positionTooltip(e, el);
-    if (sat?.satrec) {
-      const coords = await fetchPassGsCoords(sat, pass, groundStations);
-      if (coords && el.style.display !== 'none') {
-        const slot = el.querySelector('.polar-slot');
-        if (slot) slot.outerHTML = buildPolarSVG(pass, sat, coords.lat, coords.lon, coords.rxMask);
-      }
+
+    if (!pass.future && grafanaHost) {
+      fetchProcedureReport(grafanaHost, pass.start.getTime(), pass.end.getTime()).then(report => {
+        if (el.style.display === 'none') return;
+        const slot = el.querySelector('.proc-report-slot');
+        if (slot) { slot.outerHTML = procedureReportHTML(report); positionTooltip(e, el); }
+      });
     }
+
+    // Eb/N0 series and polar coords are fetched in parallel, but injected and
+    // cursor-linked together — the linked hover needs both charts in the DOM
+    // at once, so neither can pop in independently ahead of the other.
+    const ebn0Promise = (!pass.future && sat?.noradId)
+      ? fetchEbn0Series(sat.noradId, pass.start.getTime(), pass.end.getTime(), pass.network)
+      : Promise.resolve(null);
+    const coordsPromise = sat?.satrec
+      ? fetchPassGsCoords(sat, pass, groundStations)
+      : Promise.resolve(null);
+
+    const [series, coords] = await Promise.all([ebn0Promise, coordsPromise]);
+    if (el.style.display === 'none') return;
+
+    let polarPoints = null, markers = null;
+    const polarSlot = el.querySelector('.polar-slot');
+    if (coords && polarSlot) {
+      polarSlot.outerHTML = buildPolarSVG(pass, sat, coords.lat, coords.lon, coords.rxMask);
+      polarPoints = computePolarPoints(pass, sat, coords.lat, coords.lon);
+      markers = computePolarMarkers(polarPoints, coords.rxMask);
+    }
+    const polarEl = el.querySelector('.pass-polar');
+
+    const ebn0Slot = el.querySelector('.ebn0-slot');
+    if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers);
+    const ebn0El = el.querySelector('.ebn0-chart');
+
+    positionTooltip(e, el);
+    wireLinkedCursor(polarEl, polarPoints, ebn0El, series);
   }
 
   return { element: el, showForPass, cancelHide, scheduleHide };

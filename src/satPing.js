@@ -5,6 +5,9 @@ import { fetchSatTle }       from './satTle.js';
 import { fetchSatAntennas } from './satAntennas.js';
 import { fetchSatGnss }           from './satGnss.js';
 import { fetchSatEventBaseline }  from './satEventBaseline.js';
+import { fetchSatGroundEvents }   from './satGroundEvents.js';
+import { fetchSatGlobals }        from './satGlobals.js';
+import { fetchSatVersions }       from './satVersions.js';
 import { satSubsystemOrigin } from './satSubsystems.js';
 
 const PING_TIMEOUT = 5_000;
@@ -67,8 +70,8 @@ async function _ping(sat) {
   const ctrl  = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), PING_TIMEOUT);
   try {
-    const fdsOrigin = satSubsystemOrigin(sat.noradId, 'fds');
-    await fetch(`${fdsOrigin}/api/v1/ping`, {
+    const sccRoOrigin = satSubsystemOrigin(sat.noradId, 'sccRo');
+    await fetch(`${sccRoOrigin}/api/v1/ping`, {
       method: 'GET',
       mode:   'no-cors',
       signal: ctrl.signal,
@@ -91,11 +94,22 @@ async function _ping(sat) {
 
 const _schedTimers = {}; // satId → timer handle
 
+// Software versions change rarely — polling them every ping cycle (default 20s)
+// would be pure waste, so this is fetched on a much slower, independent cadence.
+const GLOBALS_REFRESH_MS = 30 * 60_000; // 30 min
+const _lastGlobalsMs = {}; // satId → timestamp of last completed globals fetch
+
 async function _pingAndReschedule(sat) {
   try {
     await _ping(sat);
     if (store.pingStatus[sat.id] === 'ok') {
-      await Promise.all([fetchSatTelemetry(sat), fetchSatPasses(sat), fetchSatTle(sat), fetchSatAntennas(sat), fetchSatGnss(sat), fetchSatEventBaseline(sat)]);
+      const fetches = [fetchSatTelemetry(sat), fetchSatPasses(sat), fetchSatTle(sat), fetchSatAntennas(sat), fetchSatGnss(sat), fetchSatEventBaseline(sat), fetchSatGroundEvents(sat)];
+      const lastGlobals = _lastGlobalsMs[sat.id] ?? 0;
+      if (Date.now() - lastGlobals > GLOBALS_REFRESH_MS) {
+        _lastGlobalsMs[sat.id] = Date.now();
+        fetches.push(fetchSatGlobals(sat), fetchSatVersions(sat));
+      }
+      await Promise.all(fetches);
     }
   } catch { /* never let an error kill the cycle */ }
   _schedTimers[sat.id] = setTimeout(() => _pingAndReschedule(sat), getPingIntervalSec() * 1000);

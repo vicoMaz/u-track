@@ -3,8 +3,12 @@ import { propagate }                    from '../tle.js';
 import { sunDirectionECI, isInEclipse } from '../sunVector.js';
 import { scheduleTmrFetch }             from '../tmrData.js';
 import { requestTmrGapDownload }        from '../tmrGapDownload.js';
-import { fetchPassGsCoords, buildPolarSVG } from './passPolar.js';
+import { fetchPassGsCoords, buildPolarSVG, computePolarPoints, computePolarMarkers } from './passPolar.js';
+import { fetchProcedureReport, procedureReportHTML } from './procedureReport.js';
+import { fetchEbn0Series, ebn0HTML } from './ebn0.js';
+import { wireLinkedCursor } from './passCursor.js';
 import { satSubsystemHost }             from '../satSubsystems.js';
+import { showActionToast }              from './actionToast.js';
 
 function _grafanaLokiUrl(grafanaHost, fromMs, toMs) {
   return `http://${grafanaHost}:3000/a/grafana-lokiexplore-app/explore/service/-scc/logs`
@@ -20,7 +24,7 @@ function _grafanaLokiUrl(grafanaHost, fromMs, toMs) {
 }
 
 function _grafanaHost() {
-  return satSubsystemHost(store.trackedSat?.noradId, 'fds') || null;
+  return satSubsystemHost(store.trackedSat?.noradId, 'sccRo') || null;
 }
 
 
@@ -100,17 +104,24 @@ const _PROC_CH  = { SUCCESS: '●', FAILURE: '✗', CANCELLED: '◌' };
 function _passTooltipHTML(pass, grafanaHost) {
   const start = pass.start instanceof Date ? pass.start : new Date(pass.start);
   const end   = pass.end   instanceof Date ? pass.end   : new Date(pass.end);
-  const dur   = start && end ? ` · ${_fmtDurPass(end - start)}` : '';
-  const hdr   = `<div class="co-tt-header">${pass.station ?? '—'}${dur}</div>`;
-  const times = `<div class="co-tt-time-row"><span class="co-tt-time-lbl">AOS</span>${_fmtDT(start)}</div>`
-              + `<div class="co-tt-time-row"><span class="co-tt-time-lbl">LOS</span>${_fmtDT(end)}</div>`;
-  const slot = '<div class="polar-slot"></div>';
-  if (pass.future) return hdr + times + `<div class="co-tt-future-status co-dot-future" style="margin-top:6px">○ SCHEDULED</div>` + slot;
+  const netTag = pass.network ? `<span class="co-tt-network">${pass.network}</span>` : '';
+  const hdr   = `<div class="co-tt-header">${pass.station ?? '—'}${netTag}</div>`;
+  const details = `<div class="co-tt-section-title">Pass details</div>
+    <div class="co-tt-time-row"><span class="co-tt-time-lbl">AOS</span>${_fmtDT(start)}</div>
+    <div class="co-tt-time-row"><span class="co-tt-time-lbl">LOS</span>${_fmtDT(end)}</div>
+    <div class="co-tt-time-row"><span class="co-tt-time-lbl">DUR</span>${_fmtDurPass(end - start)}</div>
+    <div class="co-tt-details-row">
+      <div class="polar-slot"></div>
+      <div class="ebn0-slot"></div>
+    </div>`;
+  const reportSlot = '<div class="proc-report-slot"></div>';
+  if (pass.future) return hdr + details + `<div class="co-tt-future-status co-dot-future" style="margin-top:6px">○ SCHEDULED</div>`;
+  const historyTitle = `<div class="co-tt-sep"></div><div class="co-tt-section-title">Procedure history</div>`;
   if (!pass.procedures?.length) {
     const passLink = grafanaHost
       ? `<a href="${_grafanaLokiUrl(grafanaHost, start.getTime() - 30000, end.getTime() + 30000)}" target="_blank" rel="noopener" class="co-tt-proc co-tt-ok co-tt-link" style="margin-top:6px">● PASS OCCURRED ↗</a>`
       : `<div class="co-tt-proc co-tt-ok" style="margin-top:6px">● PASS OCCURRED</div>`;
-    return hdr + times + passLink + slot;
+    return hdr + details + historyTitle + passLink + reportSlot;
   }
   const procs = pass.procedures.map((pr, i) => {
     const cls  = _PROC_CLS[pr.status] ?? 'co-tt-ok';
@@ -124,7 +135,7 @@ function _passTooltipHTML(pass, grafanaHost) {
     }
     return `<div class="co-tt-proc ${cls}">${num}${name}${pdur}</div>`;
   }).join('');
-  return hdr + times + `<div class="co-tt-sep"></div><div class="co-tt-procs">${procs}</div>` + slot;
+  return hdr + details + historyTitle + `<div class="co-tt-procs">${procs}</div>` + reportSlot;
 }
 
 function _posTooltipAt(clientX, clientY) {
@@ -143,19 +154,51 @@ async function _showPassTooltip(e, pass) {
   _ttAnchorX = e.clientX;
   _ttAnchorY = e.clientY;
   clearTimeout(_ttHideTimer);
-  _ganttTooltip.innerHTML     = _passTooltipHTML(pass, _grafanaHost());
+  const grafanaHost = _grafanaHost();
+  _ganttTooltip.innerHTML     = _passTooltipHTML(pass, grafanaHost);
   _ganttTooltip.style.display = 'block';
   _posTooltipAt(_ttAnchorX, _ttAnchorY);
-  // Async: resolve GS coordinates then inject polar plot
-  const sat = store.trackedSat;
-  if (!sat?.satrec) return;
-  const coords = await fetchPassGsCoords(sat, pass, store.groundStations);
-  if (!coords || _ganttTooltip.style.display === 'none') return;
-  const slot = _ganttTooltip.querySelector('.polar-slot');
-  if (slot) {
-    slot.outerHTML = buildPolarSVG(pass, sat, coords.lat, coords.lon, coords.rxMask);
-    _posTooltipAt(_ttAnchorX, _ttAnchorY); // re-anchor: tooltip is now taller
+  // Async: resolve procedure-execution report, inject when ready
+  if (!pass.future && grafanaHost) {
+    const startMs = pass.start instanceof Date ? pass.start.getTime() : pass.start;
+    const endMs   = pass.end   instanceof Date ? pass.end.getTime()   : pass.end;
+    fetchProcedureReport(grafanaHost, startMs, endMs).then(report => {
+      if (_ganttTooltip.style.display === 'none') return;
+      const slot = _ganttTooltip.querySelector('.proc-report-slot');
+      if (slot) { slot.outerHTML = procedureReportHTML(report); _posTooltipAt(_ttAnchorX, _ttAnchorY); }
+    });
   }
+  // Eb/N0 series and polar coords are fetched in parallel, but injected and
+  // cursor-linked together — the shared hover needs both charts in the DOM at
+  // once, so neither pops in independently ahead of the other.
+  const sat = store.trackedSat;
+  const pStartMs = pass.start instanceof Date ? pass.start.getTime() : pass.start;
+  const pEndMs   = pass.end   instanceof Date ? pass.end.getTime()   : pass.end;
+  const ebn0Promise = (!pass.future && sat?.noradId)
+    ? fetchEbn0Series(sat.noradId, pStartMs, pEndMs, pass.network)
+    : Promise.resolve(null);
+  const coordsPromise = sat?.satrec
+    ? fetchPassGsCoords(sat, pass, store.groundStations)
+    : Promise.resolve(null);
+
+  const [series, coords] = await Promise.all([ebn0Promise, coordsPromise]);
+  if (_ganttTooltip.style.display === 'none') return;
+
+  let polarPoints = null, markers = null;
+  const polarSlot = _ganttTooltip.querySelector('.polar-slot');
+  if (coords && polarSlot) {
+    polarSlot.outerHTML = buildPolarSVG(pass, sat, coords.lat, coords.lon, coords.rxMask);
+    polarPoints = computePolarPoints(pass, sat, coords.lat, coords.lon);
+    markers = computePolarMarkers(polarPoints, coords.rxMask);
+  }
+  const polarEl = _ganttTooltip.querySelector('.pass-polar');
+
+  const ebn0Slot = _ganttTooltip.querySelector('.ebn0-slot');
+  if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers);
+  const ebn0El = _ganttTooltip.querySelector('.ebn0-chart');
+
+  _posTooltipAt(_ttAnchorX, _ttAnchorY); // re-anchor: tooltip may now be taller
+  wireLinkedCursor(polarEl, polarPoints, ebn0El, series);
 }
 
 function _hidePassTooltipSoon() {
@@ -194,28 +237,16 @@ function _showGapTooltip(e, gap, sat) {
     btn.textContent = 'Requesting…';
     try {
       const { linkEstablished } = await requestTmrGapDownload(sat, gap);
-      _showInfoToast(linkEstablished
+      showActionToast(linkEstablished
         ? 'TM/TC link + TMR gap download scheduled on the next pass.'
         : 'TMR gap download scheduled on the next pass.');
     } catch (err) {
-      _showInfoToast(`Request failed: ${err.message}`);
+      showActionToast(`Request failed: ${err.message}`);
     } finally {
       btn.disabled    = false;
       btn.textContent = 'Download Gap TMR';
     }
   });
-}
-
-// ── Small transient "info" toast — top-right, auto-dismisses ──
-let _infoToast         = null;
-let _infoToastHideTimer = null;
-
-function _showInfoToast(msg) {
-  if (!_infoToast) return;
-  clearTimeout(_infoToastHideTimer);
-  _infoToast.innerHTML = `<span class="info-toast-icon">ⓘ</span>${msg}`;
-  _infoToast.classList.add('visible');
-  _infoToastHideTimer = setTimeout(() => { _infoToast.classList.remove('visible'); }, 2600);
 }
 
 // Measured pixel offsets from gantt left/right edges to track start/end — set by _alignGantt()
@@ -662,10 +693,6 @@ export function initTimePlayer() {
   _ganttTooltip.addEventListener('mouseenter', () => clearTimeout(_ttHideTimer));
   _ganttTooltip.addEventListener('mouseleave', _hidePassTooltipSoon);
 
-  // Info toast — small fixed top-right notice, e.g. "not wired up yet"
-  _infoToast = document.createElement('div');
-  _infoToast.className = 'info-toast';
-  document.body.appendChild(_infoToast);
 
   // Gantt collapse toggle
   ganttToggleBtn?.addEventListener('click', () => {

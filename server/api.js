@@ -368,6 +368,36 @@ export function createApiMiddleware() {
       });
     }
 
+    // GET /api/grafana-loki?host=&query=&start=&end=&limit=
+    // Server-side proxy to a satellite's Grafana Loki datasource. Grafana here
+    // sends no Access-Control-Allow-Origin header, so the browser can't call it
+    // directly (CORS) — this route forwards the request from Node instead,
+    // where CORS doesn't apply.
+    if (path === '/api/grafana-loki' && method === 'GET') {
+      const params = new URLSearchParams((req.url.split('?')[1]) || '');
+      const host  = params.get('host');
+      const query = params.get('query');
+      const start = params.get('start');
+      const end   = params.get('end');
+      const limit = params.get('limit') || '200';
+      if (!host || !query || !start || !end)
+        return send(res, 400, { error: 'host, query, start and end are required' });
+      const upstream = `http://${host}:3000/api/datasources/proxy/uid/P8E80F9AEF21F6940/loki/api/v1/query_range`
+        + `?query=${encodeURIComponent(query)}&start=${encodeURIComponent(start)}`
+        + `&end=${encodeURIComponent(end)}&limit=${encodeURIComponent(limit)}&direction=forward`;
+      const ctrl  = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15_000);
+      try {
+        const r    = await fetch(upstream, { signal: ctrl.signal });
+        const data = await r.json().catch(() => null);
+        return send(res, r.status, data ?? { error: 'bad upstream response' });
+      } catch {
+        return send(res, 502, { error: 'Grafana unreachable' });
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
     // GET /api/spec.json
     if (path === '/api/spec.json') {
       return send(res, 200, SPEC);

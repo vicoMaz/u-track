@@ -35,9 +35,9 @@
         <img id="app-logo" src="/logo-u-space.png" alt="chadOps" />
         <span id="app-name">chadOps</span>
         <div class="tab-bar-sep"></div>
-        <a class="tab-btn" data-tab="chadops" href="#chadops">Ops</a>
-        <div class="tab-bar-sep"></div>
-        <a class="tab-btn active" data-tab="tracking" href="#tracking">Tracking</a>
+        <a class="tab-btn" data-tab="fleet" href="#fleet">Fleet</a>
+        <a class="tab-btn" data-tab="schedule" href="#schedule">Weekly Schedule</a>
+        <a class="tab-btn active" data-tab="tracking" href="#tracking">Visualizer</a>
         <a class="tab-btn" data-tab="tools" href="#tools">Scheduler</a>
         <a class="tab-btn" data-tab="settings" href="#settings">Settings</a>
         <div id="nav-clocks">
@@ -74,8 +74,8 @@
             <input id="scale-field" type="number" min="1" max="1000" value="500" step="1" class="tp-num-field" style="color:#c77dff" />
             <div class="tp-sep" style="height:18px"></div>
             <label class="tp-label">Alt</label>
-            <input id="orbit-alt-slider" type="range" min="400" max="700" value="550" step="10" style="width:58px;accent-color:#4a90d9" />
-            <input id="orbit-alt-field" type="number" min="400" max="700" value="550" step="10" class="tp-num-field" />
+            <input id="orbit-alt-slider" type="range" min="400" max="700" value="590" step="10" style="width:58px;accent-color:#4a90d9" />
+            <input id="orbit-alt-field" type="number" min="400" max="700" value="590" step="10" class="tp-num-field" />
             <span class="tp-label">km</span>
           </div>
         </div>
@@ -129,47 +129,36 @@
 
       </div>
 
-      <!-- chadOps view -->
-      <div id="chadops-view" class="view">
-
-        <!-- chadOps subtab bar -->
-        <div class="co-subtab-bar">
-          <button class="co-subtab active" data-cosubtab="fleet">Fleet</button>
-          <button class="co-subtab" data-cosubtab="schedule">Weekly Schedule</button>
-        </div>
-
-        <!-- Fleet subtab -->
-        <div class="co-subtab-content active" id="co-subtab-fleet">
-          <div class="co-container">
-            <div class="co-table-wrap">
-              <table class="co-table">
-                <thead>
-                  <tr>
-                    <th class="co-th">Satellite</th>
-                    <th class="co-th" title="All data are gathered from SCC RO">SCC RO</th>
-                    <th class="co-th">Last Contact</th>
-                    <th class="co-th">Mode</th>
-                    <th class="co-th">Battery</th>
-                    <th class="co-th">RWH</th>
-                    <th class="co-th" id="co-gnss-th" style="cursor:default">GNSS <span class="co-passes-info">ⓘ</span></th>
-                    <th class="co-th co-th-passes" id="co-passes-th" style="cursor:default">Passes <span class="co-passes-info">ⓘ</span></th>
-                    <th class="co-th">Orbit</th>
-                    <th class="co-th">Ground Alerts</th>
-                    <th class="co-th" id="co-board-alerts-th" style="cursor:default">Board Alerts <span class="co-passes-info">ⓘ</span></th>
-                    <th class="co-th">Links</th>
-                  </tr>
-                </thead>
-                <tbody id="co-tbody"></tbody>
-              </table>
-            </div>
+      <!-- Fleet view -->
+      <div id="fleet-view" class="view">
+        <div class="co-container">
+          <div class="co-table-wrap">
+            <table class="co-table">
+              <thead>
+                <tr>
+                  <th class="co-th">Satellite</th>
+                  <th class="co-th" title="All data are gathered from SCC RO">SCC RO</th>
+                  <th class="co-th">Last Contact</th>
+                  <th class="co-th">Mode</th>
+                  <th class="co-th">Battery</th>
+                  <th class="co-th">RWH</th>
+                  <th class="co-th" id="co-gnss-th" style="cursor:default">GNSS <span class="co-passes-info">ⓘ</span></th>
+                  <th class="co-th co-th-passes" id="co-passes-th" style="cursor:default">Passes <span class="co-passes-info">ⓘ</span></th>
+                  <th class="co-th">Orbit</th>
+                  <th class="co-th" id="co-ground-alerts-th" style="cursor:default">Ground Alerts <span class="co-passes-info">ⓘ</span></th>
+                  <th class="co-th" id="co-board-alerts-th" style="cursor:default">Board Alerts <span class="co-passes-info">ⓘ</span></th>
+                  <th class="co-th">Links</th>
+                </tr>
+              </thead>
+              <tbody id="co-tbody"></tbody>
+            </table>
           </div>
         </div>
+      </div>
 
-        <!-- Schedule subtab -->
-        <div class="co-subtab-content" id="co-subtab-schedule">
-          <div id="co-sched-content" class="co-sched-section"></div>
-        </div>
-
+      <!-- Weekly Schedule view -->
+      <div id="schedule-view" class="view">
+        <div id="co-sched-content" class="co-sched-section"></div>
       </div>
 
       <!-- Settings view -->

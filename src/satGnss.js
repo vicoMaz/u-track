@@ -90,6 +90,51 @@ async function _searchBackward(origin, param, signal, matchFn) {
   return null;
 }
 
+// Same widening-backward strategy as _searchBackward, but correlates two
+// independently-requested parameters by their shared onBoardTime — the SCC's
+// /api/v1/parameters endpoint only returns values for a single requested
+// parameter per row, even when a packet sample carries several, so finding
+// "last time A and B were both true in the same sample" needs both series
+// pulled separately and matched by timestamp rather than a single combined row.
+async function _searchBackwardPaired(origin, paramA, paramB, signal, isGoodA, isGoodB) {
+  const now     = Date.now();
+  const floorMs = now - LOOKBACK_MS;
+  let sliceEnd  = now + 10_000;
+  let sliceMs   = INITIAL_WINDOW_MS;
+
+  while (sliceEnd > floorMs) {
+    const sliceStart = Math.max(floorMs, sliceEnd - sliceMs);
+    const [rowsA, rowsB] = await Promise.all([
+      _queryParam(origin, paramA, sliceStart, sliceEnd, signal),
+      _queryParam(origin, paramB, sliceStart, sliceEnd, signal),
+    ]);
+    if (rowsA === null || rowsB === null) return null;
+
+    if ((rowsA.length >= MAX_ROWS || rowsB.length >= MAX_ROWS) && sliceMs > MIN_WINDOW_MS) {
+      sliceMs = Math.max(MIN_WINDOW_MS, Math.floor(sliceMs / 4));
+      continue;
+    }
+
+    const goodBTimes = new Set();
+    for (const row of rowsB) {
+      if (!isGoodB(row)) continue;
+      const t = _rowTime(row)?.getTime();
+      if (t != null) goodBTimes.add(t);
+    }
+
+    const match = rowsA.find(row => {
+      if (!isGoodA(row)) return false;
+      const t = _rowTime(row)?.getTime();
+      return t != null && goodBTimes.has(t);
+    });
+    if (match) return match;
+
+    sliceEnd = sliceStart;
+    sliceMs  = Math.min(sliceMs * 2, LOOKBACK_MS);
+  }
+  return null;
+}
+
 // Cancel a satellite's still-running search rather than let it pile up alongside a
 // new one — e.g. a manual "force ping" click while a slow widening search is still
 // in flight would otherwise start a second, fully independent search chain.
@@ -105,17 +150,18 @@ export async function fetchSatGnss(sat) {
 
   const timer = setTimeout(() => ctrl.abort(), 45_000); // widening search may take a few round-trips
   try {
-    const [tsMatch, hwMatch] = await Promise.all([
-      _searchBackward(ip, 'GNSS_AM_TIMESYNC_STATUS', ctrl.signal,
-        row => _rowValue(row, 'GNSS_AM_TIMESYNC_STATUS')?.toUpperCase() === 'FINESTEERING'),
+    const [hwMatch, bothMatch] = await Promise.all([
       _searchBackward(ip, 'GNSS_AM_HW_HK_VALID', ctrl.signal, () => true), // just the latest row
+      _searchBackwardPaired(ip, 'GNSS_AM_TIMESYNC_STATUS', 'GNSS_AM_HW_HK_VALID', ctrl.signal,
+        row => _rowValue(row, 'GNSS_AM_TIMESYNC_STATUS')?.toUpperCase() === 'FINESTEERING',
+        row => _rowValue(row, 'GNSS_AM_HW_HK_VALID')?.toUpperCase() === 'VALID'),
     ]);
 
     if (ctrl.signal.aborted) return; // superseded or timed out — don't overwrite with a stale/partial result
     const hwValue = hwMatch ? _rowValue(hwMatch, 'GNSS_AM_HW_HK_VALID') : null;
     store.setSatGnss(sat.id, {
-      lastFinesteering: tsMatch ? _rowTime(tsMatch) : null,
-      hkIsValid:        hwValue == null ? null : hwValue.toUpperCase() === 'VALID',
+      lastBothGood: bothMatch ? _rowTime(bothMatch) : null,
+      hkIsValid:    hwValue == null ? null : hwValue.toUpperCase() === 'VALID',
     });
   } catch { /* offline or aborted */ }
   finally {

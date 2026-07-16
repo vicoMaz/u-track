@@ -43,6 +43,15 @@ export function initGlobe() {
     return;
   }
 
+  // Cesium's own clock drives its rendered sun/lighting and defaults to the
+  // system clock, ticking forward on its own every frame. Left alone, it never
+  // matches store.currentTime once the TimePlayer is scrubbed away from "now" —
+  // our custom sun arrow (driven by store.currentTime) would then point at the
+  // simulated-time sun while Cesium's own sun stayed at the real-time one.
+  // Freeze it and drive it ourselves from updatePositions() instead.
+  viewer.clock.shouldAnimate = false;
+  viewer.clock.currentTime   = Cesium.JulianDate.fromDate(store.currentTime);
+
   // Click on a satellite model in the 3D scene → track it
   const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
   handler.setInputAction((click) => {
@@ -93,19 +102,17 @@ function syncEntities() {
   }
 
   // Auto-track: if the tracked sat was deleted, pick the first remaining one.
-  // But respect an explicit user untrack (trackedSatId === null && _manualUntrack).
+  // Deliberately does NOT auto-track on initial load — no satellite should be
+  // tracked by default, since tracking drives extra background requests (TMR gap
+  // scan) that shouldn't fire until the user actually picks a satellite.
   const ids = store.satellites.map(s => s.id);
   let keepTracked = store.trackedSatId;
   if (keepTracked !== null && !ids.includes(keepTracked)) {
     // Tracked satellite was removed — auto-pick the first remaining
     keepTracked = ids[0] ?? null;
-  } else if (keepTracked === null && !store._manualUntrack) {
-    // First satellite ever added — auto-track it
-    keepTracked = ids[0] ?? null;
   }
   if (keepTracked !== store.trackedSatId) {
     store.setTrackedSat(keepTracked); // triggers applyTracking via subscription
-    store._manualUntrack = false;     // this was an automatic pick, not user-driven
   } else {
     applyTracking();
   }
@@ -141,6 +148,7 @@ function applyTracking() {
 function updatePositions() {
   if (!viewer) return;
   const t = store.currentTime;
+  viewer.clock.currentTime = Cesium.JulianDate.fromDate(t);
   for (const ent of entities.values()) ent.update(t);
 }
 

@@ -21,7 +21,7 @@ document.body.classList.add('tracking-active');
 tabBtns.forEach(btn => {
   btn.addEventListener('click', () => {
     const target      = btn.dataset.tab;
-    const hideSide    = target === 'tools' || target === 'chadops' || target === 'settings';
+    const hideSide    = target === 'tools' || target === 'fleet' || target === 'schedule' || target === 'settings';
     const isTracking  = target === 'tracking';
     tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === target));
     views.forEach(v   => v.classList.toggle('active', v.id === `${target}-view`));
@@ -54,17 +54,6 @@ initScheduler();
 initChadOps();
 initWeeklySchedule();
 initNavClocks();
-
-// chadOps internal subtab switching
-const coSubtabBtns     = document.querySelectorAll('[data-cosubtab]');
-const coSubtabContents = document.querySelectorAll('.co-subtab-content');
-coSubtabBtns.forEach(btn => {
-  btn.addEventListener('click', () => {
-    const target = btn.dataset.cosubtab;
-    coSubtabBtns.forEach(b => b.classList.toggle('active', b.dataset.cosubtab === target));
-    coSubtabContents.forEach(c => c.classList.toggle('active', c.id === `co-subtab-${target}`));
-  });
-});
 
 // Restore tab from URL hash — must run after all initX() so their listeners are registered
 const _initHash = location.hash.slice(1);

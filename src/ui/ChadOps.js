@@ -1,7 +1,10 @@
 import { store }                              from '../store.js';
 import { propagate }                          from '../tle.js';
 import { sunDirectionECI, isInEclipse }       from '../sunVector.js';
-import { fetchPassGsCoords, buildPolarSVG }    from './passPolar.js';
+import { fetchPassGsCoords, buildPolarSVG, computePolarPoints, computePolarMarkers } from './passPolar.js';
+import { fetchProcedureReport, procedureReportHTML } from './procedureReport.js';
+import { fetchEbn0Series, ebn0HTML } from './ebn0.js';
+import { wireLinkedCursor } from './passCursor.js';
 import { getPingIntervalSec, getPingElapsedSec, getLastPingMs, satBaseUrl, pingSatellite } from '../satPing.js';
 import { satSubsystemOrigin, satSubsystemHost } from '../satSubsystems.js';
 import {
@@ -9,11 +12,11 @@ import {
   positionTooltip     as _positionTooltip,
 } from './passTooltip.js';
 
-// URL builders — subnet routing: .1=SCC, .3=GNM, .4=MIC, .5=FDS (see satSubsystems.js).
+// URL builders — subnet routing: .1=SCC, .2=FDS, .3=GNM, .4=MIC, .5=SCC RO (see satSubsystems.js).
 // FDS/GNM/SCC may be overridden as bare IPs OR full URLs (e.g. a hostname+HTTPS
 // deployment), so these read the resolved origin rather than assuming an IP.
 const _grafanaUrl   = noradId => {
-  const host = satSubsystemHost(noradId, 'fds'); // Grafana is hosted on the FDS box, port 3000
+  const host = satSubsystemHost(noradId, 'sccRo'); // Grafana is hosted on the SCC RO box, port 3000
   return host ? `http://${host}:3000/?orgId=1&from=now-6h&to=now&timezone=browser` : null;
 };
 const _dashboardUrl = ip => ip ? `http://${ip}/` : null;
@@ -100,13 +103,51 @@ function _evtBadge(events, baseline) {
   }).join('')}</div>`;
 }
 
+// Ground alerts get their own 5-step severity palette (nominal→critical) instead of
+// the shared 3-bucket _monPillCls used elsewhere — kept separate to avoid recoloring
+// battery/orbit pills that already rely on _monPillCls's coarser grouping.
+const _GROUND_SEV_COLOR = {
+  NOMINAL:  '#2db872',
+  WATCH:    '#8bc34a',
+  WARNING:  '#ffbe0b',
+  DISTRESS: '#ff8c00',
+  CRITICAL: '#e63946',
+};
+const _GROUND_SEV_CLS = {
+  NOMINAL:  'co-pill-ga-nominal',
+  WATCH:    'co-pill-ga-watch',
+  WARNING:  'co-pill-ga-warning',
+  DISTRESS: 'co-pill-ga-distress',
+  CRITICAL: 'co-pill-ga-critical',
+};
+
+// Ground-side monitoring alarms (category GROUND from /api/v1/events), counted by
+// criticality over the last 24h — same visual language as _evtBadge, but a direct
+// count instead of a counter delta, since these are discrete events, not a cumulative
+// on-board counter.
+function _groundEvtBadge(counts) {
+  if (!counts) return '<span class="co-nil">—</span>';
+  const rows = [
+    { label: 'CRIT',  v: counts.critical, sev: 'CRITICAL' },
+    { label: 'DIST',  v: counts.distress, sev: 'DISTRESS' },
+    { label: 'WARN',  v: counts.warning,  sev: 'WARNING'  },
+    { label: 'WATCH', v: counts.watch,    sev: 'WATCH'    },
+  ];
+  return `<div class="co-evt-stack">${rows.map(r =>
+    `<span class="co-mode-label">${r.label}</span><span class="co-pill ${_GROUND_SEV_CLS[r.sev]}">${r.v}</span><span></span>`
+  ).join('')}</div>`;
+}
+
 // ── External links ────────────────────────────────────────────────
 
-function _linkBadge(label, url) {
+// version is embedded right in the badge (e.g. "SCC 5.8.6 ↗") so a subsystem's
+// link and its version share one compact element instead of two separate columns.
+function _linkBadge(label, url, version) {
+  const text = version ? `${label} <span class="co-link-ver">${version}</span>` : label;
   if (url) {
-    return `<a href="${url}" target="_blank" rel="noopener" class="co-link">${label} ↗</a>`;
+    return `<a href="${url}" target="_blank" rel="noopener" class="co-link">${text} ↗</a>`;
   }
-  return `<span class="co-link co-link-tbd" title="URL not yet configured">${label} ↗</span>`;
+  return `<span class="co-link co-link-tbd" title="URL not yet configured">${text} ↗</span>`;
 }
 
 // ── Pass dots ─────────────────────────────────────────────────────
@@ -125,6 +166,13 @@ function _passDots(passes) {
     return `<span class="co-dot ${cls}" data-idx="${i}">${ch}</span>`;
   }).join('');
   return `<div class="co-dots-grid">${html}</div>`;
+}
+
+// True while `now` falls inside a pass window (aos0 → los0), regardless of the
+// stale `future` flag captured at fetch time — used to glow the fleet row LIVE
+// while a satellite is actually overhead a station.
+function _inPassNow(passes, now) {
+  return !!(passes ?? []).find(p => p.start <= now && now <= p.end);
 }
 
 function _battMonTooltip(mon) {
@@ -184,24 +232,55 @@ function _buildPingCell(satId) {
 
 // ── GNSS cell ─────────────────────────────────────────────────────
 
+function _gnssAgeCls(ms) {
+  return ms < 43_200_000 ? 'co-gnss-ok' : ms < 86_400_000 ? 'co-gnss-warn' : 'co-gnss-stale';
+}
+
 function _gnssCell(gnss) {
   if (!gnss) return '<span class="co-nil">—</span>';
   const now = Date.now();
-  let fsCls, fsVal;
-  if (!gnss.lastFinesteering) {
-    fsCls = 'co-gnss-nil'; fsVal = '—';
+  let bothCls, bothVal;
+  if (!gnss.lastBothGood) {
+    bothCls = 'co-gnss-nil'; bothVal = '—';
   } else {
-    const ms = now - gnss.lastFinesteering.getTime();
-    fsCls = ms < 43_200_000 ? 'co-gnss-ok' : ms < 86_400_000 ? 'co-gnss-warn' : 'co-gnss-stale';
-    fsVal = _fmtAgo(ms);
+    bothCls = _gnssAgeCls(now - gnss.lastBothGood.getTime());
+    bothVal = _fmtAgo(now - gnss.lastBothGood.getTime());
   }
   const hkCls = gnss.hkIsValid == null ? 'co-gnss-nil' : gnss.hkIsValid ? 'co-gnss-ok' : 'co-gnss-stale';
   const hkVal = gnss.hkIsValid == null ? '—' : gnss.hkIsValid ? 'HK VALID' : 'HK INVALID';
   return `<div class="co-gnss-stack">
     <span class="co-gnss-sub">FINESTEERING</span>
-    <div class="co-gnss-row ${fsCls}" title="Time since last FINESTEERING"><span class="co-gnss-led">●</span><span class="co-gnss-val">${fsVal}</span></div>
+    <div class="co-gnss-row ${bothCls}" title="Time since last FINESTEERING and HK VALID together"><span class="co-gnss-led">●</span><span class="co-gnss-val">${bothVal}</span></div>
     <div class="co-gnss-row ${hkCls}" title="HK validity — last received packet"><span class="co-gnss-led">●</span><span class="co-gnss-val">${hkVal}</span></div>
   </div>`;
+}
+
+// Satellite-specific fields with no subsystem link of their own (BDS/procedures,
+// from /api/v1/globals) — each gets its own full-width line under the link badges
+// so a long BDS build string doesn't crowd out the procedures version.
+function _globalsLine(globals) {
+  if (!globals?.bdsVersion && !globals?.proceduresVersion) return '';
+  const line = (label, val) => val ? `<div class="co-globals-line"><span class="co-globals-label">${label}</span>${val}</div>` : '';
+  return line('BDS', globals.bdsVersion) + line('PROC', globals.proceduresVersion);
+}
+
+// Full subsystem link + version breakdown — shown in a hover tooltip off the Links
+// cell's (i) icon instead of inline, so the cell itself stays down to just the
+// Dashboard badge for compactness.
+function _linksDetailHTML(sat) {
+  const v = store.satVersions[sat.id] ?? {};
+  const badges = [
+    _linkBadge('SCC',     _satLink(sat.noradId, 'scc',     v.scc?.appUrl   || satSubsystemOrigin(sat.noradId, 'scc')   || null), v.scc?.version),
+    _linkBadge('FDS',     v.fds?.appUrl   || satSubsystemOrigin(sat.noradId, 'fds')   || null, v.fds?.version),
+    _linkBadge('SCC RO',  v.sccRo?.appUrl || satSubsystemOrigin(sat.noradId, 'sccRo') || null, v.sccRo?.version),
+    _linkBadge('GNM',     _satLink(sat.noradId, 'gnm',     v.gnm?.appUrl   || _gnmUrl(sat.noradId)), v.gnm?.version),
+    _linkBadge('MIC',     v.mic?.appUrl   || satSubsystemOrigin(sat.noradId, 'mic')   || null, v.mic?.version),
+    _linkBadge('Grafana', _satLink(sat.noradId, 'grafana', _grafanaUrl(sat.noradId))),
+  ].join('');
+  const globals = _globalsLine(store.satGlobals[sat.id]);
+  return `<div class="co-tt-header">${sat.name} <span class="co-links-detail-sub">Links &amp; Versions</span></div>
+    <div class="co-links-detail-grid">${badges}</div>
+    ${globals ? `<div class="co-tt-sep"></div>${globals}` : ''}`;
 }
 
 // ── Reaction wheel cell ───────────────────────────────────────────
@@ -226,6 +305,7 @@ function _rwCell(rw) {
 
 function _rowHTML(sat, now, eclipse) {
   const tm = store.satTelemetry[sat.id] ?? null;
+  const inPass = _inPassNow(store.satPasses[sat.id], now);
 
   const lastContactMs = tm?.receptionTime ? new Date(tm.receptionTime).getTime() : null;
   const elapsed = lastContactMs !== null ? now - lastContactMs : null;
@@ -297,8 +377,11 @@ function _rowHTML(sat, now, eclipse) {
     <div class="co-orbit-row"><span class="co-orbit-label">TLE</span>${tleHtml}</div>
   </div>`;
 
-  return `<tr class="co-row" data-sat-id="${sat.id}">
-    <td class="co-name-cell">${sat.name}</td>
+  const sccColor = store.satGlobals[sat.id]?.sccColor;
+  const rowStyle = sccColor ? ` style="--scc-color:${sccColor}"` : '';
+
+  return `<tr class="co-row${inPass ? ' co-row-live' : ''}" data-sat-id="${sat.id}"${rowStyle}>
+    <td class="co-name-cell">${sat.name}${inPass ? '<span class="co-pass-live-badge">● LIVE</span>' : ''}</td>
     <td class="co-ping-cell" data-field="ping-cell">${_buildPingCell(sat.id)}</td>
     <td class="co-contact-cell">${contactCell}</td>
     <td class="co-mode-cell">${modeCell}</td>
@@ -307,15 +390,9 @@ function _rowHTML(sat, now, eclipse) {
     <td class="co-gnss-cell">${_gnssCell(store.satGnss[sat.id])}</td>
     <td class="co-passes-cell" data-sat-id="${sat.id}">${_passDots(store.satPasses[sat.id])}</td>
     <td>${orbitCell}</td>
-    <td class="co-alerts-cell"><span class="co-nil">—</span></td>
+    <td class="co-alerts-cell">${_groundEvtBadge(store.satGroundEvents[sat.id])}</td>
     <td class="co-alerts-cell">${_evtBadge(tm?.events, store.satEventBaseline[sat.id])}</td>
-    <td class="co-links-cell">${(() => {
-      const ip = satBaseUrl(sat.noradId);
-      return _linkBadge('SCC',      _satLink(sat.noradId, 'scc',     satSubsystemOrigin(sat.noradId, 'scc') || null))
-           + _linkBadge('Grafana',  _satLink(sat.noradId, 'grafana', _grafanaUrl(sat.noradId)))
-           + _linkBadge('Dashboard',_dashboardUrl(ip))
-           + _linkBadge('GNM',      _satLink(sat.noradId, 'gnm',     _gnmUrl(sat.noradId)));
-    })()}</td>
+    <td class="co-links-cell">${_linkBadge('Dashboard', _dashboardUrl(satBaseUrl(sat.noradId)))}<span class="co-links-info" data-sat-id="${sat.id}">ⓘ</span></td>
   </tr>`;
 }
 
@@ -372,7 +449,7 @@ export function initChadOps() {
 
   const GNSS_LEGEND_HTML = `
     <div class="co-legend-title">TM_3_25_OBSW_HK_GNSS_RTE</div>
-    <div class="co-legend-title co-legend-gap">FINESTEERING — GNSS_AM_TIMESYNC_STATUS</div>
+    <div class="co-legend-title co-legend-gap">FINESTEERING + HK VALID together</div>
     <div class="co-legend-row"><span class="co-gnss-led" style="color:#00cc88">●</span> &lt; 12 h</div>
     <div class="co-legend-row"><span class="co-gnss-led" style="color:#ffcc00">●</span> &lt; 24 h</div>
     <div class="co-legend-row"><span class="co-gnss-led" style="color:#ff4466">●</span> ≥ 24 h</div>
@@ -413,6 +490,28 @@ export function initChadOps() {
     boardAlertsHeader.addEventListener('mouseleave', _scheduleHide);
   }
 
+  const GROUND_ALERTS_HTML = `
+    <div class="co-legend-title">/api/v1/events · category = GROUND</div>
+    <div class="co-legend-sub">Ground-side monitoring alarms — SCC watches telemetry parameters against configured thresholds and raises one of these when a value deviates from nominal. Counts are over the last 24 h.</div>
+    <div class="co-legend-title co-legend-gap">Severity levels</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.NOMINAL}">●</span> Nominal</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.WATCH}">●</span> Watch</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.WARNING}">●</span> Warning</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.DISTRESS}">●</span> Distress</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.CRITICAL}">●</span> Critical</div>`;
+
+  const groundAlertsHeader = document.getElementById('co-ground-alerts-th');
+  if (groundAlertsHeader) {
+    groundAlertsHeader.addEventListener('mouseenter', e => {
+      _cancelHide();
+      tooltip.innerHTML     = GROUND_ALERTS_HTML;
+      tooltip.style.display = 'block';
+      _positionTooltip(e, tooltip);
+    });
+    groundAlertsHeader.addEventListener('mousemove',  e => _positionTooltip(e, tooltip));
+    groundAlertsHeader.addEventListener('mouseleave', _scheduleHide);
+  }
+
   function _wireDots() {
     tbody.querySelectorAll('.co-dot[data-idx]').forEach(dot => {
       const satId = dot.closest('[data-sat-id]')?.dataset.satId;
@@ -422,18 +521,46 @@ export function initChadOps() {
         const sat  = store.satellites.find(s => s.id === satId);
         const pass = sat ? (store.satPasses[sat.id] ?? [])[idx] : null;
         if (!pass) return;
-        const grafanaHost = satSubsystemHost(sat.noradId, 'fds') || null;
+        const grafanaHost = satSubsystemHost(sat.noradId, 'sccRo') || null;
         tooltip.innerHTML     = _tooltipContent(pass, grafanaHost, sat);
         tooltip.style.display = 'block';
         _positionTooltip(e, tooltip);
-        // Async polar injection
-        if (sat?.satrec) {
-          const coords = await fetchPassGsCoords(sat, pass, store.groundStations);
-          if (coords && tooltip.style.display !== 'none') {
-            const slot = tooltip.querySelector('.polar-slot');
-            if (slot) slot.outerHTML = buildPolarSVG(pass, sat, coords.lat, coords.lon, coords.rxMask);
-          }
+        // Async procedure-report injection
+        if (!pass.future && grafanaHost) {
+          fetchProcedureReport(grafanaHost, pass.start.getTime(), pass.end.getTime()).then(report => {
+            if (tooltip.style.display === 'none') return;
+            const slot = tooltip.querySelector('.proc-report-slot');
+            if (slot) { slot.outerHTML = procedureReportHTML(report); _positionTooltip(e, tooltip); }
+          });
         }
+        // Eb/N0 series and polar coords are fetched in parallel, but injected and
+        // cursor-linked together so the shared hover works as soon as either
+        // chart is shown — neither chart pops in independently ahead of the other.
+        const ebn0Promise = (!pass.future && sat.noradId)
+          ? fetchEbn0Series(sat.noradId, pass.start.getTime(), pass.end.getTime(), pass.network)
+          : Promise.resolve(null);
+        const coordsPromise = sat?.satrec
+          ? fetchPassGsCoords(sat, pass, store.groundStations)
+          : Promise.resolve(null);
+
+        const [series, coords] = await Promise.all([ebn0Promise, coordsPromise]);
+        if (tooltip.style.display === 'none') return;
+
+        let polarPoints = null, markers = null;
+        const polarSlot = tooltip.querySelector('.polar-slot');
+        if (coords && polarSlot) {
+          polarSlot.outerHTML = buildPolarSVG(pass, sat, coords.lat, coords.lon, coords.rxMask);
+          polarPoints = computePolarPoints(pass, sat, coords.lat, coords.lon);
+          markers = computePolarMarkers(polarPoints, coords.rxMask);
+        }
+        const polarEl = tooltip.querySelector('.pass-polar');
+
+        const ebn0Slot = tooltip.querySelector('.ebn0-slot');
+        if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers);
+        const ebn0El = tooltip.querySelector('.ebn0-chart');
+
+        _positionTooltip(e, tooltip);
+        wireLinkedCursor(polarEl, polarPoints, ebn0El, series);
       });
       dot.addEventListener('mouseleave', _scheduleHide);
     });
@@ -448,6 +575,19 @@ export function initChadOps() {
           tooltip.style.display = 'block';
           _positionTooltip(e, tooltip);
         } catch { /* bad JSON, ignore */ }
+      });
+      el.addEventListener('mouseleave', _scheduleHide);
+    });
+
+    // Links detail tooltip — full subsystem link + version breakdown
+    tbody.querySelectorAll('.co-links-info[data-sat-id]').forEach(el => {
+      el.addEventListener('mouseenter', e => {
+        const sat = store.satellites.find(s => s.id === el.dataset.satId);
+        if (!sat) return;
+        _cancelHide();
+        tooltip.innerHTML     = _linksDetailHTML(sat);
+        tooltip.style.display = 'block';
+        _positionTooltip(e, tooltip);
       });
       el.addEventListener('mouseleave', _scheduleHide);
     });
@@ -526,6 +666,22 @@ export function initChadOps() {
         else                  { eclEl.className = 'co-ecl-sun';    eclEl.textContent = '☀ SUN'; }
       }
 
+      // In-pass LIVE glow (changes on aos0/los0 boundaries)
+      const nameEl = row.querySelector('.co-name-cell');
+      if (nameEl) {
+        const inPass = _inPassNow(store.satPasses[sat.id], now);
+        row.classList.toggle('co-row-live', inPass);
+        let badge = nameEl.querySelector('.co-pass-live-badge');
+        if (inPass && !badge) {
+          badge = document.createElement('span');
+          badge.className   = 'co-pass-live-badge';
+          badge.textContent = '● LIVE';
+          nameEl.appendChild(badge);
+        } else if (!inPass && badge) {
+          badge.remove();
+        }
+      }
+
       // TLE freshness (recomputed from epoch on every tick so the age counter advances)
       const tleEl = row.querySelector('.co-tle-age');
       if (tleEl && sat.satrec) {
@@ -586,19 +742,13 @@ export function initChadOps() {
 
   document.querySelectorAll('[data-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (btn.dataset.tab === 'chadops') start();
-      else stop();
-    });
-  });
-  document.querySelectorAll('[data-cosubtab]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (btn.dataset.cosubtab === 'fleet') start();
+      if (btn.dataset.tab === 'fleet') start();
       else stop();
     });
   });
 
   store.subscribe(key => {
-    if ((key === 'satellites' || key === 'satTelemetry' || key === 'satPasses' || key === 'satGnss') && _active) render();
+    if ((key === 'satellites' || key === 'satTelemetry' || key === 'satPasses' || key === 'satGnss' || key === 'satGlobals' || key === 'satVersions' || key === 'satGroundEvents') && _active) render();
     if (key === 'pingStatus' && _active) _updatePingDots();
   });
 }

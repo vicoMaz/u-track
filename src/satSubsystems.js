@@ -6,10 +6,11 @@
 // Any of them can be individually overridden (e.g. non-standard deployment, testing
 // against a different box).
 export const SUBSYSTEMS = {
-  scc: { label: 'SCC', subnet: 1, port: 15000 },
-  gnm: { label: 'GNM', subnet: 3, port: 15602 },
-  mic: { label: 'MIC', subnet: 4, port: 16060 },
-  fds: { label: 'FDS', subnet: 5, port: 15500 },
+  scc:   { label: 'SCC',    subnet: 1, port: 15000 },
+  gnm:   { label: 'GNM',    subnet: 3, port: 15602 },
+  mic:   { label: 'MIC',    subnet: 4, port: 16060 },
+  fds:   { label: 'FDS',    subnet: 2, port: 8000  },
+  sccRo: { label: 'SCC RO', subnet: 5, port: 15500 },
 };
 
 export function satBaseIp(noradId) {

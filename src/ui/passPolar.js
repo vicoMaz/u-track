@@ -144,42 +144,57 @@ export async function fetchPassGsCoords(sat, pass, groundStations) {
 
 // ── Synchronous SVG builder ───────────────────────────────────────────────────
 
-/**
- * Build the polar plot SVG given explicit lat/lon and optional rx_mask array.
- * rxMask: 360-element array where rxMask[az] = min elevation (deg) at that azimuth.
- * Returns an SVG string, or '' if not enough elevation points.
- */
-export function buildPolarSVG(pass, sat, lat, lon, rxMask) {
-  const CX = 65, CY = 65, R = 54;
-  const r30 = +(R * 2/3).toFixed(1);
-  const r60 = +(R * 1/3).toFixed(1);
+// Shared polar-canvas geometry — exported so linked-cursor wiring (passCursor.js)
+// can convert between mouse position and canvas coordinates without duplicating
+// these constants.
+export const POLAR_VIEWBOX = 130;
+const CX = 65, CY = 65, R = 54;
 
+function _toXY(az, el) {
+  const r = R * (1 - el / 90);
+  const a = az * Math.PI / 180;
+  return [+(CX + r * Math.sin(a)).toFixed(1), +(CY - r * Math.cos(a)).toFixed(1)];
+}
+
+// Sampled az/el trajectory for a pass, each point tagged with its timestamp and
+// canvas (x,y) — the same sampling buildPolarSVG uses, exposed so external code
+// (the linked Eb/N0 cursor) can map mouse position ↔ time without re-propagating.
+export function computePolarPoints(pass, sat, lat, lon) {
   const t0 = (pass.start instanceof Date ? pass.start : new Date(pass.start)).getTime();
   const t1 = (pass.end   instanceof Date ? pass.end   : new Date(pass.end)).getTime();
-
   const pts = [];
   for (let t = t0; t <= t1 + 15_000; t += 30_000) {
-    const ae = _azel(sat.satrec, lat, lon, new Date(Math.min(t, t1)));
-    if (ae && ae.el >= 0) pts.push(ae);
+    const tc = Math.min(t, t1);
+    const ae = _azel(sat.satrec, lat, lon, new Date(tc));
+    if (ae && ae.el >= 0) {
+      const [x, y] = _toXY(ae.az, ae.el);
+      pts.push({ t: tc, az: ae.az, el: ae.el, x, y });
+    }
   }
-  if (pts.length < 2) return '';
+  return pts;
+}
 
-  const toXY = ({az, el}) => {
-    const r = R * (1 - el / 90);
-    const a = az * Math.PI / 180;
-    return [+(CX + r * Math.sin(a)).toFixed(1), +(CY - r * Math.cos(a)).toFixed(1)];
-  };
+// Colors for the AOS/LOS/mask-entry/mask-exit/apogee markers — exported so the
+// Eb/N0 chart (ebn0.js) can dot the same moments in the same colors, letting a
+// dip/spike there be read against a specific point in the pass geometry.
+export const MARKER_COLORS = {
+  aos: '#00ff9d',
+  los: '#ff6060',
+  maskEntry: '#00cfff',
+  maskExit: '#ff9900',
+  apogee: '#ffe066',
+};
 
-  const pathD   = pts.map((p, i) => { const [x,y]=toXY(p); return `${i?'L':'M'}${x},${y}`; }).join('');
-  const [ax,ay] = toXY(pts[0]);
-  const [lx,ly] = toXY(pts[pts.length-1]);
+// AOS/LOS/apogee/mask-entry/mask-exit — the same "moments of interest" the
+// polar plot marks, computed once so ebn0.js can dot its own chart at the
+// matching timestamps with the matching colors.
+export function computePolarMarkers(pts, rxMask) {
+  if (!pts?.length) return null;
+  const aos = pts[0];
+  const los = pts[pts.length - 1];
+  let apogee = pts[0];
+  for (const p of pts) if (p.el > apogee.el) apogee = p;
 
-  // Apogee = max elevation point
-  let apIdx = 0;
-  pts.forEach((p, i) => { if (p.el > pts[apIdx].el) apIdx = i; });
-  const [apx, apy] = toXY(pts[apIdx]);
-
-  // Mask entry/exit = first/last point above the rx_mask threshold
   let maskEntry = null, maskExit = null;
   if (Array.isArray(rxMask) && rxMask.length >= 360) {
     for (const p of pts) {
@@ -187,6 +202,28 @@ export function buildPolarSVG(pass, sat, lat, lon, rxMask) {
       if (p.el >= minEl) { if (!maskEntry) maskEntry = p; maskExit = p; }
     }
   }
+  return { aos, los, apogee, maskEntry, maskExit };
+}
+
+/**
+ * Build the polar plot SVG given explicit lat/lon and optional rx_mask array.
+ * rxMask: 360-element array where rxMask[az] = min elevation (deg) at that azimuth.
+ * Returns an SVG string, or '' if not enough elevation points.
+ */
+export function buildPolarSVG(pass, sat, lat, lon, rxMask) {
+  const r30 = +(R * 2/3).toFixed(1);
+  const r60 = +(R * 1/3).toFixed(1);
+
+  const pts = computePolarPoints(pass, sat, lat, lon);
+  if (pts.length < 2) return '';
+
+  const toXY = ({az, el}) => _toXY(az, el);
+
+  const pathD   = pts.map((p, i) => { const [x,y]=toXY(p); return `${i?'L':'M'}${x},${y}`; }).join('');
+  const { aos, los, apogee, maskEntry, maskExit } = computePolarMarkers(pts, rxMask);
+  const [ax,ay]   = toXY(aos);
+  const [lx,ly]   = toXY(los);
+  const [apx,apy] = toXY(apogee);
 
   // Label placed radially outward from centre
   const radLabel = (x, y, text, color) => {
@@ -217,13 +254,13 @@ export function buildPolarSVG(pass, sat, lat, lon, rxMask) {
     const elIn  = (rxMask[Math.round(maskEntry.az) % 360] ?? maskEntry.el).toFixed(0);
     const elOut = (rxMask[Math.round(maskExit.az)  % 360] ?? maskExit.el ).toFixed(0);
     maskMarkerSVG = `
-    <circle cx="${mex}" cy="${mey}" r="2.5" fill="#00cfff"/>
-    ${radLabel(mex, mey, `▲${elIn}°`, '#00cfff')}
-    <circle cx="${mlx}" cy="${mly}" r="2.5" fill="#ff9900"/>
-    ${radLabel(mlx, mly, `▼${elOut}°`, '#ff9900')}`;
+    <circle cx="${mex}" cy="${mey}" r="2.5" fill="${MARKER_COLORS.maskEntry}"/>
+    ${radLabel(mex, mey, `▲${elIn}°`, MARKER_COLORS.maskEntry)}
+    <circle cx="${mlx}" cy="${mly}" r="2.5" fill="${MARKER_COLORS.maskExit}"/>
+    ${radLabel(mlx, mly, `▼${elOut}°`, MARKER_COLORS.maskExit)}`;
   }
 
-  return `<svg width="200" height="200" viewBox="0 0 130 130" xmlns="http://www.w3.org/2000/svg" class="pass-polar">
+  return `<svg width="200" height="200" viewBox="0 0 ${POLAR_VIEWBOX} ${POLAR_VIEWBOX}" xmlns="http://www.w3.org/2000/svg" class="pass-polar">
     <circle cx="${CX}" cy="${CY}" r="${R}" fill="#0c0c1c" stroke="#2a2a44" stroke-width="0.8"/>
     ${maskSVG}
     <circle cx="${CX}" cy="${CY}" r="${r30}" fill="none" stroke="#1e1e38" stroke-width="0.7" stroke-dasharray="2,2"/>
@@ -237,11 +274,15 @@ export function buildPolarSVG(pass, sat, lat, lon, rxMask) {
     <text x="${CX+r30+2}" y="${CY-1}" fill="#2e2e52" font-size="6" font-family="monospace">30°</text>
     <text x="${CX+r60+2}" y="${CY-1}" fill="#2e2e52" font-size="6" font-family="monospace">60°</text>
     <path d="${pathD}" fill="none" stroke="#ff3060" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="${ax}" cy="${ay}" r="2.5" fill="#00ff9d"/>
-    <circle cx="${lx}" cy="${ly}" r="2.5" fill="#ff6060"/>
+    <circle cx="${ax}" cy="${ay}" r="2.5" fill="${MARKER_COLORS.aos}"/>
+    <circle cx="${lx}" cy="${ly}" r="2.5" fill="${MARKER_COLORS.los}"/>
     ${maskMarkerSVG}
-    <circle cx="${apx}" cy="${apy}" r="3" fill="#ffe066"/>
-    ${radLabel(apx, apy, `${pts[apIdx].el.toFixed(0)}°`, '#ffe066')}
+    <circle cx="${apx}" cy="${apy}" r="3" fill="${MARKER_COLORS.apogee}"/>
+    ${radLabel(apx, apy, `${apogee.el.toFixed(0)}°`, MARKER_COLORS.apogee)}
+    <circle class="polar-cursor-dot" r="3" fill="#fff" stroke="#ff3060" stroke-width="1" visibility="hidden"/>
+    <rect class="polar-cursor-label-bg" width="1" height="9" rx="2" fill="#12121e" stroke="#2a2a4a" stroke-width="0.6" visibility="hidden"/>
+    <text class="polar-cursor-text" x="0" y="0" font-size="6" font-family="monospace" fill="#ddd" text-anchor="middle" visibility="hidden"></text>
+    <circle class="polar-hit" cx="${CX}" cy="${CY}" r="${R}" fill="transparent"/>
   </svg>`;
 }
 

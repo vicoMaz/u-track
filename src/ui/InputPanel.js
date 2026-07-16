@@ -110,10 +110,11 @@ function _patchGsToggles() {
 
 const LINK_DEFS = [
   { key: 'scc',     label: 'SCC',     subnet: 1, port: 15000 },  // .1 SCC machine
-  { key: 'fds',     label: 'FDS',     subnet: 5, port: 15500 },  // .5 FDS machine
+  { key: 'fds',     label: 'FDS',     subnet: 2, port: 8000  },  // .2 FDS machine
   { key: 'gnm',     label: 'GNM',     subnet: 3, port: 15602 },  // .3 GNM machine
   { key: 'gnc',     label: 'GNC',     subnet: null, port: null },
-  { key: 'grafana', label: 'Grafana', subnet: 5, port: 3000  },  // .5 FDS Grafana
+  { key: 'sccRo',   label: 'SCC RO',  subnet: 5, port: 15500 },  // .5 SCC read-only
+  { key: 'grafana', label: 'Grafana', subnet: 5, port: 3000  },  // .5 SCC RO box's Grafana
   { key: 'custom',  label: 'Custom',  subnet: null, port: null },
 ];
 
@@ -220,6 +221,10 @@ function _openSatEditModal(sat) {
         <div class="sem-colors">
           ${EDIT_COLORS.map(c => `<button class="sem-swatch${c === sat.color ? ' sem-swatch-sel' : ''}" data-color="${c}" style="--c:${c}" title="${c}"></button>`).join('')}
         </div>
+        <button class="sem-scc-color-btn" id="sem-scc-color" ${store.satGlobals[sat.id]?.sccColor ? '' : 'disabled'}
+                title="${store.satGlobals[sat.id]?.sccColor ? `Match ${store.satGlobals[sat.id].sccColor}` : 'SCC color not loaded yet'}">
+          Use SCC Color
+        </button>
 
         <div class="sem-label">Type</div>
         <div class="sem-model-row">
@@ -250,15 +255,21 @@ function _openSatEditModal(sat) {
   document.body.appendChild(modal);
 
   // Color swatches — apply immediately
+  const _applyColor = c => {
+    modal.querySelectorAll('.sem-swatch').forEach(s => s.classList.toggle('sem-swatch-sel', s.dataset.color === c));
+    modal.querySelector('#sem-dot-preview').style.background = c;
+    store.setSatColor(sat.id, c);
+    localStorage.setItem(`sat-color-${sat.noradId}`, c);
+  };
   modal.querySelectorAll('.sem-swatch').forEach(sw => {
-    sw.addEventListener('click', () => {
-      modal.querySelectorAll('.sem-swatch').forEach(s => s.classList.remove('sem-swatch-sel'));
-      sw.classList.add('sem-swatch-sel');
-      const c = sw.dataset.color;
-      modal.querySelector('#sem-dot-preview').style.background = c;
-      store.setSatColor(sat.id, c);
-      localStorage.setItem(`sat-color-${sat.noradId}`, c);
-    });
+    sw.addEventListener('click', () => _applyColor(sw.dataset.color));
+  });
+
+  // "Use SCC Color" — matches the color the satellite itself reports (globals endpoint),
+  // not necessarily one of the fixed EDIT_COLORS swatches.
+  modal.querySelector('#sem-scc-color')?.addEventListener('click', () => {
+    const sccColor = store.satGlobals[sat.id]?.sccColor;
+    if (sccColor) _applyColor(sccColor);
   });
 
   // Model buttons — apply immediately

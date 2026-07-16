@@ -38,12 +38,14 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
   satTelemetry: {},    // satId → { receptionTime, sysMode, gncMode, battVoltage, events }
   satPasses: {},       // satId → [{ id, start, end, aos5, los5, station, network, future }]
   satTmr: {},          // satId → { rangeStart, rangeEnd, gapWindows: [{start,end}] }
-  satGnss: {},              // satId → { lastFinesteering: Date|null, hkIsValid: bool|null }
+  satGnss: {},              // satId → { lastBothGood: Date|null, hkIsValid: bool|null }
   satEventBaseline: {},     // satId → { normal, low, med, high } — cumulative counts 24 h ago
+  satGroundEvents: {},      // satId → { watch, warning, distress, critical } — GROUND event counts, last 24h
+  satGlobals: {},           // satId → { bdsVersion, proceduresVersion, sccVersion, sccColor }
+  satVersions: {},          // satId → { fds, scc, sccRo, gnm, mic } each { version, appUrl } | null
   satScale: 500,
-  orbitAlt: 550,       // km — shared by night shadow + GS footprint
+  orbitAlt: 590,       // km — shared by night shadow + GS footprint
   trackedSatId: null,
-  _manualUntrack: false,  // true after user explicitly clicks away from tracking
   _listeners: [],
 
   subscribe(fn) { this._listeners.push(fn); },
@@ -182,6 +184,21 @@ setPingStatus(satId, status) {
     // no extra notify needed — read on next satTelemetry render
   },
 
+  setSatGroundEvents(satId, data) {
+    this.satGroundEvents[satId] = data;
+    this.notify('satGroundEvents');
+  },
+
+  setSatGlobals(satId, data) {
+    this.satGlobals[satId] = data;
+    this.notify('satGlobals');
+  },
+
+  setSatVersions(satId, data) {
+    this.satVersions[satId] = data;
+    this.notify('satVersions');
+  },
+
   updateSatTle(noradId, satrec) {
     const sat = this.satellites.find(s => s.noradId === noradId);
     if (sat) { sat.satrec = satrec; this.notify('satellites'); }
@@ -213,7 +230,6 @@ setPingStatus(satId, status) {
   },
 
   setTrackedSat(id) {
-    this._manualUntrack = (id === null);
     this.trackedSatId = id;
     this.notify('trackedSatId');
   },

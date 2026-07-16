@@ -1089,6 +1089,21 @@ body.tools-active #sat-info { display: none !important; }
   transform: scale(1.1);
 }
 
+.sem-scc-color-btn {
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: #1a1a2e;
+  border: 1px solid #2a2a4a;
+  border-radius: 5px;
+  color: #99aacc;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.sem-scc-color-btn:hover:not(:disabled) { background: #22223a; border-color: #3a3a6a; color: #ccddff; }
+.sem-scc-color-btn:disabled { opacity: .35; cursor: default; }
+
 .sem-model-row {
   display: flex; gap: 8px;
 }
@@ -1256,9 +1271,8 @@ body.tools-active #sat-info { display: none !important; }
 .vis-btn.vis-off { color: #2a3a4a; }
 .vis-btn:hover { opacity: 0.75; }
 
-/* ── Subtab system (shared: Tracking / chadOps) ──── */
-.track-subtab-bar,
-.co-subtab-bar {
+/* ── Subtab system (Tracking) ──── */
+.track-subtab-bar {
   height: 36px;
   background: #111118;
   border-bottom: 1px solid #2a2a3a;
@@ -1269,8 +1283,7 @@ body.tools-active #sat-info { display: none !important; }
   flex-shrink: 0;
 }
 
-.track-subtab,
-.co-subtab {
+.track-subtab {
   background: transparent;
   border: none;
   color: #888;
@@ -1280,13 +1293,10 @@ body.tools-active #sat-info { display: none !important; }
   font-size: 12px;
   transition: all 0.15s;
 }
-.track-subtab:hover,
-.co-subtab:hover { background: #1e1e2e; color: #ccc; }
-.track-subtab.active,
-.co-subtab.active { background: #1e1e2e; color: #fff; }
+.track-subtab:hover { background: #1e1e2e; color: #ccc; }
+.track-subtab.active { background: #1e1e2e; color: #fff; }
 /* Active underline — same accent as top-level tab bar */
-.track-subtab.active,
-.co-subtab.active { border-bottom: 2px solid #00d4ff; }
+.track-subtab.active { border-bottom: 2px solid #00d4ff; }
 
 .track-subtab-controls {
   margin-left: auto;
@@ -1809,26 +1819,19 @@ body.tools-active #sat-info { display: none !important; }
    chadOps — Operational Status Dashboard
    ═══════════════════════════════════════════════════════════════ */
 
-#chadops-view {
+#fleet-view,
+#schedule-view {
   background: #0a0a0f;
 }
-#chadops-view.active {
+#fleet-view.active,
+#schedule-view.active {
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
-/* ── chadOps subtab content ────────────────────────────────────── */
-.co-subtab-content {
-  display: none;
-  flex-direction: column;
-  flex: 1;
-  overflow: hidden;
-}
-.co-subtab-content.active { display: flex; }
-
-/* Fleet subtab scrolls internally */
-#co-subtab-fleet { overflow-y: auto; }
+/* Fleet scrolls internally */
+#fleet-view.active { overflow-y: auto; }
 
 .co-container {
   padding: 8px 16px;
@@ -1898,12 +1901,47 @@ body.tools-active #sat-info { display: none !important; }
   vertical-align: middle;
 }
 
+/* Colored accent from SCC's own sccColor (globals endpoint) — same left-edge
+   treatment as the side-panel satellite list, keyed off the satellite's own
+   reported color rather than the app-local color picker. */
+.co-row td:first-child {
+  border-left: 3px solid var(--scc-color, transparent);
+}
+
 /* ── Name + ping dot ───────────────────────────────────────────── */
 .co-name-cell {
   font-weight: 600;
   color: #bbb;
   min-width: 100px;
   white-space: nowrap;
+}
+
+/* Glowing LIVE badge — satellite is currently inside a pass window (aos0→los0) */
+.co-pass-live-badge {
+  display: inline-block;
+  margin-left: 7px;
+  padding: 1px 6px;
+  color: #eafff4;
+  background: #0d3b28;
+  border: 1px solid #2db872;
+  border-radius: 3px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  animation: co-pass-glow 1.4s ease-in-out infinite;
+}
+@keyframes co-pass-glow {
+  0%, 100% { box-shadow: 0 0 3px 0 rgba(45,184,114,0.55); }
+  50%      { box-shadow: 0 0 9px 2px rgba(45,184,114,0.95); }
+}
+
+/* Whole row gets a subtle live tint + left-edge glow while a pass is in progress */
+.co-row-live {
+  background: rgba(45,184,114,0.06);
+}
+.co-row-live td:first-child {
+  box-shadow: inset 3px 0 0 0 #2db872, 0 0 8px -2px rgba(45,184,114,0.6);
 }
 .co-ping-cell {
   text-align: center;
@@ -2036,6 +2074,13 @@ body.tools-active #sat-info { display: none !important; }
 .co-pill-safe    { background: #1a1200; color: #ffcc00; border: 1px solid #664d00; }
 .co-pill-mk      { background: #0e1a28; color: #7a99bb; border: 1px solid #1e3550; }
 
+/* Ground alerts — dedicated 5-step severity palette (nominal→critical) */
+.co-pill-ga-nominal  { background: #0e2a1a; color: #2db872; border: 1px solid #1e5030; }
+.co-pill-ga-watch    { background: #182a0e; color: #8bc34a; border: 1px solid #3a5020; }
+.co-pill-ga-warning  { background: #1a1000; color: #ffbe0b; border: 1px solid #664400; }
+.co-pill-ga-distress { background: #1a0f00; color: #ff8c00; border: 1px solid #663300; }
+.co-pill-ga-critical { background: #1a0008; color: #e63946; border: 1px solid #661020; }
+
 /* ── Pass dots ─────────────────────────────────────────────────── */
 .co-passes-cell { min-width: 160px; }
 
@@ -2085,12 +2130,52 @@ body.tools-active #sat-info { display: none !important; }
   border-radius: 50%;
   overflow: visible;
 }
+.pass-polar .polar-hit { cursor: crosshair; }
+.co-tt-details-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 8px;
+  margin-top: 2px;
+}
+.co-tt-details-row .pass-polar { margin: 0; flex: 0 0 auto; }
+.ebn0-block {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ebn0-stats {
+  font-size: 9.5px;
+  color: #8888aa;
+  font-family: 'Courier New', monospace;
+  text-align: center;
+  white-space: nowrap;
+}
+.ebn0-chart { display: block; width: 100%; }
+.ebn0-chart .ebn0-hit { cursor: crosshair; }
 .co-tt-header {
   font-weight: 600;
   color: #aaa;
   margin-bottom: 6px;
   padding-bottom: 6px;
   border-bottom: 1px solid #1e1e2e;
+}
+.co-tt-network {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8888aa;
+  background: rgba(136, 136, 170, 0.12);
+  border: 1px solid rgba(136, 136, 170, 0.3);
+  border-radius: 3px;
+  vertical-align: middle;
 }
 .co-tt-result { margin-bottom: 5px; font-weight: 600; }
 .co-tt-procs  { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
@@ -2123,6 +2208,62 @@ body.tools-active #sat-info { display: none !important; }
 .co-tt-future-status { font-weight: 700; font-size: 11.5px; margin-top: 4px; }
 .co-tt-time-row { display: flex; align-items: baseline; gap: 8px; font-size: 11px; color: #ccc; margin-bottom: 2px; font-family: 'Courier New', monospace; }
 .co-tt-time-lbl { font-size: 10px; text-transform: uppercase; color: #5a5a7a; min-width: 28px; }
+
+/* Shared pass-tooltip section heading (Procedure history / Routine Report / Pass trajectory) */
+.co-tt-section-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6a6a90;
+  margin-bottom: 4px;
+}
+.co-tt-preport {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-family: 'Courier New', monospace;
+}
+.co-tt-preport td {
+  padding: 1.5px 10px 1.5px 0;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+.co-tt-preport-step   { color: #ccc; }
+.co-tt-preport-status { font-weight: 700; padding-right: 8px !important; }
+.co-tt-preport-success { color: #00cc66; }
+.co-tt-preport-failure { color: #ff4455; }
+.co-tt-preport-other   { color: #ff8c00; }
+.co-tt-preport-info {
+  width: 100%;
+}
+.co-tt-preport-opt {
+  display: inline-block;
+  color: #c9c9ec;
+  background: rgba(140, 140, 220, 0.14);
+  border: 1px solid rgba(140, 140, 220, 0.3);
+  border-radius: 3px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.co-tt-preport-time {
+  text-align: right;
+  color: #99aacc;
+  padding-right: 0 !important;
+}
+.co-tt-preport-total td {
+  border-top: 1px solid #2a2a4a;
+  padding-top: 4px;
+  font-weight: 700;
+}
+.co-tt-preport-total td:first-child {
+  color: #7a7a9a;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+}
+.co-tt-preport-total .co-tt-preport-time { color: #ddd; }
 .co-tt-gap-btn {
   display: block;
   width: 100%;
@@ -2141,9 +2282,9 @@ body.tools-active #sat-info { display: none !important; }
 /* ── Info toast ── small fixed top-right notice, auto-dismisses ── */
 .info-toast {
   position: fixed;
-  top: 64px;
+  top: 66px; /* clears the 56px fixed tab bar with a visible gap */
   right: 14px;
-  z-index: 10002;
+  z-index: 100000; /* above #tab-bar (9999) and .co-tooltip (99999) — always on top */
   display: flex;
   align-items: center;
   gap: 7px;
@@ -2215,6 +2356,7 @@ body.tools-active #sat-info { display: none !important; }
 .co-tle-old   { color: #ffcc00; }
 .co-tle-stale { color: #ff4466; }
 
+
 /* ── Battery ───────────────────────────────────────────────────── */
 .co-batt-cell  { min-width: 75px; font-variant-numeric: tabular-nums; }
 .co-rw-cell    { min-width: 52px; }
@@ -2274,23 +2416,50 @@ body.tools-active #sat-info { display: none !important; }
 .co-links-cell {
   min-width: 90px;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.co-links-info {
+  color: #4a4a6a;
+  font-size: 11px;
+  cursor: help;
+  transition: color 0.15s;
+}
+.co-links-info:hover { color: #8888bb; }
+
+/* Tooltip header — satellite name + a dimmer subtitle alongside it */
+.co-links-detail-sub {
+  font-weight: 400;
+  color: #556;
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 10.5px;
+  margin-left: 4px;
+}
+
+/* Full breakdown, shown inside the tooltip triggered by .co-links-info */
+.co-links-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 6px 10px;
+  align-items: start;
+  margin-top: 2px;
 }
 
 .co-link {
   display: inline-block;
-  padding: 2px 8px;
-  border-radius: 4px;
+  padding: 3px 10px;
+  border-radius: 5px;
   font-size: 11px;
   font-weight: 600;
   text-decoration: none;
   border: 1px solid #2a2a4a;
-  color: #7a7aaa;
-  background: #0e0e1a;
+  color: #8888bb;
+  background: #14141f;
   transition: color 0.15s, border-color 0.15s, background 0.15s;
   letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 a.co-link:hover {
   color: #c77dff;
@@ -2300,6 +2469,32 @@ a.co-link:hover {
 .co-link-tbd {
   opacity: 0.35;
   cursor: not-allowed;
+}
+.co-link-ver {
+  opacity: 0.65;
+  font-weight: 400;
+  font-family: 'Courier New', monospace;
+  margin-left: 2px;
+}
+
+/* BDS/procedures — satellite-specific, no subsystem link of their own */
+.co-globals-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  color: #ccc;
+  font-family: 'Courier New', monospace;
+  white-space: nowrap;
+  margin-top: 3px;
+}
+.co-globals-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #556;
+  text-transform: uppercase;
+  min-width: 30px;
 }
 
 /* ── Misc ──────────────────────────────────────────────────────── */

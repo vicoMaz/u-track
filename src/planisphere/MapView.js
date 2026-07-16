@@ -127,7 +127,7 @@ export function initMap() {
   const altSlider = document.getElementById('orbit-alt-slider');
   const altField  = document.getElementById('orbit-alt-field');
   const updateAlt = (raw) => {
-    const v = Math.max(400, Math.min(700, Math.round(+raw) || 550));
+    const v = Math.max(400, Math.min(700, Math.round(+raw) || 590));
     altSlider.value = v;
     altField.value  = v;
     store.setOrbitAlt(v);

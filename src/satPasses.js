@@ -16,7 +16,7 @@ function _passOutcome(procs) {
 }
 
 export async function fetchSatPasses(sat) {
-  const ip = satSubsystemOrigin(sat.noradId, 'fds');
+  const ip = satSubsystemOrigin(sat.noradId, 'sccRo');
   if (!ip) return;
 
   const now   = new Date();

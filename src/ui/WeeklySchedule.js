@@ -243,16 +243,11 @@ export function initWeeklySchedule() {
     tooltip.element.style.display = 'none';
   }
 
-  // Listen to chadops subtab switches
-  document.querySelectorAll('[data-cosubtab]').forEach(btn => {
+  document.querySelectorAll('[data-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (btn.dataset.cosubtab === 'schedule') start();
+      if (btn.dataset.tab === 'schedule') start();
       else stop();
     });
-  });
-  // Stop when leaving chadops main tab
-  document.querySelectorAll('[data-tab]').forEach(btn => {
-    btn.addEventListener('click', () => { if (btn.dataset.tab !== 'chadops') stop(); });
   });
 
   store.subscribe(key => { if ((key === 'satellites' || key === 'satPasses') && _active) render(); });
