@@ -31,6 +31,11 @@ async function _queryLoki(grafanaHost, logql, startMs, endMs, limit) {
 const STEP_RE  = /^(.*?)\s{2,}(\S+)\s{2,}(.*?)\s{2,}(\d+(?:\.\d+)?)\s*$/;
 const TOTAL_RE = /^TOTAL PROCEDURE\s+(\d+(?:\.\d+)?)\s*$/;
 
+// Exported (alongside the internal name) so tests can feed it fixture Loki
+// lines directly — this is the piece most exposed to the report's log format
+// drifting, without needing a live Grafana connection to exercise it.
+export function parseProcedureReport(lines) { return _parseReport(lines); }
+
 function _parseReport(lines) {
   const startIdx = lines.findIndex(l => l.text.includes('Procedure execution report'));
   if (startIdx === -1) return null;

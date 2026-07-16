@@ -27,3 +27,18 @@ jobs:
 
       - name: Unit tests
         run: npm test
+
+      # GNM's live API has changed shape on us before (pass-metrics silently
+      # ignoring start/end and capping at 5000 rows) — this hits the real
+      # thing to catch it happening again. GitHub-hosted runners have no route
+      # to the ground-segment network, so it's designed to skip cleanly (exit
+      # 0) rather than fail when GNM_CHECK_HOST isn't set/reachable. Set the
+      # "GNM_CHECK_HOST" repo/org variable (Settings → Secrets and variables →
+      # Actions → Variables) to a reachable GNM host:port — e.g. from a
+      # self-hosted runner with a route to the ground segment — to actually
+      # exercise it.
+      - name: Live GNM API shape check
+        run: npm run check:gnm
+        timeout-minutes: 2
+        env:
+          GNM_CHECK_HOST: ${{ vars.GNM_CHECK_HOST }}
