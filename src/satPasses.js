@@ -15,6 +15,10 @@ function _passOutcome(procs) {
   return 'SUCCESS';
 }
 
+// Cancel a satellite's still-running fetch rather than let it pile up
+// alongside a new one — see satTelemetry.js's _ctrl for the same rationale.
+const _ctrl = new Map(); // satId → AbortController
+
 export async function fetchSatPasses(sat) {
   const ip = satSubsystemOrigin(sat.noradId, 'sccRo');
   if (!ip) return;
@@ -23,7 +27,9 @@ export async function fetchSatPasses(sat) {
   const start = new Date(now.getTime() - 7 * 24 * 3_600_000).toISOString();
   const end   = new Date(now.getTime() + 7 * 24 * 3_600_000).toISOString();
 
+  _ctrl.get(sat.id)?.abort();
   const ctrl  = new AbortController();
+  _ctrl.set(sat.id, ctrl);
   const timer = setTimeout(() => ctrl.abort(), 15_000);
   try {
     // Fetch events and procedures in parallel — same time window
@@ -93,7 +99,11 @@ export async function fetchSatPasses(sat) {
       })
       .sort((a, b) => a.start - b.start);
 
+    if (ctrl.signal.aborted) return; // superseded or timed out — don't overwrite with a stale/partial result
     store.setSatPasses(sat.id, passes);
   } catch { /* offline or aborted */ }
-  finally { clearTimeout(timer); }
+  finally {
+    clearTimeout(timer);
+    if (_ctrl.get(sat.id) === ctrl) _ctrl.delete(sat.id);
+  }
 }

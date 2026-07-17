@@ -94,30 +94,71 @@ async function _ping(sat) {
 
 const _schedTimers = {}; // satId → timer handle
 
-// Software versions change rarely — polling them every ping cycle (default 20s)
-// would be pure waste, so this is fetched on a much slower, independent cadence.
-const GLOBALS_REFRESH_MS = 30 * 60_000; // 30 min
-const _lastGlobalsMs = {}; // satId → timestamp of last completed globals fetch
+// Most polled data doesn't actually change every ping cycle (default 20s) —
+// TLEs update ~2×/day (and already arrive live via apiPoller's tleUpdate
+// feed), the antenna roster is near-static config, event baselines/ground
+// event counts are rolling aggregates that shift slowly, and the pass
+// schedule + procedure history only change a few times a day outside of an
+// active pass. Polling all of these every 20s per satellite was pure request
+// volume for no freshness benefit. Only telemetry genuinely needs 20s.
+// Each key gets its own independent cadence, tracked the same way the
+// pre-existing globals/versions slow cycle already worked.
+const CADENCE_MS = {
+  passes:        2  * 60_000, // schedule + procedure history
+  tle:           30 * 60_000, // also pushed live via apiPoller's tleUpdate
+  antennas:      30 * 60_000, // near-static ground-station roster
+  eventBaseline: 30 * 60_000, // "24h-ago" snapshot, changes ~hourly at most
+  groundEvents:  60_000,      // rolling 24h aggregate
+  globals:       30 * 60_000, // software versions — pre-existing cadence
+};
+const _lastFetchMs = {}; // `${satId}:${key}` → timestamp of last completed fetch
 
-async function _pingAndReschedule(sat) {
+function _due(satId, key) {
+  return Date.now() - (_lastFetchMs[`${satId}:${key}`] ?? 0) > CADENCE_MS[key];
+}
+function _markFetched(satId, key) {
+  _lastFetchMs[`${satId}:${key}`] = Date.now();
+}
+
+// Bumped on every _startSat call (satellite added, or a manual force-ping
+// click) so an OLDER, still-running _pingAndReschedule chain can tell it's
+// been superseded and quietly stop rescheduling itself instead of running
+// forever in parallel with the newer one — e.g. two rapid force-ping clicks
+// on the same row would otherwise leave that satellite pinging at double
+// rate permanently, not just once.
+const _gen = {}; // satId → generation counter
+
+async function _pingAndReschedule(sat, myGen) {
   try {
     await _ping(sat);
     if (store.pingStatus[sat.id] === 'ok') {
-      const fetches = [fetchSatTelemetry(sat), fetchSatPasses(sat), fetchSatTle(sat), fetchSatAntennas(sat), fetchSatGnss(sat), fetchSatEventBaseline(sat), fetchSatGroundEvents(sat)];
-      const lastGlobals = _lastGlobalsMs[sat.id] ?? 0;
-      if (Date.now() - lastGlobals > GLOBALS_REFRESH_MS) {
-        _lastGlobalsMs[sat.id] = Date.now();
-        fetches.push(fetchSatGlobals(sat), fetchSatVersions(sat));
-      }
+      const fetches = [fetchSatTelemetry(sat), fetchSatGnss(sat)];
+      if (_due(sat.id, 'passes'))        { _markFetched(sat.id, 'passes');        fetches.push(fetchSatPasses(sat)); }
+      if (_due(sat.id, 'tle'))           { _markFetched(sat.id, 'tle');           fetches.push(fetchSatTle(sat)); }
+      if (_due(sat.id, 'antennas'))      { _markFetched(sat.id, 'antennas');      fetches.push(fetchSatAntennas(sat)); }
+      if (_due(sat.id, 'eventBaseline')) { _markFetched(sat.id, 'eventBaseline'); fetches.push(fetchSatEventBaseline(sat)); }
+      if (_due(sat.id, 'groundEvents'))  { _markFetched(sat.id, 'groundEvents');  fetches.push(fetchSatGroundEvents(sat)); }
+      if (_due(sat.id, 'globals'))       { _markFetched(sat.id, 'globals');       fetches.push(fetchSatGlobals(sat), fetchSatVersions(sat)); }
       await Promise.all(fetches);
     }
   } catch { /* never let an error kill the cycle */ }
-  _schedTimers[sat.id] = setTimeout(() => _pingAndReschedule(sat), getPingIntervalSec() * 1000);
+  if (_gen[sat.id] !== myGen) return; // superseded by a newer _startSat call — let this chain end here
+  _schedTimers[sat.id] = setTimeout(() => _pingAndReschedule(sat, myGen), getPingIntervalSec() * 1000);
 }
 
 function _startSat(sat) {
   clearTimeout(_schedTimers[sat.id]);
-  _pingAndReschedule(sat);
+  // Mark started immediately — _pingAndReschedule only overwrites this with
+  // the real timer handle once its first cycle's ping+fetches finish (which
+  // can take over a second). Without this, a 'satellites' notification that
+  // fires mid-cycle (e.g. apiPoller's tleUpdate, or another satellite being
+  // added) finds the guard below still falsy and restarts EVERY satellite
+  // again on top of its already-in-flight chain — confirmed via tracing that
+  // this was quadrupling ping/fetch volume in practice, not a one-off blip.
+  _schedTimers[sat.id] = true;
+  const myGen = (_gen[sat.id] ?? 0) + 1;
+  _gen[sat.id] = myGen;
+  _pingAndReschedule(sat, myGen);
 }
 
 export function pingSatellite(satId) {

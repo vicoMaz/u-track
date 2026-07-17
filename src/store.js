@@ -43,6 +43,13 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
   satGroundEvents: {},      // satId → { watch, warning, distress, critical } — GROUND event counts, last 24h
   satGlobals: {},           // satId → { bdsVersion, proceduresVersion, sccVersion, sccColor }
   satVersions: {},          // satId → { fds, scc, sccRo, gnm, mic } each { version, appUrl } | null
+  // noradId → { noradId, source, entries: [{ t: ms, q: {x,y,z,w} }] } | undefined.
+  // Real posted attitude (see POST /api/attitude), keyed by noradId (not satId)
+  // to match apiPoller.js's feed items. SatEntity.js's _computeOrientation
+  // SLERPs within this table when the current sim time falls inside its span,
+  // falling back to Default Sun Pointing outside it or when absent entirely —
+  // most satellites will simply never have an entry here.
+  attitude: {},
   satScale: 500,
   orbitAlt: 590,       // km — shared by night shadow + GS footprint
   trackedSatId: null,
@@ -82,6 +89,7 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
       delete this.satGnss[sat.id];
       delete this.satEventBaseline[sat.id];
       delete this.satAntennas[sat.id];
+      delete this.attitude[sat.noradId];
       for (const key of Object.keys(this.antennaToggles)) {
         if (key.startsWith(`${sat.id}:`)) delete this.antennaToggles[key];
       }
@@ -197,6 +205,14 @@ setPingStatus(satId, status) {
   setSatVersions(satId, data) {
     this.satVersions[satId] = data;
     this.notify('satVersions');
+  },
+
+  // data = { noradId, source, entries } from GET/POST /api/attitude, or null
+  // to clear (DELETE /api/attitude/:noradId — reverts to Default Sun Pointing).
+  setAttitude(noradId, data) {
+    if (data) this.attitude[noradId] = data;
+    else delete this.attitude[noradId];
+    this.notify('attitude');
   },
 
   updateSatTle(noradId, satrec) {

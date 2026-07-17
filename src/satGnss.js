@@ -140,6 +140,55 @@ async function _searchBackwardPaired(origin, paramA, paramB, signal, isGoodA, is
 // in flight would otherwise start a second, fully independent search chain.
 const _ctrl = new Map(); // noradId → AbortController
 
+// The full widening backward search is cheap when there's a recent good
+// sample (resolves in ~1 request) but expensive when there isn't — it walks
+// the entire 7-day lookback (up to ~18-20 requests) EVERY ~20s ping cycle
+// for as long as a satellite has gone without one. Since the resolved value
+// changes slowly, the full search now only runs on a 30-min cadence; every
+// other cycle does a cheap forward-only check for anything newer than the
+// last confirmed sample (a single narrow-window request, normally just
+// "since last check") and otherwise keeps showing the last resolved value.
+const FULL_SEARCH_INTERVAL_MS = 30 * 60_000;
+const _lastFullSearchMs = {}; // noradId → timestamp of last full backward search
+const _lastCheckedMs    = {}; // noradId → upper time bound already confirmed by a forward check
+const _cached           = {}; // noradId → last resolved { lastBothGood, hkIsValid }
+
+const _isFinesteering = row => _rowValue(row, 'GNSS_AM_TIMESYNC_STATUS')?.toUpperCase() === 'FINESTEERING';
+const _isHkValid      = row => _rowValue(row, 'GNSS_AM_HW_HK_VALID')?.toUpperCase() === 'VALID';
+
+// Looks for anything newer than the last confirmed sample in one narrow
+// window — fetches GNSS_AM_HW_HK_VALID once and reuses it for both the
+// "latest HW row" and the "paired good" checks (the full search below fetches
+// it twice, once per helper, which is itself acceptable there since it only
+// runs every 30 min — not worth touching that proven path for this).
+async function _forwardCheck(ip, noradId, signal) {
+  const from = _lastCheckedMs[noradId] ?? (Date.now() - 10 * 60_000);
+  const to   = Date.now() + 10_000;
+  const [hkRows, tsRows] = await Promise.all([
+    _queryParam(ip, 'GNSS_AM_HW_HK_VALID', from, to, signal),
+    _queryParam(ip, 'GNSS_AM_TIMESYNC_STATUS', from, to, signal),
+  ]);
+  if (hkRows === null || tsRows === null) return; // request failed — keep the cached value as-is
+
+  const cur = _cached[noradId] ?? { lastBothGood: null, hkIsValid: null };
+
+  if (hkRows.length) {
+    const latestHw = hkRows[hkRows.length - 1]; // most recent row in this window
+    cur.hkIsValid = _isHkValid(latestHw);
+  }
+
+  const goodTsAt = new Set(tsRows.filter(_isFinesteering).map(r => _rowTime(r)?.getTime()).filter(t => t != null));
+  for (let i = hkRows.length - 1; i >= 0; i--) { // newest-first — first match found is the latest
+    const row = hkRows[i];
+    if (!_isHkValid(row)) continue;
+    const t = _rowTime(row)?.getTime();
+    if (t != null && goodTsAt.has(t)) { cur.lastBothGood = _rowTime(row); break; }
+  }
+
+  _cached[noradId] = cur;
+  _lastCheckedMs[noradId] = to;
+}
+
 export async function fetchSatGnss(sat) {
   const ip = satSubsystemOrigin(sat.noradId, 'scc');
   if (!ip) return;
@@ -148,21 +197,27 @@ export async function fetchSatGnss(sat) {
   const ctrl = new AbortController();
   _ctrl.set(sat.noradId, ctrl);
 
-  const timer = setTimeout(() => ctrl.abort(), 45_000); // widening search may take a few round-trips
+  const dueForFullSearch = Date.now() - (_lastFullSearchMs[sat.noradId] ?? 0) > FULL_SEARCH_INTERVAL_MS;
+  const timer = setTimeout(() => ctrl.abort(), dueForFullSearch ? 45_000 : 15_000);
   try {
-    const [hwMatch, bothMatch] = await Promise.all([
-      _searchBackward(ip, 'GNSS_AM_HW_HK_VALID', ctrl.signal, () => true), // just the latest row
-      _searchBackwardPaired(ip, 'GNSS_AM_TIMESYNC_STATUS', 'GNSS_AM_HW_HK_VALID', ctrl.signal,
-        row => _rowValue(row, 'GNSS_AM_TIMESYNC_STATUS')?.toUpperCase() === 'FINESTEERING',
-        row => _rowValue(row, 'GNSS_AM_HW_HK_VALID')?.toUpperCase() === 'VALID'),
-    ]);
-
-    if (ctrl.signal.aborted) return; // superseded or timed out — don't overwrite with a stale/partial result
-    const hwValue = hwMatch ? _rowValue(hwMatch, 'GNSS_AM_HW_HK_VALID') : null;
-    store.setSatGnss(sat.id, {
-      lastBothGood: bothMatch ? _rowTime(bothMatch) : null,
-      hkIsValid:    hwValue == null ? null : hwValue.toUpperCase() === 'VALID',
-    });
+    if (dueForFullSearch) {
+      const [hwMatch, bothMatch] = await Promise.all([
+        _searchBackward(ip, 'GNSS_AM_HW_HK_VALID', ctrl.signal, () => true), // just the latest row
+        _searchBackwardPaired(ip, 'GNSS_AM_TIMESYNC_STATUS', 'GNSS_AM_HW_HK_VALID', ctrl.signal, _isFinesteering, _isHkValid),
+      ]);
+      if (ctrl.signal.aborted) return; // superseded or timed out — don't overwrite with a stale/partial result
+      const hwValue = hwMatch ? _rowValue(hwMatch, 'GNSS_AM_HW_HK_VALID') : null;
+      _cached[sat.noradId] = {
+        lastBothGood: bothMatch ? _rowTime(bothMatch) : null,
+        hkIsValid:    hwValue == null ? null : hwValue.toUpperCase() === 'VALID',
+      };
+      _lastFullSearchMs[sat.noradId] = Date.now();
+      _lastCheckedMs[sat.noradId]    = Date.now() + 10_000;
+    } else {
+      await _forwardCheck(ip, sat.noradId, ctrl.signal);
+      if (ctrl.signal.aborted) return;
+    }
+    store.setSatGnss(sat.id, _cached[sat.noradId] ?? { lastBothGood: null, hkIsValid: null });
   } catch { /* offline or aborted */ }
   finally {
     clearTimeout(timer);

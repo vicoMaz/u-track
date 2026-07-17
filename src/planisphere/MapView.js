@@ -17,6 +17,17 @@ let _nightW = 0, _nightH = 0;
 const markers    = new Map(); // satId → SatMarker
 const gsMarkers  = new Map(); // gsId  → GroundStation2D
 
+// Gates updateMarkers() (satellite propagation + the per-pixel night-shadow
+// canvas redraw) to when the 2D Planisphere subtab is actually visible — see
+// GlobeView.js's setGlobeVisible for the same rationale. Set by main.js.
+let _visible = false; // matches index.html's default: 3D Globe subtab starts active, not 2D
+
+export function setMapVisible(v) {
+  const wasHidden = !_visible;
+  _visible = v;
+  if (v && wasHidden) updateMarkers(); // catch up immediately instead of waiting for the next tick
+}
+
 const R_EARTH = 6371;
 
 export function initMap() {
@@ -282,6 +293,7 @@ function syncMarkers() {
 }
 
 function updateMarkers() {
+  if (!_visible) return;
   const t = store.currentTime;
   for (const m of markers.values()) m.update(t);
   _drawNight(t);

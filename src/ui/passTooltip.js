@@ -173,7 +173,7 @@ export function createPassTooltip() {
     const polarEl = el.querySelector('.pass-polar');
 
     const ebn0Slot = el.querySelector('.ebn0-slot');
-    if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers, pass.procedures);
+    if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers, pass.procedures, { t0: pass.start.getTime(), t1: pass.end.getTime() });
     const ebn0El = el.querySelector('.ebn0-chart');
 
     positionTooltip(e, el);

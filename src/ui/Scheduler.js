@@ -11,6 +11,7 @@ let _procedures     = [];         // [{def, values:{paramName→string}}]
 let _searchQuery    = '';
 let _dropdownOpen   = false;
 let _dragSrcIdx     = null;
+let _searchRenderTimer = null;
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -348,7 +349,10 @@ function _renderPasses() {
       const i = parseInt(row.dataset.idx, 10);
       if (_selectedPasses.has(i)) _selectedPasses.delete(i);
       else _selectedPasses.add(i);
-      _renderPasses();
+      // Toggling one row's selection doesn't need a full list rebuild (which
+      // also drops the click focus/re-wires every other row's listener) —
+      // just flip this row's own class.
+      row.classList.toggle('sc-pass-sel', _selectedPasses.has(i));
       _updateSelCount();
     });
   });
@@ -409,7 +413,11 @@ export function initScheduler() {
   inp?.addEventListener('input', () => {
     _searchQuery  = inp.value;
     _dropdownOpen = true;
-    _renderSearch();
+    // Re-scoring/sorting the full local procedure DB on every single
+    // keystroke was wasted work while still typing — debounce so it only
+    // runs once typing pauses.
+    clearTimeout(_searchRenderTimer);
+    _searchRenderTimer = setTimeout(_renderSearch, 150);
   });
   inp?.addEventListener('focus', () => {
     _dropdownOpen = true;

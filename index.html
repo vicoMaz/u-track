@@ -60,7 +60,10 @@
             <span class="nc-count" id="nc-gnss-info">—</span>
           </div>
         </div>
-        <a href="/api-docs.html" target="_blank" class="tab-btn api-docs-btn">API Docs ↗</a>
+        <div class="api-docs-wrap">
+          <a href="/api-docs.html" target="_blank" class="tab-btn api-docs-btn">API Docs ↗</a>
+          <span id="app-version" title="chadOps build version"></span>
+        </div>
       </div>
 
       <!-- Tracking view -->
@@ -200,34 +203,18 @@
         </div>
       </div>
 
-      <!-- Satellite info card -->
-      <div id="sat-info" class="hidden">
-        <div class="sat-info-header">
-          <div id="sat-info-name"></div>
-          <span id="eclipse-icon" title="Sun / eclipse status"></span>
-          <div id="sat-time-badge" class="time-badge"></div>
-        </div>
-        <div class="sat-info-row"><span class="sat-info-label">NORAD</span><span id="sat-info-norad"></span></div>
-        <div class="sat-info-row"><span class="sat-info-label">Lat</span><span id="sat-info-lat"></span></div>
-        <div class="sat-info-row"><span class="sat-info-label">Lon</span><span id="sat-info-lon"></span></div>
-        <div class="sat-info-row"><span class="sat-info-label">Alt</span><span id="sat-info-alt"></span></div>
-
-        <div class="sat-info-divider"></div>
-
-        <div class="data-src-row">
-          <span class="data-dot" id="orbit-dot">●</span>
-          <span class="data-src-text"><span class="data-src-label">ORBIT</span> <span id="orbit-text"></span></span>
-        </div>
-        <div class="data-src-row">
-          <span class="data-dot" id="att-dot">○</span>
-          <span class="data-src-text"><span class="data-src-label">ATTITUDE</span> <span id="att-text"></span></span>
-        </div>
-      </div>
-
       <!-- Gantt Timeline -->
       <div id="timeline-gantt">
         <button id="gantt-toggle" title="Collapse / expand">▲</button>
         <div class="gantt-rows">
+          <div id="gantt-sat-info" class="hidden">
+            <div id="gsi-name"></div>
+            <div class="gsi-row"><span class="gsi-key">Lat</span><span id="gsi-lat"></span></div>
+            <div class="gsi-row"><span class="gsi-key">Lon</span><span id="gsi-lon"></span></div>
+            <div class="gsi-row"><span class="gsi-key">Alt</span><span id="gsi-alt"></span></div>
+            <div class="gsi-row"><span class="gsi-key">Vel</span><span id="gsi-vel"></span></div>
+            <div class="gsi-row"><span class="gsi-key">Next</span><span id="gsi-next"></span></div>
+          </div>
           <div class="gantt-row">
             <span class="gantt-label">Plans</span>
             <div class="gantt-track" id="gantt-slots"></div>
@@ -244,9 +231,17 @@
             <span class="gantt-label">Eclipse</span>
             <div class="gantt-track" id="gantt-eclipse"></div>
           </div>
-          <div class="gantt-row" title="Windows where the star tracker's FOV would be blinded by the sun or Earth (mirrors the red FOV cone on the globe)">
-            <span class="gantt-label">STT</span>
+          <div class="gantt-row" title="Fused STT availability — blinded only when ALL of the satellite's star trackers are simultaneously blinded by the sun or Earth. Click to expand per-unit detail.">
+            <span class="gantt-label"><button class="gantt-collapse-btn" id="gantt-stt-collapse" title="Toggle per-STT detail">▸</button>STT</span>
             <div class="gantt-track" id="gantt-stt"></div>
+          </div>
+          <div class="gantt-row gantt-stt-detail gantt-collapsed" id="gantt-stt1-row" title="STT1 windows where its own FOV would be blinded by the sun or Earth">
+            <span class="gantt-label">STT1</span>
+            <div class="gantt-track" id="gantt-stt1"></div>
+          </div>
+          <div class="gantt-row gantt-stt-detail gantt-collapsed" id="gantt-stt2-row" title="STT2 windows where its own FOV would be blinded by the sun or Earth">
+            <span class="gantt-label">STT2</span>
+            <div class="gantt-track" id="gantt-stt2"></div>
           </div>
           <!-- Date ruler -->
           <div class="gantt-row gantt-ruler-row">

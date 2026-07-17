@@ -1,8 +1,23 @@
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
+import { execSync } from 'node:child_process';
 import { createApiMiddleware, startTleRefresher } from './server/api.js';
 
+// Resolved once at config-eval time (dev server start / build) — falls back
+// gracefully if git isn't available (e.g. a deploy from a tarball, no .git).
+function _appVersion() {
+  try {
+    return execSync('git describe --tags --always --dirty', { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().trim();
+  } catch {
+    return 'dev';
+  }
+}
+
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(_appVersion()),
+  },
   resolve: {
     alias: {
       // satellite.js v7 dist/index.js re-exports its WASM build which uses

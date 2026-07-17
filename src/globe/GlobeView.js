@@ -8,6 +8,19 @@ let viewer = null;
 const entities   = new Map(); // satId → SatEntity
 const gsEntities = new Map(); // gsId  → GroundStation
 
+// Gates the per-frame propagation loop below to when the 3D Globe subtab is
+// actually visible — without this, every satellite gets SGP4-propagated and
+// its orientation/star-tracker cones rebuilt every currentTime tick (up to
+// 60fps during playback) even while the user is looking at the Fleet table
+// or the 2D map. Set by main.js on tab/subtab switches.
+let _visible = true; // matches index.html's default: tracking tab + 3D Globe subtab both start active
+
+export function setGlobeVisible(v) {
+  const wasHidden = !_visible;
+  _visible = v;
+  if (v && wasHidden) updatePositions(); // catch up immediately instead of waiting for the next tick
+}
+
 export function initGlobe() {
   // Suppress Ion token requirement — we use our own tile providers
   Cesium.Ion.defaultAccessToken = '';
@@ -146,7 +159,7 @@ function applyTracking() {
 }
 
 function updatePositions() {
-  if (!viewer) return;
+  if (!viewer || !_visible) return;
   const t = store.currentTime;
   viewer.clock.currentTime = Cesium.JulianDate.fromDate(t);
   for (const ent of entities.values()) ent.update(t);

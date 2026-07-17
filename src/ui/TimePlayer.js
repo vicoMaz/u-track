@@ -8,7 +8,7 @@ import { fetchProcedureReport, procedureReportHTML } from './procedureReport.js'
 import { fetchEbn0Series, ebn0HTML } from './ebn0.js';
 import { wireLinkedCursor } from './passCursor.js';
 import { satSubsystemHost }             from '../satSubsystems.js';
-import { satSunExclDeg, satEarthExclDeg } from '../satStarTracker.js';
+import { satSunExclDeg, satEarthExclDeg, MODEL_STAR_TRACKERS } from '../satStarTracker.js';
 import { showActionToast }              from './actionToast.js';
 
 function _grafanaLokiUrl(grafanaHost, fromMs, toMs) {
@@ -48,6 +48,11 @@ const ganttCursor   = document.getElementById('gantt-cursor');
 const ganttPasses   = document.getElementById('gantt-passes');
 const ganttEclipse  = document.getElementById('gantt-eclipse');
 const ganttStt      = document.getElementById('gantt-stt');
+const ganttStt1     = document.getElementById('gantt-stt1');
+const ganttStt2     = document.getElementById('gantt-stt2');
+const ganttStt1Row  = document.getElementById('gantt-stt1-row');
+const ganttStt2Row  = document.getElementById('gantt-stt2-row');
+const ganttSttCollapseBtn = document.getElementById('gantt-stt-collapse');
 const ganttTmr      = document.getElementById('gantt-tmr');
 const ganttSlots    = document.getElementById('gantt-slots');
 const ganttRuler    = document.getElementById('gantt-ruler');
@@ -79,22 +84,57 @@ let viewEndSec   =  604800;  // initial: +7 days
 const ECLIPSE_HALF_SEC = 14 * 86400;
 const R_EARTH_KM = 6371;
 let _eclipseWindows = [];
-let _sttWindows     = [];
+let _sttPerConeWindows = []; // [ [{start,end}...] per cone index ]
+let _sttFusedWindows   = []; // blinded only when EVERY cone is simultaneously blinded
 let _eclipseJobSat  = null;
 
-// Mirrors SatEntity.js's _stViolated check (kept in ECI — angle-between and
-// magnitude are rotation-invariant, so no ECEF/gmst conversion is needed
-// here). sunAngleDeg is always exactly 180° by construction (boresight is
-// defined as -sun), so it can never be < satSunExclDeg — included anyway for
-// parity with the 3-D cone's exact condition.
-function _isSttBlinded(eciPos, sunDir, noradId) {
+// Plain-object vector helpers — this loop runs many times per satellite
+// (5-min steps over ±14 days), so it stays in ECI with plain arithmetic
+// rather than pulling in Cesium's Matrix3/Quaternion types here.
+function _dot(a, b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+function _cross(a, b) { return { x: a.y * b.z - a.z * b.y, y: a.z * b.x - a.x * b.z, z: a.x * b.y - a.y * b.x }; }
+function _sub(a, b) { return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z }; }
+function _normalize(v) {
+  const m = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+  return m > 1e-9 ? { x: v.x / m, y: v.y / m, z: v.z / m } : { x: 0, y: 0, z: 1 };
+}
+
+// Mirrors SatEntity.js's _computeOrientation + _updateStarTrackerCones' per-
+// cone boresight, in plain ECI vectors (angle-between/magnitude are
+// rotation-invariant, so skipping the gmst→ECEF step SatEntity.js needs for
+// on-globe rendering gives the identical result). 'anti-sun' cones always
+// point -sun; 'body' cones need the actual attitude basis (xECI=sun,
+// yECI/zECI completing the frame via Gram-Schmidt against zenith — same
+// degenerate-case fallback as SatEntity.js when sun≈zenith).
+function _sttConeBoresightEci(eciPos, sunDir, cfg) {
+  if (cfg.mode !== 'body') return { x: -sunDir.x, y: -sunDir.y, z: -sunDir.z };
   const rMag = Math.sqrt(eciPos.x ** 2 + eciPos.y ** 2 + eciPos.z ** 2);
   const zenith = { x: eciPos.x / rMag, y: eciPos.y / rMag, z: eciPos.z / rMag };
-  const dotSZ = sunDir.x * zenith.x + sunDir.y * zenith.y + sunDir.z * zenith.z;
-  const earthAngleDeg  = Math.acos(Math.max(-1, Math.min(1, dotSZ))) * 180 / Math.PI;
+  const xECI = sunDir;
+  const dot  = _dot(zenith, xECI);
+  const yRaw = _sub(zenith, { x: xECI.x * dot, y: xECI.y * dot, z: xECI.z * dot });
+  const yLen = Math.sqrt(yRaw.x ** 2 + yRaw.y ** 2 + yRaw.z ** 2);
+  if (yLen < 1e-6) return { x: -sunDir.x, y: -sunDir.y, z: -sunDir.z }; // degenerate: sun ≈ zenith
+  const yECI = { x: yRaw.x / yLen, y: yRaw.y / yLen, z: yRaw.z / yLen };
+  const zECI = _cross(xECI, yECI);
+  // Same arrow-labeled-frame → raw-basis conversion as SatEntity.js's
+  // _updateStarTrackerCones: (-dir.z,-dir.y,-dir.x) weights (xECI,yECI,zECI).
+  const { dir } = cfg;
+  return _normalize({
+    x: -dir.z * xECI.x - dir.y * yECI.x - dir.x * zECI.x,
+    y: -dir.z * xECI.y - dir.y * yECI.y - dir.x * zECI.y,
+    z: -dir.z * xECI.z - dir.y * yECI.z - dir.x * zECI.z,
+  });
+}
+
+function _isConeBlinded(eciPos, sunDir, cfg, sunExclDeg, earthExclDeg) {
+  const rMag = Math.sqrt(eciPos.x ** 2 + eciPos.y ** 2 + eciPos.z ** 2);
+  const nadir = { x: -eciPos.x / rMag, y: -eciPos.y / rMag, z: -eciPos.z / rMag };
+  const boresight = _sttConeBoresightEci(eciPos, sunDir, cfg);
+  const sunAngleDeg    = Math.acos(Math.max(-1, Math.min(1, _dot(boresight, sunDir)))) * 180 / Math.PI;
+  const earthAngleDeg  = Math.acos(Math.max(-1, Math.min(1, _dot(boresight, nadir))))  * 180 / Math.PI;
   const earthRadiusDeg = Math.asin(Math.max(-1, Math.min(1, R_EARTH_KM / rMag))) * 180 / Math.PI;
-  const sunAngleDeg = 180;
-  return sunAngleDeg < satSunExclDeg(noradId) || earthAngleDeg < earthRadiusDeg + satEarthExclDeg(noradId);
+  return sunAngleDeg < sunExclDeg || earthAngleDeg < earthRadiusDeg + earthExclDeg;
 }
 let _passWindows    = []; // [{ start: ms, end: ms, pass: fullPassObj }]
 
@@ -213,7 +253,7 @@ async function _showPassTooltip(e, pass) {
   const polarEl = _ganttTooltip.querySelector('.pass-polar');
 
   const ebn0Slot = _ganttTooltip.querySelector('.ebn0-slot');
-  if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers, pass.procedures);
+  if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers, pass.procedures, { t0: pStartMs, t1: pEndMs });
   const ebn0El = _ganttTooltip.querySelector('.ebn0-chart');
 
   _posTooltipAt(_ttAnchorX, _ttAnchorY); // re-anchor: tooltip may now be taller
@@ -285,9 +325,24 @@ function _movePan(clientX) {
   const dSec = -(dx / _pan.trackW) * span;
   viewStartSec = _pan.startViewStart + dSec;
   viewEndSec   = _pan.startViewEnd   + dSec;
-  _applyView();
+  _scheduleApplyView();
 }
 function _endPan() { _pan = null; }
+
+// pointermove (and rapid trackpad wheel ticks) can fire far more often than
+// the display refreshes — without this, every single event triggered a full
+// innerHTML rebuild of all four gantt rows (TMR/Passes/Eclipse/STT) plus
+// re-wiring every pass bar's hover/click listeners, well over 60×/sec during
+// a drag. Coalesces any burst within one frame into a single rebuild using
+// whatever view range is current when the frame actually renders.
+let _applyViewRaf = null;
+function _scheduleApplyView() {
+  if (_applyViewRaf) return;
+  _applyViewRaf = requestAnimationFrame(() => {
+    _applyViewRaf = null;
+    _applyView();
+  });
+}
 
 function _viewSpan()    { return viewEndSec - viewStartSec; }
 function _viewStartMs() { return EPOCH.getTime() + viewStartSec * 1000; }
@@ -437,7 +492,22 @@ function _renderGanttEclipse() {
 }
 
 function _renderGanttStt() {
-  _renderBars(ganttStt, _sttWindows, '#ff3030', '0 0 8px #ff6060cc');
+  _renderBars(ganttStt,  _sttFusedWindows,         '#ff3030', '0 0 8px #ff6060cc');
+  _renderBars(ganttStt1, _sttPerConeWindows[0] ?? [], '#ff3030', '0 0 8px #ff6060cc');
+  _renderBars(ganttStt2, _sttPerConeWindows[1] ?? [], '#ff3030', '0 0 8px #ff6060cc');
+}
+
+// STT1/STT2 detail rows show only when the "STT" fused row is expanded, AND
+// (for STT2) only when the tracked satellite's model actually has a second
+// unit (12U has one, FF has two) — called on expand/collapse toggle and
+// whenever the tracked satellite (or its model) changes.
+let _sttDetailExpanded = false;
+function _refreshSttRowVisibility() {
+  const cones = MODEL_STAR_TRACKERS[store.trackedSat?.model] ?? MODEL_STAR_TRACKERS['12U'];
+  const showStt1 = _sttDetailExpanded;
+  const showStt2 = _sttDetailExpanded && cones.length > 1;
+  ganttStt1Row?.classList.toggle('gantt-collapsed', !showStt1);
+  ganttStt2Row?.classList.toggle('gantt-collapsed', !showStt2);
 }
 
 function _renderGanttTmr() {
@@ -551,41 +621,86 @@ function _updateGanttPasses() {
 // blinding just adds a couple of dot products + one acos + one asin on top
 // of samples already being computed for the eclipse line, so it's a small
 // fraction of extra work, not extra propagate() calls.
-function _updateGanttEclipse() {
-  const sat = store.trackedSat;
-  if (!sat?.satrec || !ganttEclipse) return;
-  if (_eclipseJobSat === sat.noradId) return;
-  _eclipseJobSat = sat.noradId;
-  setTimeout(() => {
-    const tMin = EPOCH.getTime() - ECLIPSE_HALF_SEC * 1000;
-    const tMax = EPOCH.getTime() + ECLIPSE_HALF_SEC * 1000;
-    const STEP = 5 * 60 * 1000;
-    const windows = [];
-    const sttWindows = [];
-    let inEcl = false, wStart = 0;
-    let inStt = false, sttStart = 0;
-    const d = new Date();
-    for (let t = tMin; t <= tMax; t += STEP) {
-      d.setTime(t);
-      const r = propagate(sat.satrec, d);
-      if (!r) continue;
+// ±14-day span ÷ 5-min step ≈ 8065 SGP4 propagations — run as one flat loop
+// this was a single uninterrupted ~40-160ms main-thread stall (visible as a
+// hitch) every time the tracked satellite changed or "Now" was pressed. This
+// generator does the exact same work but yields after each sample, so a
+// runner (_runEclipseChunk) can process it in ~8ms time-sliced bursts across
+// multiple ticks instead of one blocking burst — same total work, but no
+// single frame gets blocked long enough to be noticeable.
+function* _eclipseSttWork(sat) {
+  const tMin = EPOCH.getTime() - ECLIPSE_HALF_SEC * 1000;
+  const tMax = EPOCH.getTime() + ECLIPSE_HALF_SEC * 1000;
+  const STEP = 5 * 60 * 1000;
+  const windows = [];
+  let inEcl = false, wStart = 0;
+
+  const cones = MODEL_STAR_TRACKERS[sat.model] ?? MODEL_STAR_TRACKERS['12U'];
+  const coneStates = cones.map(() => ({ in: false, start: 0, windows: [] }));
+  let fusedIn = false, fusedStart = 0;
+  const fusedWindows = [];
+  const sunExclDeg   = satSunExclDeg(sat.noradId);
+  const earthExclDeg = satEarthExclDeg(sat.noradId);
+
+  const d = new Date();
+  for (let t = tMin; t <= tMax; t += STEP) {
+    d.setTime(t);
+    const r = propagate(sat.satrec, d);
+    if (r) {
       const sunDir = sunDirectionECI(d);
       const ecl = isInEclipse(r.eciPos, sunDir);
       if (ecl && !inEcl)      { wStart = t; inEcl = true; }
       else if (!ecl && inEcl) { windows.push({ start: wStart, end: t }); inEcl = false; }
 
-      const blinded = _isSttBlinded(r.eciPos, sunDir, sat.noradId);
-      if (blinded && !inStt)      { sttStart = t; inStt = true; }
-      else if (!blinded && inStt) { sttWindows.push({ start: sttStart, end: t }); inStt = false; }
+      const blindedFlags = cones.map(cfg => _isConeBlinded(r.eciPos, sunDir, cfg, sunExclDeg, earthExclDeg));
+      blindedFlags.forEach((blinded, i) => {
+        const cs = coneStates[i];
+        if (blinded && !cs.in)      { cs.start = t; cs.in = true; }
+        else if (!blinded && cs.in) { cs.windows.push({ start: cs.start, end: t }); cs.in = false; }
+      });
+      // Fused = STT1 OR STT2 availability — blinded only when EVERY cone is
+      // simultaneously blinded (system stays usable as long as one unit isn't).
+      const allBlinded = blindedFlags.every(b => b);
+      if (allBlinded && !fusedIn)      { fusedStart = t; fusedIn = true; }
+      else if (!allBlinded && fusedIn) { fusedWindows.push({ start: fusedStart, end: t }); fusedIn = false; }
     }
-    if (inEcl) windows.push({ start: wStart, end: tMax });
-    if (inStt) sttWindows.push({ start: sttStart, end: tMax });
-    _eclipseWindows = windows;
-    _sttWindows     = sttWindows;
+    yield;
+  }
+  if (inEcl) windows.push({ start: wStart, end: tMax });
+  coneStates.forEach(cs => { if (cs.in) cs.windows.push({ start: cs.start, end: tMax }); });
+  if (fusedIn) fusedWindows.push({ start: fusedStart, end: tMax });
+
+  _eclipseWindows    = windows;
+  _sttPerConeWindows = coneStates.map(cs => cs.windows);
+  _sttFusedWindows   = fusedWindows;
+}
+
+let _eclipseGen = null; // the in-flight generator, if any — identity-checked below to detect supersession
+
+function _runEclipseChunk(gen) {
+  if (_eclipseGen !== gen) return; // a newer satellite switch superseded this job — abandon quietly
+  const budgetStart = performance.now();
+  let result;
+  do { result = gen.next(); } while (!result.done && performance.now() - budgetStart < 8);
+  if (result.done) {
+    _eclipseGen = null;
     _renderGanttEclipse();
+    _refreshSttRowVisibility();
     _renderGanttStt();
     _eclipseJobSat = null;
-  }, 0);
+  } else {
+    setTimeout(() => _runEclipseChunk(gen), 0);
+  }
+}
+
+function _updateGanttEclipse() {
+  const sat = store.trackedSat;
+  if (!sat?.satrec || !ganttEclipse) return;
+  if (_eclipseJobSat === sat.noradId) return;
+  _eclipseJobSat = sat.noradId;
+  const gen = _eclipseSttWork(sat);
+  _eclipseGen = gen;
+  setTimeout(() => _runEclipseChunk(gen), 0);
 }
 
 // Re-render all gantt layers and update scrubber range for the current view
@@ -610,10 +725,17 @@ function _onWheel(e) {
   const newSpan = Math.max(MIN_SPAN_SEC, Math.min(MAX_SPAN_SEC, _viewSpan() * factor));
   viewStartSec = pivot - f * newSpan;
   viewEndSec   = pivot + (1 - f) * newSpan;
-  _applyView();
+  _scheduleApplyView();
 }
 
 export function initTimePlayer() {
+  ganttSttCollapseBtn?.addEventListener('click', () => {
+    _sttDetailExpanded = !_sttDetailExpanded;
+    ganttSttCollapseBtn.textContent = _sttDetailExpanded ? '▾' : '▸';
+    _refreshSttRowVisibility();
+    _syncLayout(); // row count changed → gantt height changed → resync offset
+  });
+
   playBtn.addEventListener('click', () => playing ? stopPlay() : startPlay());
 
   nowBtn.addEventListener('click', () => {
@@ -671,9 +793,12 @@ export function initTimePlayer() {
       _triggerTmr();
     }
     if (key === 'trackedSatId') {
-      if (ganttTmr) ganttTmr.innerHTML = '';
-      if (ganttStt) ganttStt.innerHTML = '';
+      if (ganttTmr)  ganttTmr.innerHTML  = '';
+      if (ganttStt)  ganttStt.innerHTML  = '';
+      if (ganttStt1) ganttStt1.innerHTML = '';
+      if (ganttStt2) ganttStt2.innerHTML = '';
       _eclipseJobSat = null;
+      _refreshSttRowVisibility();
       _updateGanttEclipse();
       // ResizeObserver handles _syncLayout when gantt visibility/height changes
     }
@@ -698,10 +823,10 @@ export function initTimePlayer() {
   scrub.addEventListener('wheel',   _onWheel, { passive: false });
   ganttEl?.addEventListener('wheel', _onWheel, { passive: false });
 
-  // Drag-to-pan on gantt (skip the collapse toggle button)
+  // Drag-to-pan on gantt (skip the collapse toggle buttons)
   ganttEl?.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
-    if (e.target === ganttToggleBtn) return;
+    if (e.target === ganttToggleBtn || e.target === ganttSttCollapseBtn) return;
     e.preventDefault();
     ganttEl.setPointerCapture(e.pointerId);
     ganttEl.style.cursor = 'grabbing';

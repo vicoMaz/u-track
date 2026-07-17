@@ -158,7 +158,6 @@ function buildHTML(sat, eclipse) {
       <div class="oi-card">
         <div class="oi-card-title">TLE Info</div>
         <table class="oi-table">
-          <tr><td>NORAD ID</td>       <td class="oi-val">${sat.noradId}</td></tr>
           <tr><td>Orbit type</td>     <td class="oi-val">${orbitType}</td></tr>
           <tr><td>TLE epoch</td>      <td class="oi-val">${fmtDateTime(epochDate)}</td></tr>
           <tr><td>TLE age</td>        <td class="oi-val ${ageCls}">${ageDays.toFixed(2)} days &nbsp;${ageLabel}</td></tr>

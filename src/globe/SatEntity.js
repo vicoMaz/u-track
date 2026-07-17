@@ -1,7 +1,7 @@
 import { propagate, eciToCartesian3 } from '../tle.js';
 import { sunDirectionECI, isInEclipse } from '../sunVector.js';
 import { store } from '../store.js';
-import { satSunExclDeg, satEarthExclDeg, satStarTrackerConesVisible } from '../satStarTracker.js';
+import { satSunExclDeg, satEarthExclDeg, satStarTrackerConesVisible, MODEL_STAR_TRACKERS } from '../satStarTracker.js';
 
 /* global Cesium */
 
@@ -9,39 +9,32 @@ const ORBIT_STEPS = 120;
 const ARROW_LEN_KM = 640;
 const MODEL_BASE_SCALE = 800;
 
-// Star tracker: mounted on the anti-sun face — boresight computed directly
-// as -sun (see _updateStarTrackerCone), independent of which axis the
-// reference arrows label "+Z" (-Z is the one that currently faces the sun;
-// see _computeArrowTips), so it comes out the opposite side of the satellite
-// from the sun-facing face. Rendered as one translucent FOV cone along that
-// boresight. The Sun/Earth exclusion angles (per-satellite configurable in
-// Settings — satStarTracker.js) aren't drawn as their own cones; instead the
-// FOV cone itself turns red whenever the sun or Earth (nadir direction) is
-// currently inside that satellite's configured keep-out angle around the
-// boresight.
+// Star tracker: each satellite MODEL can carry one or more physical units
+// (see MODEL_STAR_TRACKERS below), each rendered as its own translucent FOV
+// cone. The Sun/Earth exclusion angles (per-satellite configurable in
+// Settings — satStarTracker.js) aren't drawn as their own cones; instead each
+// FOV cone turns red whenever the sun or Earth (nadir direction) is currently
+// inside that satellite's configured keep-out angle around ITS boresight.
 const ST_HALF_ANGLE_DEG = 15;
 const ST_LEN_KM = 500;
 const R_EARTH_KM = 6371;
 const ST_COLOR_OK  = Cesium.Color.DODGERBLUE;
 const ST_COLOR_BAD = Cesium.Color.RED;
-// Cone start-distance bias, proportional to satScale (found via the debug
-// slider: 140km bias needed at scale=500 → 0.28 km per unit of scale). Scales
-// linearly because satScale is just a rendered-mesh size multiplier — a
-// bigger model needs the cone apex pushed proportionally further out.
-const ST_BIAS_KM_PER_SCALE_UNIT = 140 / 500;
+
+// Per-model star tracker mounting (MODEL_STAR_TRACKERS) now lives in
+// satStarTracker.js — shared with TimePlayer.js's gantt blinding-window
+// precomputation, which needs the identical cone definitions.
 
 const MODEL_URIS = {
-  '12U': '/models/12UV1.gltf',
-  'FF':  '/models/FFV1.gltf',
+  '12U': '/models/12UV1.glb',
+  'FF':  '/models/FFV1.glb',
 };
 
-// FF model rotation bias: 90° around X, 180° around Z (body-frame, post-multiplied).
+// FF model rotation bias: 270° around X only (body-frame, post-multiplied).
+// Found by eye with the debug X/Y/Z rotation sliders (since removed — see
+// _modelOrientation) and baked in here as a permanent correction.
 const _r = d => (d * Math.PI) / 180;
-const _ffBias = (() => {
-  const qx  = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_X, _r(90),  new Cesium.Quaternion());
-  const qz  = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, _r(180), new Cesium.Quaternion());
-  return Cesium.Quaternion.multiply(qx, qz, new Cesium.Quaternion());
-})();
+const _ffBias = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_X, _r(270), new Cesium.Quaternion());
 
 // Base rendered-model mounting bias, all models: 180° about Z. Found via the
 // debug X/Y/Z rotation sliders and baked in as a permanent correction, on top
@@ -56,6 +49,28 @@ const _scratchDir   = new Cesium.Cartesian3();
 const _scratchAxis  = new Cesium.Cartesian3();
 const _scratchSun   = new Cesium.Cartesian3();
 const _scratchNadir = new Cesium.Cartesian3();
+const _scratchOffset = new Cesium.Cartesian3();
+const _scratchBodyDir = new Cesium.Cartesian3();
+// _computeOrientation/_attitudeFromTable's purely-internal intermediates —
+// each is fully overwritten before being read, every call, by exactly one
+// satellite at a time (SatEntity.update() runs sequentially per satellite,
+// never concurrently), so sharing these across satellites/frames is safe.
+// The QUATERNION EACH FUNCTION ACTUALLY RETURNS is deliberately NOT scratch
+// — it can end up stored inside a Cesium ConstantProperty via setValue, and
+// reusing that object across later frames would risk silently corrupting an
+// already-rendered orientation if Cesium ever holds the reference rather
+// than cloning it.
+const _scratchZenith = { x: 0, y: 0, z: 0 };
+const _scratchYRaw   = { x: 0, y: 0, z: 0 };
+const _scratchYECI   = { x: 0, y: 0, z: 0 };
+const _scratchZECI   = { x: 0, y: 0, z: 0 };
+const _scratchXEcef  = new Cesium.Cartesian3();
+const _scratchYEcef  = new Cesium.Cartesian3();
+const _scratchZEcef  = new Cesium.Cartesian3();
+const _scratchQA     = new Cesium.Quaternion();
+const _scratchQB     = new Cesium.Quaternion();
+const _scratchQGmst  = new Cesium.Quaternion();
+const _scratchQBody  = new Cesium.Quaternion();
 
 // Quaternion rotating local +Z onto an arbitrary unit direction — used to orient
 // the star tracker cone (Cesium's CylinderGeometry is built along local Z).
@@ -103,13 +118,12 @@ export class SatEntity {
     this._yPos   = null;
     this._zPos   = null;
     this._sunPos = null;
-    // Star tracker FOV cone (+Z face) — position/orientation mutated in place
-    // every frame; _stViolated flips the cone red when the sun or Earth is
-    // currently inside this satellite's configured exclusion angle.
-    this._starTrackerEntity = null;
-    this._stConePos    = new Cesium.Cartesian3();
-    this._stConeOrient = new Cesium.Quaternion();
-    this._stViolated   = false;
+    // Star tracker FOV cones — one per entry in MODEL_STAR_TRACKERS[sat.model],
+    // built in _build(). Each element: { entity, cfg, pos, orient, violated }
+    // — pos/orient are mutated in place every frame; `violated` flips that
+    // cone red when the sun or Earth is currently inside this satellite's
+    // configured exclusion angle around ITS OWN boresight.
+    this._starTrackers = [];
   }
 
   update(date) {
@@ -207,42 +221,70 @@ export class SatEntity {
       this._setLabelsVisible(false);
     }
 
-    // Star tracker FOV cone, sharing the apex/axis _updateStarTrackerCone
-    // (called from _computeArrowTips above) already populated in
-    // _stConePos/_stConeOrient. Color and show are CallbackProperty so the
+    // Star tracker FOV cone(s) — one entity per MODEL_STAR_TRACKERS entry for
+    // this satellite's model, sharing the apex/axis _updateStarTrackerCones
+    // (called from _computeArrowTips above) already populated into each
+    // st.pos/st.orient. Color and show are CallbackProperty so the
     // Sun/Earth-exclusion violation state and the Settings-modal visibility
     // toggle apply live, on the next render tick — no entity rebuild needed.
     const stLenM    = ST_LEN_KM * 1000;
     const stRadiusM = stLenM * Math.tan(ST_HALF_ANGLE_DEG * Math.PI / 180);
-    const stColor   = () => (this._stViolated ? ST_COLOR_BAD : ST_COLOR_OK);
-    this._starTrackerEntity = this._add({
-      position:    new Cesium.CallbackProperty(() => this._stConePos, false),
-      orientation: new Cesium.CallbackProperty(() => this._stConeOrient, false),
-      cylinder: {
-        length: stLenM,
-        topRadius: stRadiusM,
-        bottomRadius: 0,
-        // Entity.show is a plain boolean (not a reactive Property) — a
-        // CallbackProperty assigned there is just always-truthy and never
-        // actually re-evaluated. CylinderGraphics.show IS Property-typed, so
-        // the live toggle (satellite visibility × the Settings-modal toggle)
-        // has to live here instead — this is also why setVisible() below
-        // skips this entity: e.show=v there is harmless/inert either way,
-        // but relying on it would look like it "worked" while doing nothing.
-        show: new Cesium.CallbackProperty(() => this.sat.visible !== false && satStarTrackerConesVisible(this.sat.noradId), false),
-        material: new Cesium.ColorMaterialProperty(new Cesium.CallbackProperty(() => stColor().withAlpha(0.22), false)),
-        outline: true,
-        outlineColor: new Cesium.CallbackProperty(() => stColor().withAlpha(0.7), false),
-        outlineWidth: 1,
-      },
+    const cones = MODEL_STAR_TRACKERS[this.sat.model] ?? MODEL_STAR_TRACKERS['12U'];
+    this._starTrackers = cones.map(cfg => {
+      const st = { cfg, pos: new Cesium.Cartesian3(), orient: new Cesium.Quaternion(), violated: false };
+      const stColor = () => (st.violated ? ST_COLOR_BAD : ST_COLOR_OK);
+      // One scratch Color per cone per use (fill vs. outline need separate
+      // instances — both callbacks can be evaluated within the same frame,
+      // and each writes into its own via withAlpha's `result` param instead
+      // of allocating a new Cesium.Color every single render frame.
+      const fillScratch    = new Cesium.Color();
+      const outlineScratch = new Cesium.Color();
+      st.entity = this._add({
+        position:    new Cesium.CallbackProperty(() => st.pos, false),
+        orientation: new Cesium.CallbackProperty(() => st.orient, false),
+        cylinder: {
+          length: stLenM,
+          topRadius: stRadiusM,
+          bottomRadius: 0,
+          // Entity.show is a plain boolean (not a reactive Property) — a
+          // CallbackProperty assigned there is just always-truthy and never
+          // actually re-evaluated. CylinderGraphics.show IS Property-typed, so
+          // the live toggle (satellite visibility × the Settings-modal toggle)
+          // has to live here instead — this is also why setVisible() below
+          // skips these entities: e.show=v there is harmless/inert either way,
+          // but relying on it would look like it "worked" while doing nothing.
+          show: new Cesium.CallbackProperty(() => this.sat.visible !== false && satStarTrackerConesVisible(this.sat.noradId), false),
+          material: new Cesium.ColorMaterialProperty(new Cesium.CallbackProperty(() => stColor().withAlpha(0.22, fillScratch), false)),
+          outline: true,
+          outlineColor: new Cesium.CallbackProperty(() => stColor().withAlpha(0.7, outlineScratch), false),
+          outlineWidth: 1,
+        },
+      });
+      return st;
     });
   }
 
   // Orientation quaternion.
   // If current sim time falls inside the posted attitude table → SLERP.
   // Outside the table span → fall back to Default Sun Pointing.
+  //
+  // This SLERP path is what makes the star tracker's Sun-exclusion check
+  // meaningful at all: under Default Sun Pointing alone, col-0 (body +X) is
+  // *defined* to equal the sun direction every single frame, so the angle
+  // between ANY body-frame-fixed direction and the sun is a mathematical
+  // constant for the whole mission (proof: for fixed body dir (dx,dy,dz),
+  // dot(dir_ECI, sun) = dx·dot(col0,sun) + dy·dot(col1,sun) + dz·dot(col2,sun)
+  // = dx·1 + dy·0 + dz·0 = dx, always — col1/col2 are orthogonal to col0=sun
+  // by construction). Only a real, independently-sourced attitude can make
+  // that angle actually vary, which is exactly what this table provides.
   _computeOrientation(r, date) {
     const { eciPos, gmst } = r;
+
+    const att = store.attitude[this.sat.noradId];
+    if (att?.entries?.length) {
+      const tableQ = this._attitudeFromTable(att.entries, date.getTime(), gmst);
+      if (tableQ) return tableQ;
+    }
 
     const sun = sunDirectionECI(date); // unit vector in ECI
 
@@ -253,27 +295,67 @@ export class SatEntity {
     // Project zenith onto the plane perpendicular to the sun vector (Gram-Schmidt)
     const rLen = Math.sqrt(eciPos.x**2 + eciPos.y**2 + eciPos.z**2);
     if (!rLen) return Cesium.Quaternion.IDENTITY;
-    const zenith = { x: eciPos.x/rLen, y: eciPos.y/rLen, z: eciPos.z/rLen };
-    const dot    = zenith.x*xECI.x + zenith.y*xECI.y + zenith.z*xECI.z;
-    const yRaw   = { x: zenith.x - dot*xECI.x, y: zenith.y - dot*xECI.y, z: zenith.z - dot*xECI.z };
-    const yLen   = Math.sqrt(yRaw.x**2 + yRaw.y**2 + yRaw.z**2);
+    const zenith = _scratchZenith;
+    zenith.x = eciPos.x/rLen; zenith.y = eciPos.y/rLen; zenith.z = eciPos.z/rLen;
+    const dot  = zenith.x*xECI.x + zenith.y*xECI.y + zenith.z*xECI.z;
+    const yRaw = _scratchYRaw;
+    yRaw.x = zenith.x - dot*xECI.x; yRaw.y = zenith.y - dot*xECI.y; yRaw.z = zenith.z - dot*xECI.z;
+    const yLen = Math.sqrt(yRaw.x**2 + yRaw.y**2 + yRaw.z**2);
     if (yLen < 1e-6) return Cesium.Quaternion.IDENTITY; // sun ≈ zenith, degenerate
-    const yECI = { x: yRaw.x/yLen, y: yRaw.y/yLen, z: yRaw.z/yLen };
+    const yECI = _scratchYECI;
+    yECI.x = yRaw.x/yLen; yECI.y = yRaw.y/yLen; yECI.z = yRaw.z/yLen;
 
     // Tertiary: col-2 completes the right-hand frame
-    const zECI = cross(xECI, yECI);
+    const zECI = _scratchZECI;
+    zECI.x = xECI.y*yECI.z - xECI.z*yECI.y;
+    zECI.y = xECI.z*yECI.x - xECI.x*yECI.z;
+    zECI.z = xECI.x*yECI.y - xECI.y*yECI.x;
 
     const c = Math.cos(gmst), s = Math.sin(gmst);
-    function toEcef(v) {
-      return new Cesium.Cartesian3(v.x*c + v.y*s, -v.x*s + v.y*c, v.z);
+    function toEcef(v, out) {
+      out.x = v.x*c + v.y*s; out.y = -v.x*s + v.y*c; out.z = v.z;
+      return out;
     }
 
-    const m = new Cesium.Matrix3();
-    Cesium.Matrix3.setColumn(m, 0, toEcef(xECI), m);
-    Cesium.Matrix3.setColumn(m, 1, toEcef(yECI), m);
-    Cesium.Matrix3.setColumn(m, 2, toEcef(zECI), m);
+    Cesium.Matrix3.setColumn(_scratchM3, 0, toEcef(xECI, _scratchXEcef), _scratchM3);
+    Cesium.Matrix3.setColumn(_scratchM3, 1, toEcef(yECI, _scratchYEcef), _scratchM3);
+    Cesium.Matrix3.setColumn(_scratchM3, 2, toEcef(zECI, _scratchZEcef), _scratchM3);
 
-    return Cesium.Quaternion.fromRotationMatrix(m);
+    return Cesium.Quaternion.fromRotationMatrix(_scratchM3);
+  }
+
+  // SLERPs the posted attitude table (see POST /api/attitude, store.setAttitude)
+  // to `tMs`, returning an ECEF quaternion directly comparable to
+  // _computeOrientation's fallback — or null if tMs falls outside the table's
+  // span, so the caller falls back to Default Sun Pointing.
+  //
+  // ASSUMPTION (undocumented upstream, no live ground system exercised this
+  // yet): each posted quaternion is body→ECI, the same convention
+  // _computeOrientation's fallback builds (xECI/yECI/zECI) before its own
+  // ECI→ECEF gmst rotation — NOT the separate scalar-first body-frame-offset
+  // convention satStarTracker.js's bodyDirFromQuat uses for STT mounting. If a
+  // real feed's convention turns out different, this is the one place to fix.
+  _attitudeFromTable(entries, tMs, gmst) {
+    const first = entries[0], last = entries[entries.length - 1];
+    if (tMs < first.t || tMs > last.t) return null;
+
+    let lo = 0, hi = entries.length - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (entries[mid].t <= tMs) lo = mid; else hi = mid;
+    }
+    const a = entries[lo], b = entries[hi];
+    const frac = b.t > a.t ? (tMs - a.t) / (b.t - a.t) : 0;
+
+    _scratchQA.x = a.q.x; _scratchQA.y = a.q.y; _scratchQA.z = a.q.z; _scratchQA.w = a.q.w;
+    _scratchQB.x = b.q.x; _scratchQB.y = b.q.y; _scratchQB.z = b.q.z; _scratchQB.w = b.q.w;
+    const qBody = Cesium.Quaternion.slerp(_scratchQA, _scratchQB, frac, _scratchQBody);
+    Cesium.Quaternion.normalize(qBody, qBody);
+
+    // Same ECI→ECEF rotation as toEcef() above, expressed as a quaternion
+    // (rotation by -gmst about Z) instead of a per-column matrix transform.
+    const qGmst = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, -gmst, _scratchQGmst);
+    return Cesium.Quaternion.multiply(qGmst, qBody, new Cesium.Quaternion());
   }
 
   // Body-frame bias applied only to the rendered model, not to the reference
@@ -320,7 +402,7 @@ export class SatEntity {
     tipInto(this._zTip, -_scratchCol.x, -_scratchCol.y, -_scratchCol.z);
     Cesium.Cartesian3.clone(_scratchCol, _scratchSun); // column0 = sun direction in ECEF (see _computeOrientation) — zTip above uses -column0, but _scratchCol itself is untouched by tipInto, so this is still +sun
 
-    this._updateStarTrackerCone(origin, _scratchSun);
+    this._updateStarTrackerCones(origin, _scratchSun);
 
     const { eciPos, gmst } = r;
     const sun = sunDirectionECI(date); // cached — free second call
@@ -331,40 +413,33 @@ export class SatEntity {
     this._sunTip.x = sunEcef.x; this._sunTip.y = sunEcef.y; this._sunTip.z = sunEcef.z;
   }
 
-  // Boresight = -sun direction (the far side from the sun-facing face),
-  // computed directly rather than read off an arrow so the tracker's
-  // mounting face stays a physical fact, not tied to axis labeling.
+  // Updates every star tracker cone this satellite's model has (see
+  // MODEL_STAR_TRACKERS). Boresight per cone:
+  //   'anti-sun' — cfg.dir is ignored; boresight = -sun directly (the far
+  //     side from the sun-facing face), matching the original single-cone
+  //     behavior exactly.
+  //   'body' — cfg.dir is a fixed body-frame unit vector, rotated into ECEF
+  //     via _scratchM3 (the same orientation matrix _computeArrowTips just
+  //     built from `q`, still valid here — this method is only ever called
+  //     from within _computeArrowTips, synchronously, before _scratchM3 is
+  //     reused by anything else).
   //
-  // Cesium's CylinderGeometry is built along local +Z, so the cone's
+  // Cesium's CylinderGeometry is built along local +Z, so each cone's
   // orientation is "rotate +Z onto the boresight direction". Its position is
   // the geometry's centroid (Cesium cylinders are centered, not apex-anchored),
-  // with bottomRadius=0 landing the apex exactly at the satellite and
-  // topRadius=<cone radius> landing the wide end out along the boresight.
+  // with bottomRadius=0 landing the apex exactly at the satellite (+ offset)
+  // and topRadius=<cone radius> landing the wide end out along the boresight.
   //
   // Also checks the Sun/Earth exclusion angles here (not drawn as their own
   // cones — see ST_COLOR_BAD): angle between the boresight and the sun, and
   // between the boresight and nadir (ECEF is Earth-centered, so "toward
   // Earth" from the satellite's own ECEF position is just -normalize(origin)).
-  _updateStarTrackerCone(origin, sunDirEcef) {
-    Cesium.Cartesian3.negate(sunDirEcef, _scratchDir); // boresight = -sun, the other side
+  _updateStarTrackerCones(origin, sunDirEcef) {
+    if (!this._starTrackers.length) return;
     const halfLen = (ST_LEN_KM * 1000) / 2;
-    // Shifts apex + centroid together along the boresight, proportional to
-    // the current model scale, so the cone's start point (apex) tracks the
-    // visible edge of the (scaled) model instead of sitting at its origin.
-    const biasM = ST_BIAS_KM_PER_SCALE_UNIT * store.satScale * 1000;
-    this._stConePos.x = origin.x + _scratchDir.x * (halfLen + biasM);
-    this._stConePos.y = origin.y + _scratchDir.y * (halfLen + biasM);
-    this._stConePos.z = origin.z + _scratchDir.z * (halfLen + biasM);
-    _quatFromZTo(_scratchDir, this._stConeOrient);
 
     Cesium.Cartesian3.normalize(origin, _scratchNadir);
     Cesium.Cartesian3.negate(_scratchNadir, _scratchNadir);
-
-    const sunDot   = Cesium.Math.clamp(Cesium.Cartesian3.dot(_scratchDir, sunDirEcef), -1, 1);
-    const earthDot = Cesium.Math.clamp(Cesium.Cartesian3.dot(_scratchDir, _scratchNadir), -1, 1);
-    const sunAngleDeg   = Cesium.Math.toDegrees(Math.acos(sunDot));
-    const earthAngleDeg = Cesium.Math.toDegrees(Math.acos(earthDot));
-
     // Earth's keep-out zone is centered on nadir but its true radius is the
     // planet's own angular size as seen from orbit (~65-70° at LEO), not just
     // satEarthExclDeg alone — otherwise the check only trips when the
@@ -372,9 +447,51 @@ export class SatEntity {
     // barely ever happens (it's a ~22°-wide cone vs. Earth's ~66°-wide disc).
     const rMag = Cesium.Cartesian3.magnitude(origin);
     const earthRadiusDeg = Cesium.Math.toDegrees(Math.asin(Cesium.Math.clamp((R_EARTH_KM * 1000) / rMag, -1, 1)));
+    const sunExclDeg   = satSunExclDeg(this.sat.noradId);
+    const earthExclDeg = satEarthExclDeg(this.sat.noradId);
 
-    this._stViolated = sunAngleDeg   < satSunExclDeg(this.sat.noradId)
-                     || earthAngleDeg < earthRadiusDeg + satEarthExclDeg(this.sat.noradId);
+    this._starTrackers.forEach((st, i) => {
+      const { cfg } = st;
+      if (cfg.mode === 'body') {
+        // cfg.dir is given in the arrow-labeled body frame (X/Y/Z as drawn —
+        // see _computeArrowTips), not the orientation matrix's raw columns:
+        // X-arrow=-col2, Y-arrow=-col1, Z-arrow=-col0. So a labeled-frame
+        // vector (vx,vy,vz) = vx·X + vy·Y + vz·Z = -vz·col0 - vy·col1 - vx·col2,
+        // i.e. the input to multiplyByVector (which weights raw columns) is
+        // (-vz,-vy,-vx) — swapped-and-negated, not a straight pass-through.
+        _scratchBodyDir.x = -cfg.dir.z; _scratchBodyDir.y = -cfg.dir.y; _scratchBodyDir.z = -cfg.dir.x;
+        Cesium.Matrix3.multiplyByVector(_scratchM3, _scratchBodyDir, _scratchDir);
+        Cesium.Cartesian3.normalize(_scratchDir, _scratchDir);
+      } else {
+        Cesium.Cartesian3.negate(sunDirEcef, _scratchDir); // boresight = -sun, the other side
+      }
+
+      // cfg.offsetKmPerScaleUnit scaled by the current satScale (same reason
+      // biasM below is), then the same labeled-frame → raw-column conversion
+      // as `dir` above.
+      const offX = cfg.offsetKmPerScaleUnit.x * store.satScale;
+      const offY = cfg.offsetKmPerScaleUnit.y * store.satScale;
+      const offZ = cfg.offsetKmPerScaleUnit.z * store.satScale;
+      _scratchOffset.x = -offZ; _scratchOffset.y = -offY; _scratchOffset.z = -offX;
+      Cesium.Matrix3.multiplyByVector(_scratchM3, _scratchOffset, _scratchOffset);
+
+      // Shifts apex + centroid together along the boresight, proportional to
+      // the current model scale, so the cone's start point (apex) tracks the
+      // visible edge of the (scaled) model instead of sitting at its origin.
+      const biasM = cfg.biasKmPerScaleUnit * store.satScale * 1000;
+      st.pos.x = origin.x + _scratchOffset.x * 1000 + _scratchDir.x * (halfLen + biasM);
+      st.pos.y = origin.y + _scratchOffset.y * 1000 + _scratchDir.y * (halfLen + biasM);
+      st.pos.z = origin.z + _scratchOffset.z * 1000 + _scratchDir.z * (halfLen + biasM);
+      _quatFromZTo(_scratchDir, st.orient);
+
+      const sunDot   = Cesium.Math.clamp(Cesium.Cartesian3.dot(_scratchDir, sunDirEcef), -1, 1);
+      const earthDot = Cesium.Math.clamp(Cesium.Cartesian3.dot(_scratchDir, _scratchNadir), -1, 1);
+      const sunAngleDeg   = Cesium.Math.toDegrees(Math.acos(sunDot));
+      const earthAngleDeg = Cesium.Math.toDegrees(Math.acos(earthDot));
+
+      st.violated = sunAngleDeg   < sunExclDeg
+                 || earthAngleDeg < earthRadiusDeg + earthExclDeg;
+    });
   }
 
   _addLabel(posFn, text, color) {
@@ -439,12 +556,12 @@ export class SatEntity {
     if (this._sunLabel) this._sunLabel.show = visible;
   }
 
-  // Skips the star tracker entity — its .show is a CallbackProperty that
+  // Skips the star tracker entities — their .show is a CallbackProperty that
   // already reads this.sat.visible itself (see _build), so a plain e.show=v
   // here would permanently overwrite/disable that live reactivity instead.
   setVisible(v) {
     for (const e of this._entities) {
-      if (e === this._starTrackerEntity) continue;
+      if (this._starTrackers.some(st => st.entity === e)) continue;
       e.show = v;
     }
   }
@@ -459,10 +576,6 @@ export class SatEntity {
     this._xLabel = this._yLabel = this._zLabel = this._sunLabel = null;
     this._posProp = this._orientProp = null;
     this._xPos = this._yPos = this._zPos = this._sunPos = null;
-    this._starTrackerEntity = null;
+    this._starTrackers = [];
   }
-}
-
-function cross(a, b) {
-  return { x: a.y*b.z - a.z*b.y, y: a.z*b.x - a.x*b.z, z: a.x*b.y - a.y*b.x };
 }

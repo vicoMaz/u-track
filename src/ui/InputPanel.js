@@ -178,7 +178,6 @@ function _openSatLinksModal(sat) {
       <div class="slm-header">
         <span class="slm-dot" style="background:${sat.color}"></span>
         <span class="slm-title">${sat.name}</span>
-        <span class="slm-meta">#${sat.noradId}</span>
         <button class="slm-close" title="Close">×</button>
       </div>
       <div class="slm-links">
@@ -239,7 +238,6 @@ function _openSatEditModal(sat) {
       <div class="sem-header">
         <span class="sem-dot" id="sem-dot-preview" style="background:${sat.color}"></span>
         <span class="sem-title">${sat.name}</span>
-        <span class="sem-meta">#${sat.noradId}</span>
         <button class="sem-close" title="Close">×</button>
       </div>
       <div class="sem-body">
@@ -424,7 +422,13 @@ function _openSatEditModal(sat) {
 
 function renderSettingsSatList() {
   const list = document.getElementById('st-sat-list');
-  if (!list) return;
+  // The Settings view stays in the DOM (just CSS-hidden) when another tab is
+  // active, so a plain existence check doesn't skip anything — this used to
+  // rebuild the whole list on every satellites/trackedSatId change even
+  // while nobody could see it. offsetParent is null while display:none
+  // (or any hidden ancestor) applies; the tab-click listener below forces
+  // one rebuild when Settings actually becomes visible again.
+  if (!list || !list.offsetParent) return;
   list.innerHTML = '';
   for (const sat of store.satellites) {
     const model = sat.model ?? '12U';
@@ -434,7 +438,6 @@ function renderSettingsSatList() {
     item.innerHTML = `
       <span class="st-sat-dot" style="background:${sat.color}"></span>
       <span class="st-item-name">${sat.name}</span>
-      <span class="st-item-meta">#${sat.noradId}</span>
       <span class="st-model-badge${model === 'FF' ? ' ff-active' : ''}">${model}</span>
       <button class="st-gear-btn" title="Edit">⚙</button>
       <button class="remove-btn" data-id="${sat.id}" data-norad="${sat.noradId}" title="Remove">×</button>
@@ -507,7 +510,7 @@ async function addSatellite() {
     if (!data.first_line || !data.second_line) throw new Error('No TLE in response');
 
     const { satrec, noradId, line1, line2 } = parseTLE(`${data.first_line}\n${data.second_line}`);
-    if (store.satellites.some(s => s.noradId === noradId)) throw new Error(`Already loaded (NORAD ${noradId})`);
+    if (store.satellites.some(s => s.noradId === noradId)) throw new Error(`${satId} is already loaded`);
 
     await finaliseSatellite({ satrec, noradId, satId, ip, line1, line2, statusEl });
     satIdInput.value = '';
@@ -583,6 +586,16 @@ export function initInputPanel() {
     pingIntervalInput.addEventListener('change', savePingInterval);
     pingIntervalInput.addEventListener('keydown', e => { if (e.key === 'Enter') pingIntervalInput.blur(); });
   }
+
+  // Force a Settings-list rebuild when that tab actually becomes visible —
+  // renderSettingsSatList() now skips itself while hidden (see above), so
+  // without this it would never rebuild until some unrelated satellites/
+  // trackedSatId change happened to fire while Settings was open.
+  document.querySelectorAll('[data-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.tab === 'settings') renderSettingsSatList();
+    });
+  });
 
   renderSatList();
   renderSettingsSatList();

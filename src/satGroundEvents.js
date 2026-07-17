@@ -8,6 +8,10 @@ import { satSubsystemOrigin } from './satSubsystems.js';
 const LOOKBACK_MS = 24 * 3_600_000;
 const MAX_EVENTS  = 200;
 
+// Cancel a satellite's still-running fetch rather than let it pile up
+// alongside a new one — see satTelemetry.js's _ctrl for the same rationale.
+const _ctrl = new Map(); // satId → AbortController
+
 export async function fetchSatGroundEvents(sat) {
   const origin = satSubsystemOrigin(sat.noradId, 'scc');
   if (!origin) return;
@@ -21,12 +25,15 @@ export async function fetchSatGroundEvents(sat) {
     + `&onBoardEventsTime=onBoardTime`
     + `&groundEventsTime=receptionTime`;
 
+  _ctrl.get(sat.id)?.abort();
   const ctrl  = new AbortController();
+  _ctrl.set(sat.id, ctrl);
   const timer = setTimeout(() => ctrl.abort(), 15_000);
   try {
     const res = await fetch(url, { signal: ctrl.signal });
     if (!res.ok) return;
     const events = await res.json();
+    if (ctrl.signal.aborted) return; // superseded or timed out — don't overwrite with a stale/partial result
     const counts = { watch: 0, warning: 0, distress: 0, critical: 0 };
     for (const e of events) {
       if (e.category !== 'GROUND') continue;
@@ -35,5 +42,8 @@ export async function fetchSatGroundEvents(sat) {
     }
     store.setSatGroundEvents(sat.id, counts);
   } catch { /* offline or aborted */ }
-  finally { clearTimeout(timer); }
+  finally {
+    clearTimeout(timer);
+    if (_ctrl.get(sat.id) === ctrl) _ctrl.delete(sat.id);
+  }
 }

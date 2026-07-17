@@ -57,6 +57,12 @@ function _collectWeekPasses(weekStart) {
 // ── HTML builders ─────────────────────────────────────────────────
 
 function _buildGrid(weekStart, passes) {
+  // `passes.indexOf(p)` inside the day/pass loop below was an O(n) scan of
+  // the FULL passes array for every single pass block rendered — with a full
+  // fleet and a busy week (hundreds of blocks) that's effectively quadratic.
+  // One Map built once up front makes each lookup O(1).
+  const passIndex = new Map(passes.map((p, i) => [p, i]));
+
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(weekStart);
     d.setDate(d.getDate() + i);
@@ -86,7 +92,7 @@ function _buildGrid(weekStart, passes) {
     const passBlocks = dayPasses.map(p => {
       const startMin   = _parisMinutes(p.start);
       const durationMin = Math.max((_parisMinutes(p.end) - startMin + 1440) % 1440, 1);
-      const idx = passes.indexOf(p);
+      const idx = passIndex.get(p);
       return `<div class="co-sched-pass" data-pass-idx="${idx}" style="top:${_pct(startMin)};height:${_pct(durationMin)};border-left-color:${p.color};background:${p.color}1a">
         <span class="co-sched-pass-name" style="color:${p.color}">${p.satName}</span>
         <span class="co-sched-pass-sta">${p.station}</span>
@@ -189,7 +195,17 @@ export function initWeeklySchedule() {
   let weekOffset  = 0;
   let _active     = false;
   let _timer      = null;
+  let _renderTimer = null;
   let _weekPasses = []; // kept in sync with the array handed to _buildGrid, for hover lookups
+
+  // satPasses/satellites can notify several times in quick succession (one
+  // per satellite during initial load, or once per satellite's poll cycle) —
+  // coalesce a burst into a single full-grid rebuild instead of one per
+  // notification, same pattern as ChadOps.js's Fleet table.
+  function _scheduleRender() {
+    if (_renderTimer) clearTimeout(_renderTimer);
+    _renderTimer = setTimeout(() => { _renderTimer = null; render(); }, 150);
+  }
 
   const tooltip = createPassTooltip();
 
@@ -239,7 +255,8 @@ export function initWeeklySchedule() {
   }
   function stop() {
     _active = false;
-    if (_timer) { clearInterval(_timer); _timer = null; }
+    if (_timer)       { clearInterval(_timer);   _timer       = null; }
+    if (_renderTimer) { clearTimeout(_renderTimer); _renderTimer = null; }
     tooltip.element.style.display = 'none';
   }
 
@@ -250,5 +267,5 @@ export function initWeeklySchedule() {
     });
   });
 
-  store.subscribe(key => { if ((key === 'satellites' || key === 'satPasses') && _active) render(); });
+  store.subscribe(key => { if ((key === 'satellites' || key === 'satPasses') && _active) _scheduleRender(); });
 }

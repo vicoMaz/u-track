@@ -81,7 +81,7 @@ body.tracking-active #side-panel { top: 100px; }
   cursor: pointer;
   border-radius: 4px;
   font-size: 12px;
-  transition: all 0.15s;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
   text-decoration: none;
   display: inline-block;
 }
@@ -89,6 +89,12 @@ body.tracking-active #side-panel { top: 100px; }
 .tab-btn.active { background: #1e1e2e; color: #fff; border-bottom: 2px solid #00d4ff; }
 
 
+.api-docs-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
 .api-docs-btn {
   text-decoration: none;
   color: #666;
@@ -96,6 +102,14 @@ body.tracking-active #side-panel { top: 100px; }
   border-radius: 4px;
 }
 .api-docs-btn:hover { color: #00d4ff; border-color: #00d4ff44; }
+
+#app-version {
+  color: #444;
+  font-size: 9px;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
 
 /* ── Nav Clocks ─────────────────────────────────────── */
 #nav-clocks {
@@ -206,7 +220,11 @@ body.tracking-active #side-panel { top: 100px; }
   background: rgba(14, 14, 22, 0.92);
   border: 1px solid #2a2a3a;
   border-radius: 8px;
-  backdrop-filter: blur(6px);
+  /* Blur radius halved from 6px — the panel sits over the continuously
+     animating globe, so the backdrop must be resampled every frame during
+     playback; the panel's own background is already 92% opaque, so a
+     lighter blur reads almost identically while costing less. */
+  backdrop-filter: blur(3px);
   transition: width 0.2s;
 }
 
@@ -243,7 +261,7 @@ body.tracking-active #side-panel { top: 100px; }
   font-size: 11px;
   padding: 2px 7px;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
   flex-shrink: 0;
 }
 /* Push the first "all" button to the right, rest follow naturally */
@@ -269,7 +287,7 @@ body.tracking-active #side-panel { top: 100px; }
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.03em;
-  transition: all 0.15s;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
   white-space: nowrap;
 }
 .model-toggle:hover { border-color: #00d4ff55; color: #aaa; }
@@ -416,7 +434,7 @@ body.tracking-active #time-player { display: flex; }
   cursor: pointer;
   font-size: 11px;
   flex-shrink: 0;
-  transition: all 0.15s;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
 }
 #now-btn:hover, #now-btn.active { border-color: #00d4ff; color: #00d4ff; }
 
@@ -430,7 +448,7 @@ body.tracking-active #time-player { display: flex; }
   font-size: 14px;
   flex-shrink: 0;
   min-width: 32px;
-  transition: all 0.15s;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
 }
 #play-btn:hover { border-color: #00d4ff; }
 #play-btn.playing { border-color: #00ff9d; color: #00ff9d; }
@@ -456,7 +474,7 @@ body.tracking-active #time-player { display: flex; }
   cursor: pointer;
   font-size: 11px;
   flex-shrink: 0;
-  transition: all 0.12s;
+  transition: color 0.12s, border-color 0.12s, background-color 0.12s;
   font-variant-numeric: tabular-nums;
 }
 .step-btn:hover { border-color: #00d4ff; color: #00d4ff; }
@@ -522,6 +540,9 @@ body.gantt-collapsed .gantt-rows { display: none; }
   right: calc(100% - var(--track-ml, 68px) + 6px);
   top: 50%;
   transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 3px;
   font-size: 10px;
   font-family: 'Courier New', monospace;
   letter-spacing: 0.06em;
@@ -529,6 +550,20 @@ body.gantt-collapsed .gantt-rows { display: none; }
   color: #8888aa;
   white-space: nowrap;
 }
+.gantt-collapse-btn {
+  background: none;
+  border: none;
+  color: #555;
+  font-size: 9px;
+  cursor: pointer;
+  padding: 4px 5px;
+  margin: -4px -5px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.1s;
+}
+.gantt-collapse-btn:hover { color: #aaa; }
+.gantt-stt-detail.gantt-collapsed { display: none; }
 .gantt-track {
   position: absolute;
   left: var(--track-ml, 68px);
@@ -601,126 +636,63 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .tp-num-field:focus { border-color: #00d4ff44; }
 
-/* ── Satellite info card ────────────────────────────── */
-#sat-info {
-  position: fixed;
-  bottom: 72px; /* above time player + Leaflet attribution */
-  right: 14px;
-  background: rgba(10, 10, 20, 0.88);
-  border: 1px solid var(--sat-color, #00d4ff);
-  border-radius: 8px;
-  padding: 10px 14px;
-  z-index: 900;
-  min-width: 160px;
-  backdrop-filter: blur(6px);
-  box-shadow: 0 2px 16px rgba(0,0,0,0.5);
-  transition: opacity 0.2s;
+/* ── Satellite info (name/norad/lat/lon/alt) — floats in the blank area
+   to the left of the Plans/TMR/Passes/Eclipse/STT rows (not above them);
+   position:absolute takes it out of flow so it doesn't add height to
+   .gantt-rows. Positioned relative to #timeline-gantt (nearest positioned
+   ancestor), same as #gantt-cursor. */
+#gantt-sat-info {
+  /* No fixed height (no `bottom`) — sized to its own content. A fixed height
+     here previously forced this into a flex-shrink squeeze: #gsi-name's
+     overflow:hidden (needed for its ellipsis) zeroes out its flex
+     min-height:auto floor, so when content didn't fit the constrained
+     height, the flexbox shrank #gsi-name below its own line-height and
+     clipped the glyph tops — regardless of justify-content/padding. */
+  position: absolute;
+  left: 10px;
+  top: 2px;
+  padding: 0 10px;
+  border-left: 2px solid var(--sat-color, #00d4ff);
+  background: linear-gradient(90deg, rgba(255,255,255,0.03), transparent 70%);
+  border-radius: 0 4px 4px 0;
+  font-family: 'Courier New', monospace;
+  z-index: 2;
 }
-#sat-info.hidden { display: none; }
-
-.sat-info-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 7px;
-  gap: 4px;
-}
-
-#eclipse-icon {
-  font-size: 11px;
-  flex-shrink: 0;
-  margin-right: auto; /* pushes badge to the far right */
-}
-
-#sat-info-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--sat-color, #00d4ff);
+#gantt-sat-info.hidden { display: none; }
+#gsi-name {
+  font-size: 12px;
+  font-weight: 700;
   letter-spacing: 0.03em;
+  color: var(--sat-color, #00d4ff);
+  margin-bottom: 3px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 160px;
 }
-
-/* Live / Past / Future badge */
-.time-badge {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  padding: 2px 6px;
-  border-radius: 3px;
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-.badge-live {
-  color: #ff4444;
-  border: 1px solid #ff444466;
-  animation: pulse-live 1.4s ease-in-out infinite;
-}
-.badge-past   { color: #888; border: 1px solid #333; }
-.badge-future { color: #c77dff; border: 1px solid #c77dff55; }
-
-@keyframes pulse-live {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.45; }
-}
-
-.sat-info-divider {
-  height: 1px;
-  background: #2a2a3a;
-  margin: 8px 0;
-}
-
-/* Data source rows */
-.data-src-row {
+.gsi-row {
   display: flex;
-  align-items: baseline;
-  gap: 7px;
-  margin-top: 5px;
-  font-size: 11px;
-  line-height: 1.5;
-}
-.data-dot {
+  gap: 6px;
   font-size: 10px;
-  flex-shrink: 0;
-  margin-top: 1px;
+  line-height: 15px;
 }
-.data-src-text { color: #666; }
-.data-src-label {
-  color: #555;
-  font-weight: 700;
-  font-size: 10px;
+.gsi-key {
+  color: #666;
   letter-spacing: 0.05em;
-  margin-right: 3px;
-}
-#orbit-text, #att-text { color: #888; font-style: italic; }
-
-.sat-info-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 12px;
-  line-height: 1.8;
-}
-.sat-info-label {
-  color: #555;
+  width: 42px;
   flex-shrink: 0;
 }
-.sat-info-row span:last-child {
-  color: #ccc;
-  font-family: 'Courier New', monospace;
-  font-size: 11px;
-  text-align: right;
+.gsi-row span:last-child {
+  color: #ddd;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
 }
 
 /* ── Leaflet overrides ──────────────────────────────── */
 .leaflet-container { background: #0d0d18 !important; }
 .leaflet-tile-pane { opacity: 1; }
-
-/* Push sat-info above gantt — bottom driven by JS via --gantt-offset */
-body.tracking-active #sat-info { bottom: var(--gantt-offset, 168px); }
-/* Hide sat-info card on Tools tab (SatInfo.js re-shows it on every tick so CSS wins) */
-body.tools-active #sat-info { display: none !important; }
 
 /* ── Tools view ─────────────────────────────────────── */
 #tools-view { background: #0a0a0f; flex-direction: column; overflow: hidden; }
@@ -934,12 +906,6 @@ body.tools-active #sat-info { display: none !important; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.st-item-meta {
-  font-size: 10px;
-  color: #667788;
-  white-space: nowrap;
-}
-
 .st-field-baseurl {
   width: 108px;
   flex-shrink: 0;
@@ -1043,7 +1009,6 @@ body.tools-active #sat-info { display: none !important; }
   transition: background .2s;
 }
 .sem-title { font-size: 13px; font-weight: 600; color: #dde; flex: 1; }
-.sem-meta  { font-size: 10px; color: #556; flex-shrink: 0; }
 .sem-close {
   background: none; border: none; color: #556; font-size: 18px;
   cursor: pointer; padding: 0 2px; line-height: 1;
@@ -1192,10 +1157,6 @@ body.tools-active #sat-info { display: none !important; }
   font-weight: 600;
   color: #ccdde8;
   letter-spacing: .04em;
-}
-.slm-meta {
-  font-size: 10px;
-  color: #445566;
   flex: 1;
 }
 .slm-close {
@@ -1302,7 +1263,7 @@ body.tools-active #sat-info { display: none !important; }
   cursor: pointer;
   border-radius: 4px;
   font-size: 12px;
-  transition: all 0.15s;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
 }
 .track-subtab:hover { background: #1e1e2e; color: #ccc; }
 .track-subtab.active { background: #1e1e2e; color: #fff; }
@@ -1927,9 +1888,14 @@ body.tools-active #sat-info { display: none !important; }
   white-space: nowrap;
 }
 
-/* Glowing LIVE badge — satellite is currently inside a pass window (aos0→los0) */
+/* Glowing LIVE badge — satellite is currently inside a pass window (aos0→los0).
+   The glow itself is a static box-shadow on a ::after layer; only its OPACITY
+   animates (compositor-only) instead of animating the box-shadow's blur/
+   spread directly, which would force a repaint every frame for as long as
+   any satellite is in-pass. */
 .co-pass-live-badge {
   display: inline-block;
+  position: relative;
   margin-left: 7px;
   padding: 1px 6px;
   color: #eafff4;
@@ -1940,11 +1906,19 @@ body.tools-active #sat-info { display: none !important; }
   font-weight: 700;
   letter-spacing: 0.04em;
   vertical-align: middle;
-  animation: co-pass-glow 1.4s ease-in-out infinite;
 }
-@keyframes co-pass-glow {
-  0%, 100% { box-shadow: 0 0 3px 0 rgba(45,184,114,0.55); }
-  50%      { box-shadow: 0 0 9px 2px rgba(45,184,114,0.95); }
+.co-pass-live-badge::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 3px;
+  box-shadow: 0 0 9px 2px rgba(45,184,114,0.95);
+  animation: co-pass-glow-op 1.4s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes co-pass-glow-op {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
 }
 
 /* Whole row gets a subtle live tint + left-edge glow while a pass is in progress */
@@ -1998,7 +1972,12 @@ body.tools-active #sat-info { display: none !important; }
   opacity: 0.4;
   mask-image: radial-gradient(circle, transparent 4px, black 4.5px);
   -webkit-mask-image: radial-gradient(circle, transparent 4px, black 4.5px);
-  animation: co-ping-arc var(--ping-period, 20s) linear infinite;
+  /* Animating a conic-gradient's angle repaints every frame it changes — with
+     one of these per satellite row, that's a continuous per-row paint cost
+     the whole time the Fleet tab is open. steps(90) quantizes the sweep to
+     ~90 discrete repaints across the full ping period instead of ~60/sec,
+     which is still visually indistinguishable from a smooth sweep. */
+  animation: co-ping-arc var(--ping-period, 20s) steps(90) infinite;
   animation-delay: var(--ping-delay, 0s);
   pointer-events: none;
 }

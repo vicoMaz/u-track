@@ -111,7 +111,7 @@ function _extract(param) {
   return { value, status, monitoring };
 }
 
-async function _fetchPacket(fdsOrigin, packetName) {
+async function _fetchPacket(fdsOrigin, packetName, signal) {
   const end   = new Date(Date.now() + 10_000).toISOString();
   const start = new Date(Date.now() - 24 * 3_600_000).toISOString();
   const url   = `${fdsOrigin}/api/v1/tm-packets`
@@ -120,63 +120,80 @@ async function _fetchPacket(fdsOrigin, packetName) {
     + `&orderBy=OnBoardTime&sortDir=DESC`
     + `&filter=${encodeURIComponent(packetName)}`
     + `&maxLimit=1`;
-  const ctrl  = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 8_000);
   try {
-    const res = await fetch(url, { signal: ctrl.signal });
+    const res = await fetch(url, { signal });
     if (!res.ok) return null;
     const data = await res.json();
     return data?.[0] ?? null;
   } catch { return null; }
-  finally { clearTimeout(timer); }
 }
+
+// Cancel a satellite's still-running fetch rather than let it pile up
+// alongside a new one — e.g. a manual "force ping" click, or the next poll
+// cycle landing before a slow previous one finished, would otherwise leave
+// two independent fetch chains racing to write store.satTelemetry, with
+// whichever happens to resolve LAST winning regardless of which was actually
+// requested more recently.
+const _ctrl = new Map(); // satId → AbortController
 
 export async function fetchSatTelemetry(sat) {
   const ip = satSubsystemOrigin(sat.noradId, 'sccRo');
   if (!ip) return;
 
-  const cfg = getTmConfig(sat.noradId, sat.model);
+  _ctrl.get(sat.id)?.abort();
+  const ctrl = new AbortController();
+  _ctrl.set(sat.id, ctrl);
+  const timer = setTimeout(() => ctrl.abort(), 8_000);
 
-  // Group fields by their packet name so each unique TM is fetched only once
-  const byPacket = new Map(); // packetName → [{field, param}]
-  for (const [field, { packet, param }] of Object.entries(cfg)) {
-    if (!byPacket.has(packet)) byPacket.set(packet, []);
-    byPacket.get(packet).push({ field, param });
-  }
+  try {
+    const cfg = getTmConfig(sat.noradId, sat.model);
 
-  // Fetch all unique packets in parallel
-  const extracted = {}; // field → {value, status} | null
-  let receptionTime = null;
-
-  await Promise.all([...byPacket.entries()].map(async ([packetName, fields]) => {
-    const pkt = await _fetchPacket(ip, packetName);
-    if (!pkt) return;
-    if (!receptionTime) receptionTime = pkt.receptionTime ?? null;
-    const root = pkt.spacePacket?.rootContainer?.subContainers ?? [];
-    for (const { field, param } of fields) {
-      extracted[field] = _extract(_findParam(root, param));
+    // Group fields by their packet name so each unique TM is fetched only once
+    const byPacket = new Map(); // packetName → [{field, param}]
+    for (const [field, { packet, param }] of Object.entries(cfg)) {
+      if (!byPacket.has(packet)) byPacket.set(packet, []);
+      byPacket.get(packet).push({ field, param });
     }
-  }));
 
-  const battV   = extracted.battery?.value;
-  const [socA, socB] = sat.model === 'FF' ? [-361.07, 18.55] : [-361.5, 27.86];
-  const battSoc = battV != null
-    ? Math.max(0, Math.min(100, Math.round(socA + socB * battV)))
-    : null;
+    // Fetch all unique packets in parallel
+    const extracted = {}; // field → {value, status} | null
+    let receptionTime = null;
 
-  store.setSatTelemetry(sat.id, {
-    receptionTime,
-    sysMode:     extracted.sysMode   ?? null,
-    gncMode:     extracted.gncMode   ?? null,
-    battVoltage: extracted.battery   ?? null,
-    battSoc:     battSoc != null ? { value: battSoc } : null,
-    rw: [extracted.rw1 ?? null, extracted.rw2 ?? null, extracted.rw3 ?? null, extracted.rw4 ?? null],
-    uptime: extracted.uptime ?? null,
-    events: {
-      normal: extracted.evtNormal ?? null,
-      low:    extracted.evtLow    ?? null,
-      med:    extracted.evtMed    ?? null,
-      high:   extracted.evtHigh   ?? null,
-    },
-  });
+    await Promise.all([...byPacket.entries()].map(async ([packetName, fields]) => {
+      const pkt = await _fetchPacket(ip, packetName, ctrl.signal);
+      if (!pkt) return;
+      if (!receptionTime) receptionTime = pkt.receptionTime ?? null;
+      const root = pkt.spacePacket?.rootContainer?.subContainers ?? [];
+      for (const { field, param } of fields) {
+        extracted[field] = _extract(_findParam(root, param));
+      }
+    }));
+
+    if (ctrl.signal.aborted) return; // superseded or timed out — don't overwrite with a stale/partial result
+
+    const battV   = extracted.battery?.value;
+    const [socA, socB] = sat.model === 'FF' ? [-361.07, 18.55] : [-361.5, 27.86];
+    const battSoc = battV != null
+      ? Math.max(0, Math.min(100, Math.round(socA + socB * battV)))
+      : null;
+
+    store.setSatTelemetry(sat.id, {
+      receptionTime,
+      sysMode:     extracted.sysMode   ?? null,
+      gncMode:     extracted.gncMode   ?? null,
+      battVoltage: extracted.battery   ?? null,
+      battSoc:     battSoc != null ? { value: battSoc } : null,
+      rw: [extracted.rw1 ?? null, extracted.rw2 ?? null, extracted.rw3 ?? null, extracted.rw4 ?? null],
+      uptime: extracted.uptime ?? null,
+      events: {
+        normal: extracted.evtNormal ?? null,
+        low:    extracted.evtLow    ?? null,
+        med:    extracted.evtMed    ?? null,
+        high:   extracted.evtHigh   ?? null,
+      },
+    });
+  } finally {
+    clearTimeout(timer);
+    if (_ctrl.get(sat.id) === ctrl) _ctrl.delete(sat.id);
+  }
 }

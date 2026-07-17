@@ -406,6 +406,19 @@ export function initChadOps() {
 
   let _active = false;
   let _timer  = null;
+  let _renderTimer = null;
+
+  // One satellite's ~20s poll cycle resolves telemetry/passes/gnss/groundEvents
+  // (and occasionally globals/versions) as separate promises, each firing its
+  // own store notification — without this, render() (a full tbody.innerHTML
+  // rebuild + tooltip re-wiring) would run once per notification, several
+  // times per second across a fleet, dropping any open tooltip and scroll
+  // position each time. Coalesces a burst into a single rebuild ~150ms after
+  // the last notification in it.
+  function _scheduleRender() {
+    if (_renderTimer) clearTimeout(_renderTimer);
+    _renderTimer = setTimeout(() => { _renderTimer = null; render(); }, 150);
+  }
 
   let _ttHideTimer = null;
   const _hideNow      = () => { clearTimeout(_ttHideTimer); tooltip.style.display = 'none'; };
@@ -553,7 +566,7 @@ export function initChadOps() {
         const polarEl = tooltip.querySelector('.pass-polar');
 
         const ebn0Slot = tooltip.querySelector('.ebn0-slot');
-        if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers, pass.procedures);
+        if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers, pass.procedures, { t0: pass.start.getTime(), t1: pass.end.getTime() });
         const ebn0El = tooltip.querySelector('.ebn0-chart');
 
         _positionTooltip(e, tooltip);
@@ -729,8 +742,9 @@ export function initChadOps() {
   }
   function stop() {
     _active = false;
-    if (_timer)    { clearInterval(_timer);    _timer    = null; }
-    if (_agoTimer) { clearInterval(_agoTimer); _agoTimer = null; }
+    if (_timer)       { clearInterval(_timer);    _timer    = null; }
+    if (_agoTimer)    { clearInterval(_agoTimer); _agoTimer = null; }
+    if (_renderTimer) { clearTimeout(_renderTimer); _renderTimer = null; }
     tooltip.style.display = 'none';
   }
 
@@ -742,7 +756,7 @@ export function initChadOps() {
   });
 
   store.subscribe(key => {
-    if ((key === 'satellites' || key === 'satTelemetry' || key === 'satPasses' || key === 'satGnss' || key === 'satGlobals' || key === 'satVersions' || key === 'satGroundEvents') && _active) render();
+    if ((key === 'satellites' || key === 'satTelemetry' || key === 'satPasses' || key === 'satGnss' || key === 'satGlobals' || key === 'satVersions' || key === 'satGroundEvents') && _active) _scheduleRender();
     if (key === 'pingStatus' && _active) _updatePingDots();
   });
 }

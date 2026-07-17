@@ -1,7 +1,7 @@
 import { initTimePlayer } from './ui/TimePlayer.js';
 import { initInputPanel } from './ui/InputPanel.js';
-import { initGlobe } from './globe/GlobeView.js';
-import { initMap, invalidateMapSize } from './planisphere/MapView.js';
+import { initGlobe, setGlobeVisible } from './globe/GlobeView.js';
+import { initMap, invalidateMapSize, setMapVisible } from './planisphere/MapView.js';
 import { loadInitialState, startApiPoller } from './apiPoller.js';
 import { initSatInfo } from './ui/SatInfo.js';
 import { initScheduler }         from './ui/Scheduler.js';
@@ -10,6 +10,9 @@ import { initWeeklySchedule }   from './ui/WeeklySchedule.js';
 import { initNavClocks }        from './ui/NavClocks.js';
 import { initSatPing }          from './satPing.js';
 
+// eslint-disable-next-line no-undef -- injected by vite.config.js's `define`
+document.getElementById('app-version').textContent = __APP_VERSION__;
+
 // Tab switching
 const tabBtns   = document.querySelectorAll('[data-tab]');
 const views      = document.querySelectorAll('.view');
@@ -17,6 +20,16 @@ const sidePanel  = document.getElementById('side-panel');
 
 // Tracking starts active
 document.body.classList.add('tracking-active');
+
+// Gates the globe/map per-frame work (SGP4 propagation, night-shadow canvas)
+// to whichever of the two is actually visible — see GlobeView.js/MapView.js's
+// setGlobeVisible/setMapVisible. Tracks the last-active subtab so switching
+// away from and back to the Visualizer tab restores the right one.
+let activeSubtab = 'globe'; // matches index.html's default active subtab
+function _applyTrackingVisibility(isTracking) {
+  setGlobeVisible(isTracking && activeSubtab === 'globe');
+  setMapVisible(isTracking && activeSubtab === 'map');
+}
 
 tabBtns.forEach(btn => {
   btn.addEventListener('click', () => {
@@ -29,6 +42,7 @@ tabBtns.forEach(btn => {
     document.body.classList.toggle('tools-active',    hideSide);
     document.body.classList.toggle('tracking-active', isTracking);
     location.hash = target;
+    _applyTrackingVisibility(isTracking);
   });
 });
 
@@ -40,7 +54,9 @@ trackSubtabBtns.forEach(btn => {
     const sub = btn.dataset.tracksubtab;
     trackSubtabBtns.forEach(b => b.classList.toggle('active', b.dataset.tracksubtab === sub));
     trackContents.forEach(c  => c.classList.toggle('active', c.id === `${sub}-view`));
+    activeSubtab = sub;
     if (sub === 'map') invalidateMapSize();
+    _applyTrackingVisibility(document.body.classList.contains('tracking-active'));
   });
 });
 

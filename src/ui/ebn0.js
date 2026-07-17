@@ -93,17 +93,30 @@ const MARKER_RADIUS = {
 // [t0,t1] and never draw. Passing the same `procedures` wherever `ebn0Scales`
 // is called (buildEbn0SVG, passCursor.js) keeps the curve, markers, cursor,
 // and bars all mapped through one consistent scale.
-export function ebn0Scales(series, procedures) {
-  let t0 = series[0].t, t1 = series[series.length - 1].t;
+// `fallbackRange` ({t0,t1} ms) is used only when there's no series — lets the
+// empty-plot case (no Eb/N0 metric for this network/pass) still frame its
+// x-axis on the pass's own AOS→LOS span, so procedure bars land in the right
+// place instead of the chart having no time domain to scale against at all.
+export function ebn0Scales(series, procedures, fallbackRange) {
+  let t0, t1;
+  if (series?.length) {
+    t0 = series[0].t;
+    t1 = series[series.length - 1].t;
+  } else if (fallbackRange) {
+    ({ t0, t1 } = fallbackRange);
+  } else {
+    t0 = 0; t1 = 1;
+  }
   if (procedures?.length) {
     for (const pr of procedures) {
       if (pr.startMs != null) t0 = Math.min(t0, pr.startMs);
       if (pr.endMs   != null) t1 = Math.max(t1, pr.endMs);
     }
   }
-  const vMin = Math.min(...series.map(s => s.v));
-  const vMax = Math.max(...series.map(s => s.v));
-  const vPad = Math.max(0.2, (vMax - vMin) * 0.15);
+  const vals = series?.length ? series.map(s => s.v) : null;
+  const vMin = vals ? Math.min(...vals) : 0;
+  const vMax = vals ? Math.max(...vals) : 1;
+  const vPad = vals ? Math.max(0.2, (vMax - vMin) * 0.15) : 0;
   const lo = vMin - vPad, hi = vMax + vPad;
   const xScale = t => t1 === t0 ? PAD_L : PAD_L + (t - t0) / (t1 - t0) * (CHART_W - PAD_L - PAD_R);
   const yScale = v => CHART_H - PAD_B - (hi === lo ? 0 : (v - lo) / (hi - lo) * (CHART_H - PAD_T - PAD_B));
@@ -162,20 +175,27 @@ function _procedureBars(procedures, xScale, t0, t1) {
 // No background/border — sits directly on the tooltip's own dark background,
 // like the polar plot. A transparent hit-rect drives the shared hover cursor
 // (see passCursor.js), wired up separately once this markup is in the live DOM.
-export function buildEbn0SVG(series, markers, procedures) {
-  if (!series?.length) return '';
-  const { xScale, yScale, lo, hi, t0, t1 } = ebn0Scales(series, procedures);
-  const pathD = series.map((p, i) => `${i ? 'L' : 'M'}${xScale(p.t).toFixed(1)},${yScale(p.v).toFixed(1)}`).join('');
+//
+// With no series (metric unavailable for this pass/network), still draws the
+// empty axes + procedure bars (if any) so the procedure-timing strip stays
+// visible instead of disappearing along with the missing curve — and a faint
+// centered note in place of the data line, rather than replacing the whole
+// block with a one-line text note.
+export function buildEbn0SVG(series, markers, procedures, fallbackRange) {
+  const hasSeries = !!series?.length;
+  if (!hasSeries && !procedures?.length && !fallbackRange) return '';
+  const { xScale, yScale, lo, hi, t0, t1 } = ebn0Scales(series, procedures, fallbackRange);
+  const pathD = hasSeries ? series.map((p, i) => `${i ? 'L' : 'M'}${xScale(p.t).toFixed(1)},${yScale(p.v).toFixed(1)}`).join('') : '';
   const hasBars = procedures?.some(pr => pr.startMs != null && pr.endMs != null);
   const totalH = hasBars ? (CHART_H - PAD_B + BAR_ROW_GAP + BAR_ROW_H + BAR_BOTTOM_PAD) : CHART_H;
 
   return `<svg width="100%" height="${totalH}" viewBox="0 0 ${CHART_W} ${totalH}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" class="ebn0-chart">
-    <text x="${PAD_L - 4}" y="${PAD_T + 3}" text-anchor="end" fill="#5a5a8a" font-size="7" font-family="monospace">${hi.toFixed(1)}</text>
-    <text x="${PAD_L - 4}" y="${CHART_H - PAD_B}" text-anchor="end" fill="#5a5a8a" font-size="7" font-family="monospace">${lo.toFixed(1)}</text>
+    ${hasSeries ? `<text x="${PAD_L - 4}" y="${PAD_T + 3}" text-anchor="end" fill="#5a5a8a" font-size="7" font-family="monospace">${hi.toFixed(1)}</text>
+    <text x="${PAD_L - 4}" y="${CHART_H - PAD_B}" text-anchor="end" fill="#5a5a8a" font-size="7" font-family="monospace">${lo.toFixed(1)}</text>` : ''}
     <line x1="${PAD_L}" y1="${PAD_T}" x2="${PAD_L}" y2="${CHART_H - PAD_B}" stroke="#2a2a44" stroke-width="0.7"/>
     <line x1="${PAD_L}" y1="${CHART_H - PAD_B}" x2="${CHART_W - PAD_R}" y2="${CHART_H - PAD_B}" stroke="#2a2a44" stroke-width="0.7"/>
-    <path d="${pathD}" fill="none" stroke="#a78bfa" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
-    ${_markerDots(series, markers, xScale, yScale)}
+    ${hasSeries ? `<path d="${pathD}" fill="none" stroke="#a78bfa" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+    ${_markerDots(series, markers, xScale, yScale)}` : `<text x="${(PAD_L + CHART_W - PAD_R) / 2}" y="${(PAD_T + CHART_H - PAD_B) / 2}" text-anchor="middle" dominant-baseline="middle" fill="#4a4a6a" font-size="9" font-family="monospace" font-style="italic">(No Eb/N0 metric)</text>`}
     ${hasBars ? _procedureBars(procedures, xScale, t0, t1) : ''}
     <line class="ebn0-cursor-line" x1="0" y1="${PAD_T}" x2="0" y2="${CHART_H - PAD_B}" stroke="#ffffff" stroke-opacity="0.5" stroke-width="0.7" stroke-dasharray="2,2" visibility="hidden"/>
     <circle class="ebn0-cursor-dot" r="${MARKER_PX_RADIUS.cursor}" fill="#fff" stroke="#a78bfa" stroke-width="0.8" visibility="hidden"/>
@@ -201,18 +221,19 @@ export function syncEbn0DotSizes(ebn0El) {
   if (cursorDot) cursorDot.setAttribute('r', (MARKER_PX_RADIUS.cursor * scale).toFixed(2));
 }
 
-export function ebn0HTML(series, markers, procedures) {
+export function ebn0HTML(series, markers, procedures, fallbackRange) {
   if (!series?.length) {
-    return `<div class="ebn0-block">
-      <div class="co-tt-note">No Eb/N0 data found</div>
-    </div>`;
+    const svg = buildEbn0SVG(series, markers, procedures, fallbackRange);
+    return svg
+      ? `<div class="ebn0-block">${svg}</div>`
+      : `<div class="ebn0-block"><div class="co-tt-note">No Eb/N0 data found</div></div>`;
   }
   const vals = series.map(s => s.v);
   const min = Math.min(...vals).toFixed(2);
   const max = Math.max(...vals).toFixed(2);
   const avg = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2);
   return `<div class="ebn0-block">
-    ${buildEbn0SVG(series, markers, procedures)}
+    ${buildEbn0SVG(series, markers, procedures, fallbackRange)}
     <div class="ebn0-legend">
       <span class="ebn0-legend-swatch"></span><span class="ebn0-legend-label">TM Eb/N0</span>
       <span class="ebn0-stats">min ${min} · mean ${avg} · max ${max} dB</span>
