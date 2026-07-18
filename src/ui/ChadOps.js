@@ -7,6 +7,7 @@ import { fetchEbn0Series, ebn0HTML } from './ebn0.js';
 import { wireLinkedCursor } from './passCursor.js';
 import { getPingIntervalSec, getPingElapsedSec, getLastPingMs, satBaseUrl, pingSatellite } from '../satPing.js';
 import { satSubsystemOrigin, satSubsystemHost } from '../satSubsystems.js';
+import { worstSev } from './severity.js';
 import {
   passTooltipContent  as _tooltipContent,
   positionTooltip     as _positionTooltip,
@@ -107,11 +108,11 @@ function _evtBadge(events, baseline) {
 // the shared 3-bucket _monPillCls used elsewhere — kept separate to avoid recoloring
 // battery/orbit pills that already rely on _monPillCls's coarser grouping.
 const _GROUND_SEV_COLOR = {
-  NOMINAL:  '#2db872',
-  WATCH:    '#8bc34a',
-  WARNING:  '#ffbe0b',
-  DISTRESS: '#ff8c00',
-  CRITICAL: '#e63946',
+  NOMINAL:  'var(--sev-nominal)',
+  WATCH:    'var(--sev-watch)',
+  WARNING:  'var(--sev-warning)',
+  DISTRESS: 'var(--sev-distress)',
+  CRITICAL: 'var(--sev-critical)',
 };
 const _GROUND_SEV_CLS = {
   NOMINAL:  'co-pill-ga-nominal',
@@ -624,7 +625,11 @@ export function initChadOps() {
       return;
     }
 
-    tbody.innerHTML = store.satellites.map(sat => {
+    // Worst-first: a satellite with a problem sorts to the top regardless of
+    // add order, so it's found without reading every row on a large fleet.
+    const sorted = [...store.satellites].sort((a, b) => worstSev(b) - worstSev(a));
+
+    tbody.innerHTML = sorted.map(sat => {
       let eclipse = null;
       if (sat.satrec) {
         const r = propagate(sat.satrec, nowDate);

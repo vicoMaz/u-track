@@ -4,11 +4,12 @@ import { initGlobe, setGlobeVisible } from './globe/GlobeView.js';
 import { initMap, invalidateMapSize, setMapVisible } from './planisphere/MapView.js';
 import { loadInitialState, startApiPoller } from './apiPoller.js';
 import { initSatInfo } from './ui/SatInfo.js';
-import { initScheduler }         from './ui/Scheduler.js';
 import { initChadOps }          from './ui/ChadOps.js';
+import { initFleetHeatmap }     from './ui/FleetHeatmap.js';
 import { initWeeklySchedule }   from './ui/WeeklySchedule.js';
 import { initNavClocks }        from './ui/NavClocks.js';
 import { initSatPing }          from './satPing.js';
+import { initVpnGuard }         from './ui/vpnGuard.js';
 
 // eslint-disable-next-line no-undef -- injected by vite.config.js's `define`
 document.getElementById('app-version').textContent = __APP_VERSION__;
@@ -34,7 +35,7 @@ function _applyTrackingVisibility(isTracking) {
 tabBtns.forEach(btn => {
   btn.addEventListener('click', () => {
     const target      = btn.dataset.tab;
-    const hideSide    = target === 'tools' || target === 'fleet' || target === 'schedule' || target === 'settings';
+    const hideSide    = target === 'fleet' || target === 'schedule' || target === 'settings';
     const isTracking  = target === 'tracking';
     tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === target));
     views.forEach(v   => v.classList.toggle('active', v.id === `${target}-view`));
@@ -66,8 +67,8 @@ initInputPanel();
 initGlobe();
 initMap();
 initSatInfo();
-initScheduler();
 initChadOps();
+initFleetHeatmap();
 initWeeklySchedule();
 initNavClocks();
 
@@ -76,4 +77,4 @@ const _initHash = location.hash.slice(1);
 const _initBtn  = [...tabBtns].find(b => b.dataset.tab === _initHash);
 if (_initBtn) _initBtn.click();
 
-loadInitialState().then(() => { startApiPoller(); initSatPing(); });
+loadInitialState().then(() => { startApiPoller(); initSatPing(); initVpnGuard(); });

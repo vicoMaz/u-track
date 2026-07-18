@@ -38,7 +38,6 @@
         <a class="tab-btn" data-tab="fleet" href="#fleet">Fleet</a>
         <a class="tab-btn" data-tab="schedule" href="#schedule">Weekly Schedule</a>
         <a class="tab-btn active" data-tab="tracking" href="#tracking">Visualizer</a>
-        <a class="tab-btn" data-tab="tools" href="#tools">Scheduler</a>
         <a class="tab-btn" data-tab="settings" href="#settings">Settings</a>
         <div id="nav-clocks">
           <div class="nc-box nc-box-utc">
@@ -86,55 +85,35 @@
         <div id="map-view" class="track-subtab-content"></div>
       </div>
 
-      <!-- Scheduler view -->
-      <div id="tools-view" class="view">
-
-        <!-- Top bar: satellite selector + action -->
-        <div class="sc-topbar">
-          <label class="sc-topbar-lbl">Satellite</label>
-          <select id="sc-sat-select" class="sc-sat-select"></select>
-          <div class="sc-topbar-sep"></div>
-          <button class="sc-schedule-all-btn" disabled title="Wire up later">⚡ Schedule on all selected passes</button>
-        </div>
-
-        <!-- Two-column layout -->
-        <div class="sc-body">
-
-          <!-- Left: pass timeline -->
-          <div class="sc-panel">
-            <div class="sc-panel-header">
-              <span class="sc-panel-title">Upcoming Passes</span>
-              <div class="sc-panel-actions">
-                <span id="sc-sel-count" class="sc-sel-count">No passes selected</span>
-                <button id="sc-select-all" class="sc-hdr-btn">Select all</button>
-              </div>
-            </div>
-            <div id="sc-pass-list" class="sc-pass-list"></div>
-          </div>
-
-          <!-- Right: procedure builder -->
-          <div class="sc-panel">
-            <div class="sc-panel-header">
-              <span class="sc-panel-title">Procedures</span>
-              <span id="sc-db-status" class="sc-db-status">Select a satellite</span>
-            </div>
-            <div class="sc-search-wrap">
-              <input id="sc-search-inp" class="sc-search-inp" type="text" placeholder="Search procedure…" autocomplete="off" />
-              <div id="sc-search-drop" class="sc-search-drop" style="display:none"></div>
-            </div>
-            <div id="sc-proc-list" class="sc-proc-list"></div>
-          </div>
-
-        </div>
-
-        <!-- Procedure editor modal -->
-        <div id="sc-proc-modal" class="sc-modal-backdrop" style="display:none"></div>
-
-      </div>
-
       <!-- Fleet view -->
       <div id="fleet-view" class="view">
         <div class="co-container">
+          <div class="fhm-panel">
+            <div class="fhm-header">
+              <span class="fhm-title">Fleet Health</span>
+              <div class="fhm-legend">
+                <span class="fhm-legend-item"><span class="fhm-legend-dot" style="background:var(--sev-nominal)"></span>OK</span>
+                <span class="fhm-legend-item"><span class="fhm-legend-dot" style="background:var(--sev-watch)"></span>Watch</span>
+                <span class="fhm-legend-item"><span class="fhm-legend-dot" style="background:var(--sev-warning)"></span>Warn</span>
+                <span class="fhm-legend-item"><span class="fhm-legend-dot" style="background:var(--sev-distress)"></span>Distress</span>
+                <span class="fhm-legend-item"><span class="fhm-legend-dot" style="background:var(--sev-critical)"></span>Critical</span>
+              </div>
+            </div>
+            <table class="fhm-table">
+              <thead>
+                <tr>
+                  <th class="fhm-th fhm-th-health">Health</th>
+                  <th class="fhm-th fhm-th-name">Satellite</th>
+                  <th class="fhm-th">PING</th>
+                  <th class="fhm-th">MODE</th>
+                  <th class="fhm-th">BATT</th>
+                  <th class="fhm-th">GNSS</th>
+                  <th class="fhm-th">GND</th>
+                </tr>
+              </thead>
+              <tbody id="fhm-tbody"></tbody>
+            </table>
+          </div>
           <div class="co-table-wrap">
             <table class="co-table">
               <thead>

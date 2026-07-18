@@ -54,6 +54,42 @@ function _collectWeekPasses(weekStart) {
   return passes.sort((a, b) => a.start - b.start);
 }
 
+// Passes whose time windows overlap (same or different satellite) used to
+// render fully stacked on top of each other — only the last one in DOM order
+// stayed visible/hoverable, the rest were silently hidden with no indicator.
+// This assigns each pass a side-by-side lane instead, like a calendar app,
+// so every pass is always visible, just narrower when several overlap.
+// `dayPasses` must already be sorted by start time (it is — see _buildGrid).
+function _assignLanes(dayPasses) {
+  const laneEndMs = []; // end time currently occupied per lane index
+  for (const p of dayPasses) {
+    const startMs = p.start.getTime();
+    let lane = laneEndMs.findIndex(endMs => endMs <= startMs);
+    if (lane === -1) { lane = laneEndMs.length; laneEndMs.push(0); }
+    laneEndMs[lane] = p.end.getTime();
+    p._lane = lane;
+  }
+
+  // Size each overlap cluster's lane count independently (a sweep over the
+  // sorted list) so a busy moment elsewhere in the day doesn't squeeze a lone
+  // pass that has no actual overlap.
+  let cluster = [], clusterEndMs = -Infinity;
+  const flushCluster = () => {
+    if (!cluster.length) return;
+    const laneCount = Math.max(...cluster.map(p => p._lane)) + 1;
+    for (const p of cluster) p._laneCount = laneCount;
+    cluster = [];
+  };
+  for (const p of dayPasses) {
+    if (p.start.getTime() >= clusterEndMs) flushCluster();
+    cluster.push(p);
+    clusterEndMs = Math.max(clusterEndMs, p.end.getTime());
+  }
+  flushCluster();
+
+  return dayPasses;
+}
+
 // ── HTML builders ─────────────────────────────────────────────────
 
 function _buildGrid(weekStart, passes) {
@@ -87,13 +123,16 @@ function _buildGrid(weekStart, passes) {
   const dayCols = days.map(day => {
     const dayStr    = _parisDateStr(day);
     const isToday   = dayStr === todayStr;
-    const dayPasses = passes.filter(p => _parisDateStr(p.start) === dayStr);
+    const dayPasses = _assignLanes(passes.filter(p => _parisDateStr(p.start) === dayStr));
 
     const passBlocks = dayPasses.map(p => {
       const startMin   = _parisMinutes(p.start);
       const durationMin = Math.max((_parisMinutes(p.end) - startMin + 1440) % 1440, 1);
       const idx = passIndex.get(p);
-      return `<div class="co-sched-pass" data-pass-idx="${idx}" style="top:${_pct(startMin)};height:${_pct(durationMin)};border-left-color:${p.color};background:${p.color}1a">
+      const laneCount = p._laneCount ?? 1;
+      const widthPct  = 100 / laneCount;
+      const leftPct   = p._lane * widthPct;
+      return `<div class="co-sched-pass" data-pass-idx="${idx}" style="top:${_pct(startMin)};height:${_pct(durationMin)};left:calc(${leftPct}% + 1px);width:calc(${widthPct}% - 2px);border-left-color:${p.color};background:${p.color}1a">
         <span class="co-sched-pass-name" style="color:${p.color}">${p.satName}</span>
         <span class="co-sched-pass-sta">${p.station}</span>
       </div>`;
