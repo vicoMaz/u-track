@@ -1,50 +1,79 @@
 import { satSubsystemOrigin } from './satSubsystems.js';
 
-const FINE_MS = 90 * 60_000; // interpass gaps longer than this get sub-probed at this resolution
-                              // instead of trusting one hit for the whole span
-const MIN_SEGMENT_MS = 20 * 60_000; // floor segment size — back-to-back passes shouldn't create sliver windows
-const RETRIES = 2; // a probe now paints a real gap on a single "no data" — don't trust one failed request
+// ── Gap-detection strategy ──────────────────────────────────────────────
+// Earlier version of this file chunked each interpass void into fixed 90-min
+// buckets and asked "does ANY row exist in this bucket" (maxLimit=1). That has
+// two real precision holes: (1) a single stray sample near either edge of a
+// bucket paints the WHOLE 90 minutes as covered, hiding a genuine multi-tens-
+// of-minutes outage sitting inside it; (2) any void shorter than 20 min was
+// never probed at all, just assumed clean. Both are the same root problem —
+// checking *existence in a bucket* instead of the *actual gap structure*.
+//
+// This version walks the real onBoardTime-ordered samples (same pattern
+// satGnss.js already uses for a similar problem) and measures the actual
+// delta between consecutive real timestamps. A gap is only ever bounded by
+// real data, never by an arbitrary grid — and because one request can return
+// up to MAX_ROWS consecutive real samples, a long, densely-covered void often
+// resolves in far fewer requests than the old fixed-bucket scan, while a
+// short interpass void that used to be skipped entirely now costs one cheap
+// request instead of zero (a real, unavoidable trade for actually checking it).
+const MAX_ROWS         = 1000;         // per-request cap — matches satGnss.js's proven-safe value
+const GAP_THRESHOLD_MS = 10 * 60_000;  // silence >= this between two real samples counts as a gap.
+                                        // The one genuine judgment call in this file — tune against
+                                        // real telemetry cadence if it over/under-reports in practice.
+const MIN_CANDIDATE_MS = 60_000;       // floor below which a void isn't worth a request at all
+const RETRIES = 2;                     // a page failing outright shouldn't end the whole scan
 const RETRY_DELAY_MS = 250;
 const FILTER  = 'TM_3_25_OBSW_HK_PLT';
 const PARAM   = 'OBSW_AM_SID';
 const PRE_MS  = 24 * 3_600_000; // extend back 24 h before first pass to catch its TMR buffer
-const CONCURRENCY = 6; // keep in flight continuously — no barrier stalls between rounds
+const CONCURRENCY = 6; // candidates walked in parallel — each candidate's own pagination is
+                        // inherently sequential (a page's cursor depends on the previous page)
 
 const _ctrl     = new Map(); // noradId → AbortController
 const _debounce = new Map(); // noradId → timer handle
 
 const _sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// Throws on a failed/errored request — callers must distinguish "confirmed empty"
-// from "we don't actually know" so a network blip doesn't get rendered as a real gap.
-async function _hasData(sccOrigin, startMs, endMs, signal) {
-  const url = `${sccOrigin}/api/v1/parameters`
+function _rowTime(row) {
+  const t = row?.onBoardTime ?? row?.generationTime ?? row?.receptionTime ?? row?.time;
+  return t ? new Date(t).getTime() : null;
+}
+
+function _buildUrl(sccOrigin, startMs, endMs, maxLimit) {
+  return `${sccOrigin}/api/v1/parameters`
     + `?start=${encodeURIComponent(new Date(startMs).toISOString())}`
     + `&end=${encodeURIComponent(new Date(endMs).toISOString())}`
     + `&orderBy=onBoardTime`
     + `&filter=${encodeURIComponent(FILTER)}`
     + `&requestedParameters=${encodeURIComponent(PARAM)}`
-    + `&maxLimit=1`;
-  const res = await fetch(url, { signal });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = await res.json();
-  const rows = Array.isArray(data[0]) ? data[0] : (data.parameters ?? data ?? []);
-  return rows.length > 0;
+    + `&maxLimit=${maxLimit}`;
 }
 
-// Retries on failure (timeout, connection reset, non-2xx) before giving up and
-// treating the segment as uncovered — a single request now determines a whole
-// segment's color, so it needs to be trustworthy rather than fast-and-lucky.
-async function _probe(sccOrigin, startMs, endMs, signal) {
+// Fetches up to `maxLimit` onBoardTime-ordered (ascending) rows in [startMs, endMs].
+// Retries on failure/non-2xx; throws once exhausted (or on abort) rather than
+// silently returning an empty page — callers decide what "we don't actually
+// know" should mean for them instead of it being indistinguishable from "confirmed empty".
+async function _queryPage(sccOrigin, startMs, endMs, maxLimit, signal) {
+  const url = _buildUrl(sccOrigin, startMs, endMs, maxLimit);
   for (let attempt = 0; attempt <= RETRIES; attempt++) {
     try {
-      return await _hasData(sccOrigin, startMs, endMs, signal);
-    } catch {
-      if (signal.aborted || attempt === RETRIES) return false;
+      const res = await fetch(url, { signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      return Array.isArray(data[0]) ? data[0] : (data.parameters ?? data ?? []);
+    } catch (e) {
+      if (signal.aborted) throw e;
+      if (attempt === RETRIES) throw e;
       await _sleep(RETRY_DELAY_MS);
     }
   }
-  return false;
+  throw new Error('unreachable');
+}
+
+async function _hasAnyData(sccOrigin, startMs, endMs, signal) {
+  const rows = await _queryPage(sccOrigin, startMs, endMs, 1, signal);
+  return rows.length > 0;
 }
 
 // Runs `worker` over `items` with up to `concurrency` in flight at once — no
@@ -94,20 +123,45 @@ function _gapCandidates(rangeStart, rangeEnd, passIntervals) {
   return candidates;
 }
 
-// One probe per candidate gap — a single hit anywhere in a *short* gap means the recorder
-// was covering it, so the whole gap counts as green. But trusting one hit doesn't scale to
-// long gaps — a real multi-hour outage in the middle of an otherwise-long gap would hide
-// behind a stray data point near either edge — so any candidate longer than FINE_MS gets
-// sub-chunked at that resolution instead, matching the original gap-detection resolution.
-function _buildSegments(candidates) {
-  const segments = [];
-  for (const { start, end } of candidates) {
-    if (end - start < MIN_SEGMENT_MS) continue; // too small to reliably flag as a real gap
-    for (let t = start; t < end; t += FINE_MS) {
-      segments.push({ start: t, end: Math.min(t + FINE_MS, end) });
+// Walks one candidate void end-to-end through the REAL recorded samples (not a
+// fixed-size existence probe), so a real gap is found exactly regardless of
+// what data exists elsewhere in the same stretch. Each page can cover from
+// seconds to many hours of real time depending on how dense the telemetry
+// actually is — continuous coverage resolves in very few requests, and any
+// genuine silence is bounded by real timestamps, never a coarse grid.
+async function _walkCandidate(sccOrigin, start, end, signal) {
+  const gaps = [];
+  let cursor = start;
+  try {
+    while (cursor < end) {
+      const rows = await _queryPage(sccOrigin, cursor, end, MAX_ROWS, signal);
+      if (!rows.length) {
+        if (end - cursor >= GAP_THRESHOLD_MS) gaps.push({ start: cursor, end });
+        return gaps;
+      }
+      for (const row of rows) {
+        const t = _rowTime(row);
+        if (t == null) continue;
+        if (t - cursor >= GAP_THRESHOLD_MS) gaps.push({ start: cursor, end: t });
+        cursor = Math.max(cursor, t + 1);
+      }
+      if (rows.length < MAX_ROWS) {
+        // This page wasn't capped, so it saw everything up to `end` — nothing left to paginate.
+        if (end - cursor >= GAP_THRESHOLD_MS) gaps.push({ start: cursor, end });
+        return gaps;
+      }
+      // rows.length === MAX_ROWS: there may be more data after the last row seen —
+      // continue from just past it. If the true count is exactly MAX_ROWS, the next
+      // page simply comes back empty — one cheap extra request, not a bug.
     }
+  } catch (e) {
+    if (signal.aborted) throw e; // let abort unwind the whole scan
+    // A real (non-abort) failure mid-walk — conservative fallback: keep whatever
+    // gaps were already confirmed before the failure and drop the unresolved
+    // remainder rather than guessing, same "don't paint a gap we're not sure
+    // about" bias the rest of this file uses.
   }
-  return segments;
+  return gaps;
 }
 
 export function scheduleTmrFetch(sat, pastPasses, onDone) {
@@ -132,39 +186,37 @@ async function _fetchTmrWindows(sat, pastPasses) {
   const rangeStart = Math.min(...pastPasses.map(p => toMs(p.start))) - PRE_MS;
   const rangeEnd   = Date.now();
 
-  // Fast path: satellite with zero TMR data ever — one probe instead of the full scan.
-  if (!(await _probe(ip, rangeStart, rangeEnd, signal))) {
-    if (signal.aborted) return null;
-    _ctrl.delete(sat.noradId);
-    return { rangeStart, rangeEnd, gapWindows: [{ start: rangeStart, end: rangeEnd }] };
+  // Fast path: satellite with zero TMR data ever — one lightweight probe instead
+  // of walking every candidate individually. A failure here (as opposed to a
+  // confirmed-empty result) must NOT fall through to "whole range is a gap" —
+  // that would paint an alarming false full-range gap from a transient network
+  // blip instead of just leaving the previous (possibly still-loading) state alone.
+  let anyData;
+  try {
+    anyData = await _hasAnyData(ip, rangeStart, rangeEnd, signal);
+  } catch {
+    return null;
   }
-  if (signal.aborted) return null;
+  if (!anyData) {
+    _ctrl.delete(sat.noradId);
+    return rangeEnd - rangeStart >= GAP_THRESHOLD_MS
+      ? { rangeStart, rangeEnd, gapWindows: [{ start: rangeStart, end: rangeEnd }] }
+      : { rangeStart, rangeEnd, gapWindows: [] };
+  }
 
   const passIntervals = _mergePassIntervals(pastPasses, toMs);
-  const candidates    = _gapCandidates(rangeStart, rangeEnd, passIntervals);
-  const segments       = _buildSegments(candidates);
+  const candidates    = _gapCandidates(rangeStart, rangeEnd, passIntervals)
+    .filter(c => c.end - c.start >= MIN_CANDIDATE_MS);
 
-  const results = await _pooledMap(segments, seg => _probe(ip, seg.start, seg.end, signal), CONCURRENCY);
-  segments.forEach((seg, i) => { seg.covered = results[i]; });
+  let results;
+  try {
+    results = await _pooledMap(candidates, c => _walkCandidate(ip, c.start, c.end, signal), CONCURRENCY);
+  } catch {
+    return null; // aborted mid-flight (superseded by a newer call) — discard silently
+  }
 
   if (signal.aborted) return null;
   _ctrl.delete(sat.noradId);
 
-  // A failed probe segment IS a gap window directly — passes already carved the
-  // known-covered stretches out of `candidates`, so no covered→gap inversion needed.
-  // Merge adjacent uncovered segments so consecutive FINE_MS sub-chunks don't leave seams.
-  const gapWindows = [];
-  let cur = null;
-  for (const seg of segments) {
-    if (!seg.covered) {
-      if (cur) cur.end = seg.end;
-      else cur = { start: seg.start, end: seg.end };
-    } else if (cur) {
-      gapWindows.push(cur);
-      cur = null;
-    }
-  }
-  if (cur) gapWindows.push(cur);
-
-  return { rangeStart, rangeEnd, gapWindows };
+  return { rangeStart, rangeEnd, gapWindows: results.flat() };
 }
