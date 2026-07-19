@@ -74,18 +74,57 @@ async function _fetchMask(host, antennaId) {
   } catch { return null; }
 }
 
+// Finds the FDS antenna matching a station code/name — shared by both the
+// mask lookup and the lat/lon fallback below, so there's exactly one
+// matching rule instead of two that could disagree.
+function _matchAntenna(antennas, station) {
+  const stLC = station.toLowerCase();
+  return antennas.find(a => a.local_id === station || a.remote_id === station)
+    ?? antennas.find(a => a.location?.site_id === station)
+    ?? antennas.find(a => {
+      const id = (a.local_id ?? a.remote_id ?? '').toLowerCase();
+      return id && (id.includes(stLC) || stLC.includes(id));
+    });
+}
+
+// `${host}:${antennaId}` → rx_mask array | null
+const _maskCache = new Map();
+
+async function _resolveMask(host, antennas, station) {
+  const antenna = _matchAntenna(antennas, station);
+  if (!antenna) return { antenna: null, mask: null };
+  const antennaId = antenna.local_id ?? antenna.remote_id ?? station;
+  const cacheKey = `${host}:${antennaId}`;
+  if (_maskCache.has(cacheKey)) return { antenna, mask: _maskCache.get(cacheKey) };
+  const mask = await _fetchMask(host, antennaId);
+  _maskCache.set(cacheKey, mask);
+  return { antenna, mask };
+}
+
 /**
- * Resolve ground station lat/lon (and rx_mask) for a pass.
+ * Resolve ground station lat/lon AND rx_mask for a pass.
  * Strategy:
- *   1. store.groundStations (already loaded)
- *   2. FDS antenna list → match by ID (pass.station may be the short code) or name
- *   3. Fetch mask for the matched antenna_id
- * Returns {lat, lon, rxMask?} or null.
+ *   1. lat/lon from store.groundStations if already loaded (fast, no fetch)
+ *   2. rx_mask ALWAYS resolved via the FDS antenna list + mask endpoint,
+ *      regardless of where lat/lon came from — mask crossings used to only
+ *      show up when the slower FDS path also happened to be the one that
+ *      supplied lat/lon, so the same pass could show antenna-mask AOS/LOS
+ *      in one place and not another depending on whether store.groundStations
+ *      happened to already have this station cached at that exact moment.
+ *   3. lat/lon falls back to the matched FDS antenna's coordinates if step 1
+ *      didn't resolve them
+ * Returns {lat, lon, rxMask} or null. Cached (both lat/lon and mask) so
+ * repeat calls for the same pass — e.g. the hover tooltip and then the
+ * detail panel a moment later — get the identical result instead of two
+ * independent, potentially-differently-timed resolutions.
  */
 export async function fetchPassGsCoords(sat, pass, groundStations) {
-  // 1. groundStations store
+  const station = pass.station;
+  if (!station || station === '—') return null;
+
+  let lat = null, lon = null;
   if (groundStations?.length) {
-    const stLC = pass.station?.toLowerCase() ?? '';
+    const stLC = station.toLowerCase();
     const gs = groundStations.find(g =>
       g.satId === sat.id &&
       g.name.toLowerCase() === stLC &&
@@ -93,53 +132,37 @@ export async function fetchPassGsCoords(sat, pass, groundStations) {
     ) ?? groundStations.find(g =>
       g.satId === sat.id && g.name.toLowerCase() === stLC
     );
-    if (gs) return { lat: gs.lat, lon: gs.lon };
+    if (gs) { lat = gs.lat; lon = gs.lon; }
   }
 
-  const station = pass.station;
-  if (!station || station === '—') return null;
-
   const host = satSubsystemOrigin(sat.noradId, 'gnm');
-  if (!host) return null;
+  if (!host) return lat != null ? { lat, lon, rxMask: null } : null;
 
   const cacheKey = `${sat.noradId}:${station}`;
   if (_coordsCache.has(cacheKey)) return _coordsCache.get(cacheKey);
 
   try {
     const antennas = await _getFdsAntennas(host);
-
-    // FDS fields: local_id, remote_id, location.site_id, location.coordinates
-    const stLC = station.toLowerCase();
-    let antenna = antennas.find(a => a.local_id === station || a.remote_id === station)
-      ?? antennas.find(a => a.location?.site_id === station)
-      ?? antennas.find(a => {
-        const id = (a.local_id ?? a.remote_id ?? '').toLowerCase();
-        return id && (id.includes(stLC) || stLC.includes(id));
-      });
-
-    if (!antenna) {
-      const ids = antennas.map(a => a.local_id ?? a.remote_id ?? '?');
-      console.warn('[polar] no antenna matched', JSON.stringify(station), '— FDS local_ids:', ids);
-      return null;
-    }
-
-    // Coordinates are under location.coordinates
-    const coordsObj = antenna.location?.coordinates ?? antenna.location ?? {};
-    let lat = coordsObj.latitude  ?? coordsObj.lat  ?? null;
-    let lon = coordsObj.longitude ?? coordsObj.lon  ?? null;
+    const { antenna, mask } = await _resolveMask(host, antennas, station);
 
     if (lat == null) {
-      console.warn('[polar] antenna found but no coords — location:', antenna.location);
+      if (!antenna) {
+        const ids = antennas.map(a => a.local_id ?? a.remote_id ?? '?');
+        console.warn('[polar] no antenna matched', JSON.stringify(station), '— FDS local_ids:', ids);
+        return null;
+      }
+      const coordsObj = antenna.location?.coordinates ?? antenna.location ?? {};
+      lat = coordsObj.latitude  ?? coordsObj.lat  ?? null;
+      lon = coordsObj.longitude ?? coordsObj.lon  ?? null;
+      if (lat == null) console.warn('[polar] antenna found but no coords — location:', antenna.location);
     }
 
-    // Fetch the rx mask (360-element elevation array, one value per azimuth degree)
-    const antennaId = antenna.local_id ?? antenna.remote_id ?? station;
-    const rxMask = await _fetchMask(host, antennaId);
-
-    const coords = { lat, lon, rxMask };
+    const coords = { lat, lon, rxMask: mask };
     if (lat != null) _coordsCache.set(cacheKey, coords);
     return lat != null ? coords : null;
-  } catch { return null; }
+  } catch {
+    return lat != null ? { lat, lon, rxMask: null } : null;
+  }
 }
 
 // ── Synchronous SVG builder ───────────────────────────────────────────────────
