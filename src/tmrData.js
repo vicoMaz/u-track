@@ -17,6 +17,17 @@ import { satSubsystemOrigin } from './satSubsystems.js';
 // resolves in far fewer requests than the old fixed-bucket scan, while a
 // short interpass void that used to be skipped entirely now costs one cheap
 // request instead of zero (a real, unavoidable trade for actually checking it).
+//
+// IMPORTANT — confirmed empirically against the real API: `orderBy=onBoardTime`
+// returns rows NEWEST-FIRST (descending), not ascending. The walk below moves
+// backward from `end` toward `start` to match that — querying forward and
+// trusting ascending order was tried first and is why an earlier version of
+// this fix reported almost every interpass void as one giant false gap (the
+// very first "row" processed was actually the newest sample in the window,
+// so the cursor jumped straight to near the end on the first comparison).
+// Rows within a single page are still sorted locally before use — cheap for
+// <=MAX_ROWS items — so this doesn't re-depend on the API's order being
+// exactly this and staying that way.
 const MAX_ROWS         = 1000;         // per-request cap — matches satGnss.js's proven-safe value
 const GAP_THRESHOLD_MS = 10 * 60_000;  // silence >= this between two real samples counts as a gap.
                                         // The one genuine judgment call in this file — tune against
@@ -123,36 +134,50 @@ function _gapCandidates(rangeStart, rangeEnd, passIntervals) {
   return candidates;
 }
 
-// Walks one candidate void end-to-end through the REAL recorded samples (not a
+// Walks one candidate void through the REAL recorded samples (not a
 // fixed-size existence probe), so a real gap is found exactly regardless of
-// what data exists elsewhere in the same stretch. Each page can cover from
-// seconds to many hours of real time depending on how dense the telemetry
-// actually is — continuous coverage resolves in very few requests, and any
-// genuine silence is bounded by real timestamps, never a coarse grid.
+// what data exists elsewhere in the same stretch. Walks BACKWARD from `end`
+// toward `start` (matching the API's real newest-first order — see the file
+// header comment); each page can cover from seconds to many hours of real
+// time depending on how dense the telemetry actually is — continuous
+// coverage resolves in very few requests, and any genuine silence is
+// bounded by real timestamps, never a coarse grid.
 async function _walkCandidate(sccOrigin, start, end, signal) {
-  const gaps = [];
-  let cursor = start;
+  const gaps = []; // discovered newest-first, reversed to chronological order before returning
+  let cursor = end; // upper bound; walks backward toward `start`
   try {
-    while (cursor < end) {
-      const rows = await _queryPage(sccOrigin, cursor, end, MAX_ROWS, signal);
+    while (cursor > start) {
+      const rows = await _queryPage(sccOrigin, start, cursor, MAX_ROWS, signal);
       if (!rows.length) {
-        if (end - cursor >= GAP_THRESHOLD_MS) gaps.push({ start: cursor, end });
-        return gaps;
+        if (cursor - start >= GAP_THRESHOLD_MS) gaps.push({ start, end: cursor });
+        return gaps.reverse();
       }
-      for (const row of rows) {
-        const t = _rowTime(row);
-        if (t == null) continue;
-        if (t - cursor >= GAP_THRESHOLD_MS) gaps.push({ start: cursor, end: t });
-        cursor = Math.max(cursor, t + 1);
+      // Sort ascending locally rather than trust the API's order to hold —
+      // cheap for <=MAX_ROWS rows, and makes the delta logic below unambiguous.
+      const times = rows.map(_rowTime).filter(t => t != null).sort((a, b) => a - b);
+      if (!times.length) {
+        if (cursor - start >= GAP_THRESHOLD_MS) gaps.push({ start, end: cursor });
+        return gaps.reverse();
       }
+
+      const latestT = times[times.length - 1];
+      if (cursor - latestT >= GAP_THRESHOLD_MS) gaps.push({ start: latestT, end: cursor });
+      for (let i = times.length - 1; i > 0; i--) {
+        if (times[i] - times[i - 1] >= GAP_THRESHOLD_MS) gaps.push({ start: times[i - 1], end: times[i] });
+      }
+
+      const earliestT = times[0];
       if (rows.length < MAX_ROWS) {
-        // This page wasn't capped, so it saw everything up to `end` — nothing left to paginate.
-        if (end - cursor >= GAP_THRESHOLD_MS) gaps.push({ start: cursor, end });
-        return gaps;
+        // Not capped, so this page saw everything back to `start` — check the
+        // leading edge too, then we're done with this candidate.
+        if (earliestT - start >= GAP_THRESHOLD_MS) gaps.push({ start, end: earliestT });
+        return gaps.reverse();
       }
-      // rows.length === MAX_ROWS: there may be more data after the last row seen —
-      // continue from just past it. If the true count is exactly MAX_ROWS, the next
-      // page simply comes back empty — one cheap extra request, not a bug.
+      // Capped: there may be more (older) data before `earliestT` we haven't
+      // seen yet. Re-query [start, earliestT) next iteration. If the true
+      // count is exactly MAX_ROWS, the next page simply comes back empty —
+      // one cheap extra request, not a bug.
+      cursor = earliestT - 1;
     }
   } catch (e) {
     if (signal.aborted) throw e; // let abort unwind the whole scan
@@ -161,7 +186,7 @@ async function _walkCandidate(sccOrigin, start, end, signal) {
     // remainder rather than guessing, same "don't paint a gap we're not sure
     // about" bias the rest of this file uses.
   }
-  return gaps;
+  return gaps.reverse();
 }
 
 export function scheduleTmrFetch(sat, pastPasses, onDone) {
