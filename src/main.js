@@ -5,7 +5,6 @@ import { initMap, invalidateMapSize, setMapVisible } from './planisphere/MapView
 import { loadInitialState, startApiPoller } from './apiPoller.js';
 import { initSatInfo } from './ui/SatInfo.js';
 import { initChadOps }          from './ui/ChadOps.js';
-import { initFleetHeatmap }     from './ui/FleetHeatmap.js';
 import { initWeeklySchedule }   from './ui/WeeklySchedule.js';
 import { initNavClocks }        from './ui/NavClocks.js';
 import { initSatPing }          from './satPing.js';
@@ -68,7 +67,6 @@ initGlobe();
 initMap();
 initSatInfo();
 initChadOps();
-initFleetHeatmap();
 initWeeklySchedule();
 initNavClocks();
 

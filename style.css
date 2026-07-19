@@ -598,6 +598,19 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .gantt-bar-gap {
   cursor: help;
 }
+/* A gap with a successful "Download Gap TMR" request — green diagonal dashes,
+   extending through to the next pass (see TimePlayer.js's _pendingGapDownloads).
+   Reverts to .gantt-bar-gap's plain dark fill once that pass has passed
+   without the gap actually clearing. */
+.gantt-bar-gap-pending {
+  cursor: help;
+  background: repeating-linear-gradient(
+    45deg,
+    #00cc66 0, #00cc66 3px,
+    transparent 3px, transparent 7px
+  ), #12121e;
+  border: 1px solid #00cc6688;
+}
 #gantt-cursor {
   position: absolute;
   top: 0; bottom: 0;
@@ -1498,72 +1511,6 @@ body.gantt-collapsed .gantt-rows { display: none; }
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-/* ── Fleet Health Grid — compact worst-first triage view above the detailed
-   table below. Whole-cell color (not a small pill) so severity reads in
-   peripheral vision; ~26px rows mean ~25-28 satellites fit on screen without
-   scrolling, vs. ~9-10 rows in the detailed table. ────────────────────── */
-.fhm-panel {
-  margin-bottom: 10px;
-  background: #0c0c16;
-  border: 1px solid #1e1e2e;
-  border-radius: 6px;
-  overflow: hidden;
-}
-.fhm-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 10px;
-  border-bottom: 1px solid #1a1a2a;
-}
-.fhm-title {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  color: #8899bb;
-  text-transform: uppercase;
-}
-.fhm-legend { display: flex; gap: 10px; }
-.fhm-legend-item { display: flex; align-items: center; gap: 4px; font-size: 9.5px; color: #667; }
-.fhm-legend-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
-.fhm-table { width: 100%; border-collapse: collapse; }
-.fhm-th {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  color: #445566;
-  text-transform: uppercase;
-  text-align: center;
-  padding: 3px 4px;
-  border-bottom: 1px solid #1a1a2a;
-}
-.fhm-th-health { width: 56px; }
-.fhm-th-name   { text-align: left; padding-left: 8px; }
-.fhm-row    { height: 26px; cursor: pointer; }
-.fhm-row:hover { outline: 1px solid #444; outline-offset: -1px; }
-.fhm-health {
-  width: 56px;
-  text-align: center;
-  font-size: 9px;
-  font-weight: 700;
-  color: #0a0a12;
-}
-.fhm-name {
-  padding: 0 8px;
-  font-size: 11px;
-  color: var(--sat-color);
-  white-space: nowrap;
-}
-.fhm-cell  { width: 15%; border-left: 1px solid #0c0c16; }
-.fhm-empty { text-align: center; color: #445; font-size: 11px; font-style: italic; padding: 16px; }
-
-/* Flash on the detailed Fleet row when triggered from a Fleet Health Grid click */
-.co-row-flash { animation: fhm-flash 1.2s ease-out; }
-@keyframes fhm-flash {
-  0%   { background: #2a2a44; }
-  100% { background: transparent; }
-}
-
 /* ── Table ─────────────────────────────────────────────────────── */
 
 .co-table-wrap {
