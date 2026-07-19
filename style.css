@@ -1846,6 +1846,20 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .ebn0-chart { display: block; width: 100%; }
 .ebn0-chart .ebn0-hit { cursor: crosshair; }
+.ebn0-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 150px; /* roughly matches the eventual chart's rendered height, to avoid a layout jump when it's replaced */
+  color: #666;
+  font-size: 10.5px;
+  font-style: italic;
+  animation: ebn0-loading-pulse 1.4s ease-in-out infinite;
+}
+@keyframes ebn0-loading-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 0.9; }
+}
 .ebn0-proc-bar rect { cursor: default; }
 .ebn0-proc-num { font-size: 7px; font-family: 'Courier New', monospace; fill: #f0f0f8; font-weight: 700; paint-order: stroke; stroke: #12121e; stroke-width: 0.5px; pointer-events: none; }
 .co-tt-header {
