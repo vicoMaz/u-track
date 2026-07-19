@@ -13,7 +13,6 @@ const COLS = [
   ['mode',   'MODE'],
   ['batt',   'BATT'],
   ['gnss',   'GNSS'],
-  ['ground', 'GND'],
 ];
 
 function _rowHTML(sat) {
