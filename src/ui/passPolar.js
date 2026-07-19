@@ -284,13 +284,20 @@ export function buildPolarSVG(pass, sat, lat, lon, rxMask) {
     <path d="${maskPath}" fill="none" stroke="rgba(255,100,50,0.55)" stroke-width="0.8"/>`;
   }
 
-  // Mask entry/exit marker SVG
+  // Mask entry/exit marker SVG. Label the satellite's own sampled elevation
+  // at the crossing point (maskEntry.el/maskExit.el) — NOT rxMask[az], the
+  // mask's threshold elevation at that azimuth. The two are close by
+  // construction (a crossing is where sat el first reaches the mask's minEl)
+  // but not identical, since points are only sampled every 30s and the mask
+  // varies continuously with azimuth — using rxMask[az] here made this label
+  // disagree with the tooltip's one-liner, which (correctly) shows the same
+  // maskEntry/maskExit points' .el.
   let maskMarkerSVG = '';
   if (maskEntry && maskExit) {
     const [mex, mey] = toXY(maskEntry);
     const [mlx, mly] = toXY(maskExit);
-    const elIn  = (rxMask[Math.round(maskEntry.az) % 360] ?? maskEntry.el).toFixed(0);
-    const elOut = (rxMask[Math.round(maskExit.az)  % 360] ?? maskExit.el ).toFixed(0);
+    const elIn  = maskEntry.el.toFixed(0);
+    const elOut = maskExit.el.toFixed(0);
     maskMarkerSVG = `
     <circle cx="${mex}" cy="${mey}" r="${DOT_R}" fill="${MARKER_COLORS.maskEntry}"/>
     ${radLabel(mex, mey, `▲${elIn}°`, MARKER_COLORS.maskEntry)}
