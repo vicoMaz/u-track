@@ -7,7 +7,7 @@
 // passes (Fleet pass-dots, Weekly Schedule, the gantt timeline).
 import { propagate }                    from '../tle.js';
 import { sunDirectionECI, isInEclipse } from '../sunVector.js';
-import { fetchPassGsCoords, buildPolarSVG, computePolarPoints, computePolarMarkers, MARKER_COLORS } from './passPolar.js';
+import { fetchPassGsCoords, buildPolarSVG, computePolarPoints, computePolarMarkers } from './passPolar.js';
 import { fetchProcedureReport, procedureReportHTML } from './procedureReport.js';
 import { fetchEbn0Series, ebn0HTML } from './ebn0.js';
 import { wireLinkedCursor } from './passCursor.js';
@@ -47,33 +47,6 @@ function _passEclipseBar(satrec, start, end) {
     </div>`;
 }
 
-function _fmtTimeOnly(t) {
-  const d = new Date(t);
-  const p = n => String(n).padStart(2, '0');
-  return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} UTC`;
-}
-
-// Apogee + antenna-mask AOS/LOS as text, reusing the exact colors/symbols the
-// polar plot already marks them with (MARKER_COLORS, ▲/▼) so the two read as
-// the same information, not a second unrelated summary. Mask AOS/LOS is where
-// the pass track actually crosses the antenna's elevation mask (maskEntry/
-// maskExit) — not the raw 0°-horizon AOS/LOS, which is often unusable there.
-function _passGeometryHTML(markers) {
-  if (!markers) return '';
-  const { apogee, maskEntry, maskExit } = markers;
-  const rows = [];
-  if (apogee) {
-    rows.push(`<div class="pdp-geo-row"><span class="pdp-geo-lbl" style="color:${MARKER_COLORS.apogee}">APOGEE</span><span class="pdp-geo-val">${_fmtTimeOnly(apogee.t)} · ${apogee.el.toFixed(0)}°</span></div>`);
-  }
-  if (maskEntry) {
-    rows.push(`<div class="pdp-geo-row"><span class="pdp-geo-lbl" style="color:${MARKER_COLORS.maskEntry}">▲ MASK AOS</span><span class="pdp-geo-val">${_fmtTimeOnly(maskEntry.t)} · ${maskEntry.el.toFixed(0)}°</span></div>`);
-  }
-  if (maskExit) {
-    rows.push(`<div class="pdp-geo-row"><span class="pdp-geo-lbl" style="color:${MARKER_COLORS.maskExit}">▼ MASK LOS</span><span class="pdp-geo-val">${_fmtTimeOnly(maskExit.t)} · ${maskExit.el.toFixed(0)}°</span></div>`);
-  }
-  return rows.join('');
-}
-
 function _passDetailContent(pass, grafanaHost, sat) {
   const netTag = pass.network ? `<span class="co-tt-network">${pass.network}</span>` : '';
   const rawLogLink = (!pass.future && grafanaHost)
@@ -88,8 +61,7 @@ function _passDetailContent(pass, grafanaHost, sat) {
     <div class="co-tt-details-row">
       <div class="polar-slot"></div>
       <div class="ebn0-slot"></div>
-    </div>
-    <div class="pass-geometry-slot"></div>`;
+    </div>`;
   const reportSlot = '<div class="proc-report-slot"></div>';
   if (pass.future) {
     return hdr + details + `<div class="co-tt-future-status co-dot-future">○ SCHEDULED</div>`;
@@ -181,9 +153,6 @@ export async function openPassDetail(pass, sat, groundStations) {
     markers = computePolarMarkers(polarPoints, coords.rxMask);
   }
   const polarEl = _bodyEl.querySelector('.pass-polar');
-
-  const geoSlot = _bodyEl.querySelector('.pass-geometry-slot');
-  if (geoSlot) geoSlot.innerHTML = _passGeometryHTML(markers);
 
   const ebn0Slot = _bodyEl.querySelector('.ebn0-slot');
   if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers, pass.procedures, { t0: pass.start.getTime(), t1: pass.end.getTime() });

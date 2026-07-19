@@ -7,6 +7,7 @@ import { worstSev } from './severity.js';
 import {
   passSimpleTooltipContent as _tooltipContent,
   positionTooltip          as _positionTooltip,
+  hydratePassGeometry,
 } from './passTooltip.js';
 import { openPassDetail } from './PassDetailPanel.js';
 
@@ -536,6 +537,7 @@ export function initChadOps() {
         tooltip.innerHTML     = _tooltipContent(pass, sat);
         tooltip.style.display = 'block';
         _positionTooltip(e, tooltip);
+        hydratePassGeometry(tooltip, e, pass, sat);
       });
       dot.addEventListener('mouseleave', _scheduleHide);
       dot.addEventListener('click', () => {
