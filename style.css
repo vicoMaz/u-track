@@ -2046,21 +2046,20 @@ body.gantt-collapsed .gantt-rows { display: none; }
   white-space: nowrap;
 }
 .pdp-raw-logs:hover { color: #ccc; border-color: #4444aa; }
-/* Apogee + antenna-mask AOS/LOS — colors/symbols match the polar plot's own
-   markers (MARKER_COLORS in passPolar.js) so this text and the plot read as
-   the same information. */
+/* Mask AOS · apogee · mask LOS — one line, colors/symbols match the polar
+   plot's own markers (MARKER_COLORS in passPolar.js) so this text and the
+   plot read as the same information. */
 .pass-geometry-slot { margin-top: 4px; }
-.pdp-geo-row {
+.pdp-geo-line {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 11px;
+  justify-content: flex-start;
+  gap: 14px;
+  font-size: 10.5px;
   font-family: 'Courier New', monospace;
   margin-bottom: 2px;
 }
-.pdp-geo-lbl { font-weight: 700; letter-spacing: 0.03em; white-space: nowrap; }
-.pdp-geo-val { color: #ccc; white-space: nowrap; }
+.pdp-geo-item { font-weight: 700; white-space: nowrap; }
 
 /* ── Info toast ── small fixed top-right notice, auto-dismisses ── */
 .info-toast {

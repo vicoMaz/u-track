@@ -42,26 +42,29 @@ export function grafanaLokiUrl(grafanaHost, fromMs, toMs) {
     + `&sortOrder=%22Descending%22&wrapLogMessage=false`;
 }
 
-// Apogee + antenna-mask AOS/LOS as text, reusing the exact colors/symbols the
-// polar plot marks them with (MARKER_COLORS, ▲/▼) so wherever this text shows
-// up reads as the same information as the plot, not a second unrelated
-// summary. Mask AOS/LOS is where the pass track actually crosses the ground
-// station's elevation mask (maskEntry/maskExit) — not the raw 0°-horizon
-// AOS/LOS, which is often unusable there.
+// Antenna-mask AOS, apogee, antenna-mask LOS — one compact line, chronological
+// (mask entry happens first, apogee mid-pass, mask exit last). Reuses the
+// exact colors and label notation the polar plot itself marks them with
+// (MARKER_COLORS, plain "▲{el}°" / "{el}°" / "▼{el}°" — the plot has no text
+// labels beyond that either), just with the crossing time added since the
+// plot has no room for it. Mask AOS/LOS is where the pass track actually
+// crosses the ground station's elevation mask (maskEntry/maskExit) — not the
+// raw 0°-horizon AOS/LOS, which is often unusable there.
 export function passGeometryHTML(markers) {
   if (!markers) return '';
   const { apogee, maskEntry, maskExit } = markers;
-  const rows = [];
-  if (apogee) {
-    rows.push(`<div class="pdp-geo-row"><span class="pdp-geo-lbl" style="color:${MARKER_COLORS.apogee}">APOGEE</span><span class="pdp-geo-val">${fmtTimeOnly(apogee.t)} · ${apogee.el.toFixed(0)}°</span></div>`);
-  }
+  const items = [];
   if (maskEntry) {
-    rows.push(`<div class="pdp-geo-row"><span class="pdp-geo-lbl" style="color:${MARKER_COLORS.maskEntry}">▲ MASK AOS</span><span class="pdp-geo-val">${fmtTimeOnly(maskEntry.t)} · ${maskEntry.el.toFixed(0)}°</span></div>`);
+    items.push(`<span class="pdp-geo-item" style="color:${MARKER_COLORS.maskEntry}">▲ ${fmtTimeOnly(maskEntry.t).slice(0, 8)} · ${maskEntry.el.toFixed(0)}°</span>`);
+  }
+  if (apogee) {
+    items.push(`<span class="pdp-geo-item" style="color:${MARKER_COLORS.apogee}">${apogee.el.toFixed(0)}°</span>`);
   }
   if (maskExit) {
-    rows.push(`<div class="pdp-geo-row"><span class="pdp-geo-lbl" style="color:${MARKER_COLORS.maskExit}">▼ MASK LOS</span><span class="pdp-geo-val">${fmtTimeOnly(maskExit.t)} · ${maskExit.el.toFixed(0)}°</span></div>`);
+    items.push(`<span class="pdp-geo-item" style="color:${MARKER_COLORS.maskExit}">▼ ${fmtTimeOnly(maskExit.t).slice(0, 8)} · ${maskExit.el.toFixed(0)}°</span>`);
   }
-  return rows.join('');
+  if (!items.length) return '';
+  return `<div class="pdp-geo-line">${items.join('')}</div>`;
 }
 
 // Full procedure list (names, not a count) — all synchronous, `pass.procedures`
