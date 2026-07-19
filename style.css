@@ -1781,9 +1781,18 @@ body.gantt-collapsed .gantt-rows { display: none; }
   border-radius: 6px;
   padding: 10px 12px;
   min-width: 210px;
-  max-width: 620px;
+  /* Was 620px to fit the polar+Eb/N0 charts side by side — that detail now
+     lives in the PassDetailPanel.js slide-in panel instead, so the hover
+     itself only ever holds a few short lines of text. */
+  max-width: 300px;
   box-shadow: 0 4px 20px #00000066;
   font-size: 11.5px;
+}
+.co-tt-more-hint {
+  margin-top: 6px;
+  font-size: 10px;
+  color: #556;
+  font-style: italic;
 }
 .pass-polar {
   display: block;
@@ -1961,6 +1970,97 @@ body.gantt-collapsed .gantt-rows { display: none; }
   transition: background 0.15s, border-color 0.15s;
 }
 .co-tt-gap-btn:hover { background: #2a2a48; border-color: #4444aa; }
+.co-tt-gap-btn:disabled { color: #666; cursor: default; background: #18182a; border-color: #2a2a44; }
+.co-tt-gap-status {
+  margin-top: 6px;
+  font-size: 10px;
+  color: #00cc66;
+  font-family: 'Courier New', monospace;
+}
+
+/* ── Pass Detail Panel — vertical slide-in from the right, opened by clicking
+   a pass (dot/block/gantt bar). Holds the full detail that used to overload
+   the hover tooltip: eclipse bar, polar plot, Eb/N0 chart, procedure history,
+   procedure report. Not a modal — no backdrop — so it reads as a persistent
+   reference panel the operator can leave open while working the rest of the
+   screen, closed via the × button or Escape. ─────────────────────────────── */
+.pdp-panel {
+  position: fixed;
+  top: 56px; /* clears the fixed tab bar */
+  right: 0;
+  bottom: 0;
+  width: 480px;
+  max-width: 92vw;
+  background: #12121e;
+  border-left: 1px solid #2a2a4a;
+  box-shadow: -10px 0 30px #000000aa;
+  z-index: 50000; /* above app content/side panel, below true modals (.sat-edit-modal etc.) */
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.26s ease;
+}
+.pdp-panel.pdp-open { transform: translateX(0); }
+.pdp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #2a2a4a;
+  flex-shrink: 0;
+}
+.pdp-title { font-size: 15px; font-weight: 700; color: #ccc; }
+.pdp-sat-name { letter-spacing: 0.02em; }
+.pdp-close {
+  background: transparent;
+  border: 1px solid #2a2a4a;
+  color: #889;
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+}
+.pdp-close:hover { color: #fff; border-color: #4444aa; background: #1e1e30; }
+.pdp-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px;
+  font-size: 11.5px;
+}
+/* Scoped to the panel only — .co-tt-header is shared with the hover tooltip
+   and the TMR gap tooltip elsewhere, which don't need flex layout. */
+.pdp-body .co-tt-header { display: flex; align-items: baseline; gap: 8px; }
+.pdp-raw-logs {
+  margin-left: auto;
+  font-size: 10px;
+  color: #778;
+  text-decoration: none;
+  border: 1px solid #2a2a4a;
+  border-radius: 4px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+.pdp-raw-logs:hover { color: #ccc; border-color: #4444aa; }
+/* Apogee + antenna-mask AOS/LOS — colors/symbols match the polar plot's own
+   markers (MARKER_COLORS in passPolar.js) so this text and the plot read as
+   the same information. */
+.pass-geometry-slot { margin-top: 4px; }
+.pdp-geo-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  font-family: 'Courier New', monospace;
+  margin-bottom: 2px;
+}
+.pdp-geo-lbl { font-weight: 700; letter-spacing: 0.03em; white-space: nowrap; }
+.pdp-geo-val { color: #ccc; white-space: nowrap; }
 
 /* ── Info toast ── small fixed top-right notice, auto-dismisses ── */
 .info-toast {
@@ -2440,7 +2540,7 @@ a.co-link:hover {
   border-radius: 2px;
   padding: 1px 3px;
   overflow: hidden;
-  cursor: help;
+  cursor: pointer;
   z-index: 2;
   transition: filter 0.1s;
 }

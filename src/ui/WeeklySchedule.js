@@ -1,5 +1,6 @@
 import { store } from '../store.js';
 import { createPassTooltip } from './passTooltip.js';
+import { openPassDetail } from './PassDetailPanel.js';
 
 // ── Constants ─────────────────────────────────────────────────────
 
@@ -274,8 +275,13 @@ export function initWeeklySchedule() {
     container.querySelectorAll('.co-sched-pass[data-pass-idx]').forEach(el => {
       const entry = _weekPasses[parseInt(el.dataset.passIdx, 10)];
       if (!entry) return;
-      el.addEventListener('mouseenter', e => tooltip.showForPass(e, entry.pass, entry.sat, store.groundStations));
+      el.addEventListener('mouseenter', e => tooltip.showForPass(e, entry.pass, entry.sat));
       el.addEventListener('mouseleave', tooltip.scheduleHide);
+      el.addEventListener('click', () => {
+        tooltip.cancelHide();
+        tooltip.element.style.display = 'none';
+        openPassDetail(entry.pass, entry.sat, store.groundStations);
+      });
     });
   }
 

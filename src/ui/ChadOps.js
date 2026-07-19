@@ -1,17 +1,14 @@
 import { store }                              from '../store.js';
 import { propagate }                          from '../tle.js';
 import { sunDirectionECI, isInEclipse }       from '../sunVector.js';
-import { fetchPassGsCoords, buildPolarSVG, computePolarPoints, computePolarMarkers } from './passPolar.js';
-import { fetchProcedureReport, procedureReportHTML } from './procedureReport.js';
-import { fetchEbn0Series, ebn0HTML } from './ebn0.js';
-import { wireLinkedCursor } from './passCursor.js';
 import { getPingIntervalSec, getPingElapsedSec, getLastPingMs, satBaseUrl, pingSatellite } from '../satPing.js';
 import { satSubsystemOrigin, satSubsystemHost } from '../satSubsystems.js';
 import { worstSev } from './severity.js';
 import {
-  passTooltipContent  as _tooltipContent,
-  positionTooltip     as _positionTooltip,
+  passSimpleTooltipContent as _tooltipContent,
+  positionTooltip          as _positionTooltip,
 } from './passTooltip.js';
+import { openPassDetail } from './PassDetailPanel.js';
 
 // URL builders — subnet routing: .1=SCC, .2=FDS, .3=GNM, .4=MIC, .5=SCC RO (see satSubsystems.js).
 // FDS/GNM/SCC may be overridden as bare IPs OR full URLs (e.g. a hostname+HTTPS
@@ -527,53 +524,26 @@ export function initChadOps() {
     tbody.querySelectorAll('.co-dot[data-idx]').forEach(dot => {
       const satId = dot.closest('[data-sat-id]')?.dataset.satId;
       const idx   = parseInt(dot.dataset.idx, 10);
-      dot.addEventListener('mouseenter', async e => {
-        _cancelHide();
+      const _passFor = () => {
         const sat  = store.satellites.find(s => s.id === satId);
         const pass = sat ? (store.satPasses[sat.id] ?? [])[idx] : null;
+        return { sat, pass };
+      };
+      dot.addEventListener('mouseenter', e => {
+        _cancelHide();
+        const { sat, pass } = _passFor();
         if (!pass) return;
-        const grafanaHost = satSubsystemHost(sat.noradId, 'sccRo') || null;
-        tooltip.innerHTML     = _tooltipContent(pass, grafanaHost, sat);
+        tooltip.innerHTML     = _tooltipContent(pass, sat);
         tooltip.style.display = 'block';
         _positionTooltip(e, tooltip);
-        // Async procedure-report injection
-        if (!pass.future && grafanaHost) {
-          fetchProcedureReport(grafanaHost, pass.start.getTime(), pass.end.getTime()).then(report => {
-            if (tooltip.style.display === 'none') return;
-            const slot = tooltip.querySelector('.proc-report-slot');
-            if (slot) { slot.outerHTML = procedureReportHTML(report); _positionTooltip(e, tooltip); }
-          });
-        }
-        // Eb/N0 series and polar coords are fetched in parallel, but injected and
-        // cursor-linked together so the shared hover works as soon as either
-        // chart is shown — neither chart pops in independently ahead of the other.
-        const ebn0Promise = (!pass.future && sat.noradId)
-          ? fetchEbn0Series(sat.noradId, pass.start.getTime(), pass.end.getTime(), pass.network)
-          : Promise.resolve(null);
-        const coordsPromise = sat?.satrec
-          ? fetchPassGsCoords(sat, pass, store.groundStations)
-          : Promise.resolve(null);
-
-        const [series, coords] = await Promise.all([ebn0Promise, coordsPromise]);
-        if (tooltip.style.display === 'none') return;
-
-        let polarPoints = null, markers = null;
-        const polarSlot = tooltip.querySelector('.polar-slot');
-        if (coords && polarSlot) {
-          polarSlot.outerHTML = buildPolarSVG(pass, sat, coords.lat, coords.lon, coords.rxMask);
-          polarPoints = computePolarPoints(pass, sat, coords.lat, coords.lon);
-          markers = computePolarMarkers(polarPoints, coords.rxMask);
-        }
-        const polarEl = tooltip.querySelector('.pass-polar');
-
-        const ebn0Slot = tooltip.querySelector('.ebn0-slot');
-        if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers, pass.procedures, { t0: pass.start.getTime(), t1: pass.end.getTime() });
-        const ebn0El = tooltip.querySelector('.ebn0-chart');
-
-        _positionTooltip(e, tooltip);
-        wireLinkedCursor(polarEl, polarPoints, ebn0El, series, pass.procedures);
       });
       dot.addEventListener('mouseleave', _scheduleHide);
+      dot.addEventListener('click', () => {
+        const { sat, pass } = _passFor();
+        if (!pass) return;
+        _hideNow();
+        openPassDetail(pass, sat, store.groundStations);
+      });
     });
 
     // Battery monitoring tooltip
