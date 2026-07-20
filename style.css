@@ -1893,6 +1893,8 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-tt-ok            { color: #00cc66; }
 .co-tt-fail          { color: #ff4455; }
 .co-tt-cancelled     { color: #ff8c00; }
+.co-tt-scheduled     { color: #556688; } /* same muted blue-grey as the ○ SCHEDULED badge — "not yet happened", not a status */
+.pass-procs-slot { margin-top: 4px; }
 .co-tt-ecl-bar { margin: 6px 0 2px; }
 .co-tt-ecl-bar .oi-eclipse-bar { height: 14px; }
 .co-tt-ecl-bar .oi-eclipse-legend { font-size: 10px; margin-top: 3px; }

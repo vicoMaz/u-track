@@ -8,6 +8,7 @@ import {
   passSimpleTooltipContent as _tooltipContent,
   positionTooltip          as _positionTooltip,
   hydratePassGeometry,
+  hydrateScheduledProcedures,
 } from './passTooltip.js';
 import { openPassDetail } from './PassDetailPanel.js';
 
@@ -538,6 +539,7 @@ export function initChadOps() {
         tooltip.style.display = 'block';
         _positionTooltip(e, tooltip);
         hydratePassGeometry(tooltip, e, pass, sat);
+        hydrateScheduledProcedures(tooltip, pass, sat);
       });
       dot.addEventListener('mouseleave', _scheduleHide);
       dot.addEventListener('click', () => {

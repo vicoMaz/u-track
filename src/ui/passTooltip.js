@@ -9,6 +9,7 @@
 // ground-station lookup resolves — real information, not a chart.
 import { store } from '../store.js';
 import { fetchPassGsCoords, computePolarPoints, computePolarMarkers, MARKER_COLORS } from './passPolar.js';
+import { fetchScheduledProcedures, scheduledProceduresHTML } from './scheduledProcedures.js';
 import { satSubsystemHost } from '../satSubsystems.js';
 
 const _PROC_CLS = { SUCCESS: 'co-tt-ok', FAILURE: 'co-tt-fail', CANCELLED: 'co-tt-cancelled' };
@@ -70,7 +71,10 @@ export function passGeometryHTML(markers) {
 // Full procedure list (names, not a count) — all synchronous, `pass.procedures`
 // is already resolved on the pass object, no fetch needed for this part.
 function _procedureListHTML(pass, grafanaHost) {
-  if (pass.future) return `<div class="co-tt-future-status co-dot-future">○ SCHEDULED</div>`;
+  if (pass.future) {
+    return `<div class="co-tt-future-status co-dot-future">○ SCHEDULED</div>
+      <div class="pass-procs-slot"><div class="co-tt-note">Checking SCC for scheduled procedures…</div></div>`;
+  }
   const procs = pass.procedures;
   if (!procs?.length) return `<div class="co-tt-proc co-tt-ok">● PASS OCCURRED</div>`;
   const rows = procs.map((pr, i) => {
@@ -123,6 +127,24 @@ export async function hydratePassGeometry(el, e, pass, sat) {
   if (slot) { slot.innerHTML = passGeometryHTML(markers); positionTooltip(e, el); }
 }
 
+// Separate generation map from _hydrateGen above — this and hydratePassGeometry
+// run concurrently on the same element from the same hover, so sharing one
+// counter would have each call's increment spuriously supersede the other.
+const _procHydrateGen = new WeakMap();
+
+// Future passes have no procedure-history yet (nothing has executed), but
+// SCC may already have procedures queued on it — fills the placeholder set by
+// _procedureListHTML with whatever fetchScheduledProcedures finds.
+export async function hydrateScheduledProcedures(el, pass, sat) {
+  if (!pass.future || !sat) return;
+  const myGen = (_procHydrateGen.get(el) ?? 0) + 1;
+  _procHydrateGen.set(el, myGen);
+  const procs = await fetchScheduledProcedures(sat, pass);
+  if (_procHydrateGen.get(el) !== myGen || el.style.display === 'none') return;
+  const slot = el.querySelector('.pass-procs-slot');
+  if (slot) slot.innerHTML = scheduledProceduresHTML(procs, fmtTimeOnly);
+}
+
 export function positionTooltip(e, el) {
   const pad = 14;
   let x = e.clientX + pad;
@@ -163,6 +185,7 @@ export function createPassTooltip() {
     el.style.display = 'block';
     positionTooltip(e, el);
     hydratePassGeometry(el, e, pass, sat);
+    hydrateScheduledProcedures(el, pass, sat);
   }
 
   return { element: el, showForPass, cancelHide, scheduleHide };
