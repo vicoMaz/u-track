@@ -1621,12 +1621,12 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 14px;
+  font-size: 13px;
   white-space: nowrap;
 }
 
 .co-th {
-  padding: 5px 10px;
+  padding: 5px 4px;
   text-align: left;
   font-size: 11px;
   font-weight: 600;
@@ -1653,7 +1653,7 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-row:hover { background: #111122; }
 
 .co-row td {
-  padding: 7px 10px;
+  padding: 7px 4px;
   vertical-align: middle;
 }
 
@@ -1792,7 +1792,7 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .st-ping-none { background: #253040; }
 
 /* ── Last contact ──────────────────────────────────────────────── */
-.co-contact-cell { min-width: 130px; }
+.co-contact-cell { min-width: 105px; }
 
 .co-contact-stack {
   display: flex;
@@ -1814,14 +1814,14 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-mode-row    { display: flex; align-items: center; gap: 6px; }
 .co-mode-label  {
   font-size: 9px; font-weight: 700; letter-spacing: 0.08em;
-  color: #445566; min-width: 24px; text-transform: uppercase;
+  color: #445566; min-width: 20px; text-transform: uppercase;
 }
-.co-evt-stack  { display: grid; grid-template-columns: 28px auto auto; gap: 3px 6px; align-items: center; }
+.co-evt-stack  { display: grid; grid-template-columns: 26px auto auto; justify-content: center; gap: 3px 4px; align-items: center; }
 .co-evt-delta  { font-size: 10px; font-weight: 700; color: #ffaa22; font-variant-numeric: tabular-nums; }
 
 .co-pill {
   display: inline-block;
-  padding: 1px 7px;
+  padding: 1px 5px;
   border-radius: 3px;
   font-size: 10px;
   font-weight: 700;
@@ -1844,12 +1844,12 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-pill-ga-critical { background: #1a0008; color: #e63946; border: 1px solid #661020; }
 
 /* ── Pass dots ─────────────────────────────────────────────────── */
-.co-passes-cell { min-width: 160px; }
+.co-passes-cell { min-width: 128px; }
 
 .co-dots-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 1px 8px;
+  gap: 1px 5px;
   width: fit-content;
 }
 
@@ -2257,7 +2257,7 @@ body.tracking-active .info-toast { top: 102px; }
   flex-direction: column;
   gap: 4px;
   cursor: pointer;
-  min-width: 130px;
+  min-width: 108px;
 }
 .co-orbit-row   { display: flex; align-items: center; gap: 6px; }
 .co-orbit-label {
@@ -2368,7 +2368,7 @@ body.tracking-active .info-toast { top: 102px; }
 
 .co-link {
   display: inline-block;
-  padding: 3px 10px;
+  padding: 3px 8px;
   border-radius: 5px;
   font-size: 11px;
   font-weight: 600;
