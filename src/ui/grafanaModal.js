@@ -84,18 +84,37 @@ function _fmtLogTime(nsStr) {
   return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}.${String(d.getUTCMilliseconds()).padStart(3, '0')}`;
 }
 
-function _renderLines(lines) {
+// nominalStart/nominalEnd (ms) are the procedure's OWN recorded start/end —
+// the fetch window is padded well beyond that (see PAD_MS below) because
+// that recorded time is often off by a few seconds from when Loki actually
+// received the corresponding lines, and a tight window was cutting real
+// lines off. The wider window means lines from the adjacent procedure
+// before/after routinely show up too — rather than hide that (there's no
+// per-procedure field to filter on, only time), lines outside
+// [nominalStart, nominalEnd] are dimmed as context and marked off with a
+// divider, so it stays obvious which lines are THIS procedure's.
+function _renderLines(lines, nominalStart, nominalEnd) {
   _errorLineIndices = [];
   if (!lines.length) return `<div class="co-tt-note">No log lines found in this window</div>`;
-  const rows = lines.map((l, i) => {
+  const hasNominal = Number.isFinite(nominalStart) && Number.isFinite(nominalEnd);
+  const rows = [];
+  let wasCore = null; // null = not started yet; tracks the previous line's core/context state to place dividers
+  lines.forEach((l, i) => {
+    const ms     = l.ts / 1e6;
+    const isCore = !hasNominal || (ms >= nominalStart && ms <= nominalEnd);
+    if (hasNominal && wasCore !== null && isCore !== wasCore) {
+      rows.push(`<div class="grm-log-divider">${isCore ? '▾ procedure starts' : '▴ procedure ends'}</div>`);
+    }
+    wasCore = isCore;
     const isErr = ERROR_RE.test(l.text);
     if (isErr) _errorLineIndices.push(i);
-    return `<div class="grm-log-line${isErr ? ' grm-log-err' : ''}" data-idx="${i}"><span class="grm-log-ts">${_fmtLogTime(l.ts)}</span><span class="grm-log-text">${_escapeHtml(l.text)}</span></div>`;
-  }).join('');
-  return `<div class="grm-log">${rows}</div>`;
+    const cls = [isErr && 'grm-log-err', !isCore && 'grm-log-context'].filter(Boolean).join(' ');
+    rows.push(`<div class="grm-log-line${cls ? ' ' + cls : ''}" data-idx="${i}"><span class="grm-log-ts">${_fmtLogTime(l.ts)}</span><span class="grm-log-text">${_escapeHtml(l.text)}</span></div>`);
+  });
+  return `<div class="grm-log">${rows.join('')}</div>`;
 }
 
-export async function openGrafanaModal({ grafanaHost, startMs, endMs, exploreUrl, title }) {
+export async function openGrafanaModal({ grafanaHost, startMs, endMs, nominalStart, nominalEnd, exploreUrl, title }) {
   _ensure();
   const myGen = ++_reqGen;
   _titleEl.textContent = title || 'Grafana logs';
@@ -110,12 +129,15 @@ export async function openGrafanaModal({ grafanaHost, startMs, endMs, exploreUrl
   if (myGen !== _reqGen) return; // superseded by a newer click
   _bodyEl.innerHTML = lines == null
     ? `<div class="co-tt-note">Could not reach Grafana/Loki — use "Open in Grafana ↗" above</div>`
-    : _renderLines(lines);
+    : _renderLines(lines, nominalStart, nominalEnd);
 
   _overlay.querySelector('.grm-err-prev').hidden = _errorLineIndices.length <= 1;
   _overlay.querySelector('.grm-err-next').hidden = _errorLineIndices.length <= 1;
   _errCountEl.hidden = _errorLineIndices.length <= 1;
   _errNavEl.hidden = _errorLineIndices.length === 0;
+
+  const coreLine = _bodyEl.querySelector('.grm-log-line:not(.grm-log-context)');
+  if (coreLine) coreLine.scrollIntoView({ block: 'center' });
 }
 
 export function closeGrafanaModal() {
@@ -137,10 +159,12 @@ document.addEventListener('click', e => {
   if (!link) return;
   e.preventDefault();
   openGrafanaModal({
-    grafanaHost: link.dataset.lokiHost,
-    startMs:     Number(link.dataset.lokiStart),
-    endMs:       Number(link.dataset.lokiEnd),
-    exploreUrl:  link.href,
-    title:       link.title || '',
+    grafanaHost:  link.dataset.lokiHost,
+    startMs:      Number(link.dataset.lokiStart),
+    endMs:        Number(link.dataset.lokiEnd),
+    nominalStart: Number(link.dataset.lokiNominalStart),
+    nominalEnd:   Number(link.dataset.lokiNominalEnd),
+    exploreUrl:   link.href,
+    title:        link.title || '',
   });
 });

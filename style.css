@@ -1127,6 +1127,17 @@ body.gantt-collapsed .gantt-rows { display: none; }
   100% { background: rgba(255,68,85,0.12); } /* settles back to .grm-log-err's own steady tint, not fully transparent — this line stays marked as an error after the flash */
 }
 .grm-log-flash { animation: grm-log-flash-kf 1s ease-out; }
+.grm-log-context { opacity: 0.4; }
+.grm-log-context.grm-log-err { opacity: 0.65; } /* an error just outside the procedure's own window still deserves more visibility than plain dimmed context */
+.grm-log-divider {
+  margin: 4px 0;
+  padding: 2px 0;
+  font-size: 10px;
+  font-style: italic;
+  color: #445;
+  border-top: 1px dashed #2a2a3a;
+  border-bottom: 1px dashed #2a2a3a;
+}
 
 .sem-body {
   padding: 16px;

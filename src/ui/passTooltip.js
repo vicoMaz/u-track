@@ -31,6 +31,15 @@ export function fmtTimeOnly(t) {
   return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} UTC`;
 }
 
+// A procedure's recorded startMs/endMs is often off by a few seconds from
+// when Loki actually received the corresponding log lines — a tight window
+// was cutting real lines off. Widened padding means adjacent procedures'
+// lines routinely show up too now; the log pop-up (grafanaModal.js) marks
+// those as dimmed context via the matching data-loki-nominal-* attributes
+// below, rather than this trying to guess a padding tight enough to exclude
+// them (which is exactly what was cutting real lines off before).
+export const LOKI_PROC_PAD_MS = 8000;
+
 export function grafanaLokiUrl(grafanaHost, fromMs, toMs) {
   return `http://${grafanaHost}:3000/a/grafana-lokiexplore-app/explore/service/-scc/logs`
     + `?patterns=%5B%5D&from=${fromMs}&to=${toMs}`
@@ -83,9 +92,9 @@ function _procedureListHTML(pass, grafanaHost) {
     const num  = `<span class="co-tt-num">${i + 1}</span>`;
     const name = `<span class="co-tt-pname">${pr.name}</span>`;
     if (grafanaHost && pr.startMs && pr.endMs) {
-      const fromMs = pr.startMs - 1000, toMs = pr.endMs + 1000;
+      const fromMs = pr.startMs - LOKI_PROC_PAD_MS, toMs = pr.endMs + LOKI_PROC_PAD_MS;
       const url = grafanaLokiUrl(grafanaHost, fromMs, toMs);
-      return `<a href="${url}" target="_blank" rel="noopener" data-grafana-modal data-loki-host="${grafanaHost}" data-loki-start="${fromMs}" data-loki-end="${toMs}" class="co-tt-proc co-tt-link ${cls}" title="${pr.name}">${num}${name}</a>`;
+      return `<a href="${url}" target="_blank" rel="noopener" data-grafana-modal data-loki-host="${grafanaHost}" data-loki-start="${fromMs}" data-loki-end="${toMs}" data-loki-nominal-start="${pr.startMs}" data-loki-nominal-end="${pr.endMs}" class="co-tt-proc co-tt-link ${cls}" title="${pr.name}">${num}${name}</a>`;
     }
     return `<div class="co-tt-proc ${cls}" title="${pr.name}">${num}${name}</div>`;
   }).join('');
