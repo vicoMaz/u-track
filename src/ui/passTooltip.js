@@ -11,6 +11,7 @@ import { store } from '../store.js';
 import { fetchPassGsCoords, computePolarPoints, computePolarMarkers, MARKER_COLORS } from './passPolar.js';
 import { fetchScheduledProcedures, scheduledProceduresHTML } from './scheduledProcedures.js';
 import { satSubsystemHost } from '../satSubsystems.js';
+import './grafanaModal.js'; // side-effect import: registers the click-to-popup handler used by the co-tt-link anchors below
 
 const _PROC_CLS = { SUCCESS: 'co-tt-ok', FAILURE: 'co-tt-fail', CANCELLED: 'co-tt-cancelled' };
 
@@ -83,7 +84,7 @@ function _procedureListHTML(pass, grafanaHost) {
     const name = `<span class="co-tt-pname">${pr.name}</span>`;
     if (grafanaHost && pr.startMs && pr.endMs) {
       const url = grafanaLokiUrl(grafanaHost, pr.startMs - 1000, pr.endMs + 1000);
-      return `<a href="${url}" target="_blank" rel="noopener" class="co-tt-proc co-tt-link ${cls}" title="${pr.name}">${num}${name}</a>`;
+      return `<a href="${url}" target="_blank" rel="noopener" data-grafana-modal class="co-tt-proc co-tt-link ${cls}" title="${pr.name}">${num}${name}</a>`;
     }
     return `<div class="co-tt-proc ${cls}" title="${pr.name}">${num}${name}</div>`;
   }).join('');

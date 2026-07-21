@@ -1043,6 +1043,46 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .sem-close:hover { color: #ff4466; }
 
+/* ── Grafana log pop-up (click a procedure's log link) ────────────── */
+.grm-overlay {
+  position: fixed; inset: 0; z-index: 60000; /* above .pdp-panel (50000) — procedures live inside it */
+  display: none;
+  align-items: center; justify-content: center;
+}
+.grm-overlay.grm-open-state { display: flex; }
+.grm-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.7); }
+.grm-card {
+  position: relative; z-index: 1;
+  width: 90vw; height: 85vh;
+  max-width: 1400px;
+  background: #12121e;
+  border: 1px solid #2a2a4a;
+  border-radius: 10px;
+  box-shadow: 0 12px 48px rgba(0,0,0,.7);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.grm-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #1e1e32;
+  flex-shrink: 0;
+}
+.grm-title { font-size: 13px; font-weight: 600; color: #dde; flex: 1; font-family: 'Courier New', monospace; }
+.grm-open {
+  font-size: 11px; color: #778; text-decoration: none;
+  border: 1px solid #2a2a4a; border-radius: 4px; padding: 3px 8px;
+  transition: color .15s, border-color .15s;
+}
+.grm-open:hover { color: #fff; border-color: #4444aa; }
+.grm-close {
+  background: none; border: none; color: #556; font-size: 20px;
+  cursor: pointer; padding: 0 2px; line-height: 1;
+  transition: color .15s;
+}
+.grm-close:hover { color: #ff4466; }
+.grm-iframe { flex: 1; border: none; background: #0c0c14; }
+
 .sem-body {
   padding: 16px;
   display: flex; flex-direction: column; gap: 8px;
