@@ -1144,6 +1144,14 @@ body.gantt-collapsed .gantt-rows { display: none; }
   border-bottom: 1px dashed #2a2a3a;
 }
 
+/* Whichever log line is closest to the shared pass cursor's current
+   position (PassAnalyzer.js's linked polar/Eb/N0/TC-list/full-log cursor —
+   see wireLinkedCursor's onCursor hook, passCursor.js). Inset outline,
+   same technique as .pa-tc-row-cursor, so it composes on top of
+   .grm-log-err/.grm-log-context without fighting either one's own
+   background/opacity. */
+.grm-log-cursor { box-shadow: 0 0 0 1.5px #7ad4ff inset; }
+
 .sem-body {
   padding: 16px;
   display: flex; flex-direction: column; gap: 8px;

@@ -54,7 +54,11 @@ export function renderLogRows(lines, nominalStart, nominalEnd) {
     // and get jumped to even though it's not part of what was scoped.
     if (isErr && isCore) errorIndices.push(i);
     const cls = [isErr && 'grm-log-err', !isCore && 'grm-log-context'].filter(Boolean).join(' ');
-    rows.push(`<div class="grm-log-line${cls ? ' ' + cls : ''}" data-idx="${i}"><span class="grm-log-ts">${fmtLogTime(l.ts)}</span><span class="grm-log-text">${escapeHtml(l.text)}</span></div>`);
+    // data-t (ms) alongside data-idx — lets a caller (PassAnalyzer.js) wire
+    // a plain time-based cursor link (hover a line → drive the shared pass
+    // cursor; the cursor moving → highlight the nearest line) without also
+    // needing the original `lines` array kept around just for this lookup.
+    rows.push(`<div class="grm-log-line${cls ? ' ' + cls : ''}" data-idx="${i}" data-t="${Math.round(ms)}"><span class="grm-log-ts">${fmtLogTime(l.ts)}</span><span class="grm-log-text">${escapeHtml(l.text)}</span></div>`);
   });
   return { html: `<div class="grm-log">${rows.join('')}</div>`, errorIndices };
 }
