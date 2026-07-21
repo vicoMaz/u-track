@@ -78,9 +78,22 @@ export function passGeometryHTML(markers) {
   return `<div class="pdp-geo-line">${items.join('')}</div>`;
 }
 
+// Compact one-line summary for the Grafana log pop-up's own title — separate
+// from the anchor's native `title` attribute (kept as just the procedure
+// name, for a sane browser hover tooltip). Packs in the satellite/pass/
+// procedure-window context so the pop-up answers "what am I looking at"
+// without the tooltip/panel it was opened from still being visible.
+export function grafanaModalTitle(sat, pass, pr) {
+  const satPart  = sat?.name ?? '';
+  const netTag   = pass.network ? ` ${pass.network}` : '';
+  const passPart = `${pass.station ?? '—'}${netTag}`;
+  const timePart = `${fmtTimeOnly(pr.startMs).slice(0, 8)}–${fmtTimeOnly(pr.endMs).slice(0, 8)} UTC`;
+  return [satPart, passPart, pr.name, timePart].filter(Boolean).join(' · ');
+}
+
 // Full procedure list (names, not a count) — all synchronous, `pass.procedures`
 // is already resolved on the pass object, no fetch needed for this part.
-function _procedureListHTML(pass, grafanaHost) {
+function _procedureListHTML(pass, grafanaHost, sat) {
   if (pass.future) {
     return `<div class="co-tt-future-status co-dot-future">○ SCHEDULED</div>
       <div class="pass-procs-slot"><div class="co-tt-note">Checking SCC for scheduled procedures…</div></div>`;
@@ -94,7 +107,7 @@ function _procedureListHTML(pass, grafanaHost) {
     if (grafanaHost && pr.startMs && pr.endMs) {
       const fromMs = pr.startMs - LOKI_PROC_PAD_MS, toMs = pr.endMs + LOKI_PROC_PAD_MS;
       const url = grafanaLokiUrl(grafanaHost, fromMs, toMs);
-      return `<a href="${url}" target="_blank" rel="noopener" data-grafana-modal data-loki-host="${grafanaHost}" data-loki-start="${fromMs}" data-loki-end="${toMs}" data-loki-nominal-start="${pr.startMs}" data-loki-nominal-end="${pr.endMs}" class="co-tt-proc co-tt-link ${cls}" title="${pr.name}">${num}${name}</a>`;
+      return `<a href="${url}" target="_blank" rel="noopener" data-grafana-modal data-loki-host="${grafanaHost}" data-loki-start="${fromMs}" data-loki-end="${toMs}" data-loki-nominal-start="${pr.startMs}" data-loki-nominal-end="${pr.endMs}" data-grafana-title="${grafanaModalTitle(sat, pass, pr)}" class="co-tt-proc co-tt-link ${cls}" title="${pr.name}">${num}${name}</a>`;
     }
     return `<div class="co-tt-proc ${cls}" title="${pr.name}">${num}${name}</div>`;
   }).join('');
@@ -109,7 +122,7 @@ export function passSimpleTooltipContent(pass, sat) {
   const details = `<div class="co-tt-time-row"><span class="co-tt-time-lbl">DATE</span>${fmtDateTimeShort(pass.start)}</div>
     <div class="co-tt-time-row"><span class="co-tt-time-lbl">DUR</span>${fmtDuration(pass.end - pass.start)}</div>
     <div class="pass-geometry-slot"></div>`;
-  return hdr + details + _procedureListHTML(pass, grafanaHost);
+  return hdr + details + _procedureListHTML(pass, grafanaHost, sat);
 }
 
 // Per-element generation counters (not a single module-level counter) — each

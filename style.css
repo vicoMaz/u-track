@@ -1068,7 +1068,12 @@ body.gantt-collapsed .gantt-rows { display: none; }
   border-bottom: 1px solid #1e1e32;
   flex-shrink: 0;
 }
-.grm-title { font-size: 13px; font-weight: 600; color: #dde; flex: 1; font-family: 'Courier New', monospace; }
+.grm-title {
+  font-size: 13px; font-weight: 600; color: #dde; font-family: 'Courier New', monospace;
+  flex: 1;
+  min-width: 0; /* lets a flex item actually shrink below its content width so the ellipsis below can kick in */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .grm-err-nav { display: flex; align-items: center; gap: 4px; }
 .grm-err-jump, .grm-err-prev, .grm-err-next {
   background: rgba(255,68,85,0.12);

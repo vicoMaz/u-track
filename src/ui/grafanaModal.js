@@ -174,6 +174,6 @@ document.addEventListener('click', e => {
     nominalStart: Number(link.dataset.lokiNominalStart),
     nominalEnd:   Number(link.dataset.lokiNominalEnd),
     exploreUrl:   link.href,
-    title:        link.title || '',
+    title:        link.dataset.grafanaTitle || link.title || '',
   });
 });
