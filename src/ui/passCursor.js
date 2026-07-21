@@ -8,7 +8,16 @@
 // Hovering the Eb/N0 chart works the other way: mouse x → time → nearest
 // sample, and that timestamp drives the polar dot (nearest point by time).
 import { POLAR_VIEWBOX } from './passPolar.js';
-import { CHART_W, PAD_L, PAD_R, ebn0Scales, syncEbn0DotSizes } from './ebn0.js';
+import { CHART_W, CHART_H, PAD_L, PAD_R, PAD_T, ebn0Scales, syncEbn0DotSizes } from './ebn0.js';
+
+// A caller (e.g. PassAnalyzer.js) may build the Eb/N0 chart at a custom,
+// wider width/height than the CHART_W/CHART_H default — read the ACTUAL
+// dimensions off the live SVG's own viewBox rather than assuming the
+// constant, so hover math and label clamping stay correct for it too.
+function _chartDims(ebn0El) {
+  const vb = ebn0El?.viewBox?.baseVal;
+  return { width: vb?.width || CHART_W, height: vb?.height || CHART_H };
+}
 
 function _nearestByTime(points, t) {
   let best = points[0], bestDiff = Infinity;
@@ -25,9 +34,9 @@ function _fmtTime(t) {
 
 function _showPolarCursor(polarEl, point) {
   if (!point) return;
-  const dot = polarEl.querySelector('.polar-cursor-dot');
+  const dot  = polarEl.querySelector('.polar-cursor-dot');
   const text = polarEl.querySelector('.polar-cursor-text');
-  const bg = polarEl.querySelector('.polar-cursor-label-bg');
+  const bg   = polarEl.querySelector('.polar-cursor-label-bg');
   if (!dot || !text || !bg) return;
   dot.setAttribute('cx', point.x);
   dot.setAttribute('cy', point.y);
@@ -49,51 +58,124 @@ function _hidePolarCursor(polarEl) {
   });
 }
 
-function _showEbn0Cursor(ebn0El, series, point, procedures) {
-  if (!point) return;
-  const line = ebn0El.querySelector('.ebn0-cursor-line');
-  const dot  = ebn0El.querySelector('.ebn0-cursor-dot');
-  const text = ebn0El.querySelector('.ebn0-cursor-text');
-  const bg   = ebn0El.querySelector('.ebn0-cursor-label-bg');
-  if (!line || !dot || !text || !bg) return;
-  const { xScale, yScale } = ebn0Scales(series, procedures);
-  const x = xScale(point.t), y = yScale(point.v);
+function _showEbn0Cursor(ebn0El, tmSeries, tmPoint, procedures, tcSeries, cursorT, fallbackRange) {
+  const line  = ebn0El.querySelector('.ebn0-cursor-line');
+  const dot   = ebn0El.querySelector('.ebn0-cursor-dot');
+  const dot2  = ebn0El.querySelector('.ebn0-cursor-dot2');
+  const text  = ebn0El.querySelector('.ebn0-cursor-text');
+  const bg    = ebn0El.querySelector('.ebn0-cursor-label-bg');
+  const text2 = ebn0El.querySelector('.ebn0-cursor-text2');
+  const bg2   = ebn0El.querySelector('.ebn0-cursor-label-bg2');
+  if (!line) return;
+
+  // The hovered time itself drives the line's position — not a nearby
+  // sample's time — so it still tracks correctly (e.g. a TC packet's send
+  // time, driven externally via driveFromTime) even when there's no
+  // telemetry sample anywhere near it, rather than requiring one to exist
+  // just to know where to draw the line.
+  const t = cursorT ?? tmPoint?.t;
+  if (t == null) return;
+
+  const { width, height } = _chartDims(ebn0El);
+  const { xScale, yScale } = ebn0Scales(tmSeries, procedures, fallbackRange, tcSeries, width, height);
+  const x = xScale(t);
   line.setAttribute('x1', x); line.setAttribute('x2', x);
-  dot.setAttribute('cx', x);  dot.setAttribute('cy', y);
-  const label = `${_fmtTime(point.t)} ${point.v.toFixed(2)}dB`;
-  const lx = Math.min(Math.max(x, PAD_L + 20), CHART_W - PAD_R - 20);
-  text.setAttribute('x', lx);
-  text.textContent = label;
-  const labelW = label.length * 3.7;
-  bg.setAttribute('x', lx - labelW / 2);
-  bg.setAttribute('y', -2);
-  bg.setAttribute('width', labelW);
-  [line, dot, text, bg].forEach(el => el.setAttribute('visibility', 'visible'));
+  line.setAttribute('visibility', 'visible');
+
+  function _placeLabel(bgEl, textEl, dotX, dotY, label) {
+    if (!bgEl || !textEl) return;
+    const labelW = label.length * 3.7;
+    const lx = Math.min(Math.max(dotX, PAD_L + labelW / 2 + 1), width - PAD_R - labelW / 2 - 1);
+    const ty = dotY > PAD_T + 12 ? dotY - 10 : dotY + 14;
+    textEl.setAttribute('x', lx);
+    textEl.setAttribute('y', ty);
+    textEl.textContent = label;
+    bgEl.setAttribute('x', lx - labelW / 2);
+    bgEl.setAttribute('y', ty - 7);
+    bgEl.setAttribute('width', labelW);
+    [bgEl, textEl].forEach(el => el.setAttribute('visibility', 'visible'));
+  }
+
+  // TM dot + label
+  if (dot) {
+    if (tmPoint) {
+      const dotX = xScale(tmPoint.t), dotY = yScale(tmPoint.v);
+      dot.setAttribute('cx', dotX); dot.setAttribute('cy', dotY);
+      dot.setAttribute('visibility', 'visible');
+      _placeLabel(bg, text, dotX, dotY, `TM ${tmPoint.v.toFixed(2)} dB`);
+    } else {
+      dot.setAttribute('visibility', 'hidden');
+      bg?.setAttribute('visibility', 'hidden');
+      text?.setAttribute('visibility', 'hidden');
+    }
+  }
+
+  // TC dot + label
+  const tcPoint = tcSeries?.length ? _nearestByTime(tcSeries, t) : null;
+  if (dot2) {
+    if (tcPoint) {
+      const dotX = xScale(tcPoint.t), dotY = yScale(tcPoint.v);
+      dot2.setAttribute('cx', dotX); dot2.setAttribute('cy', dotY);
+      dot2.setAttribute('visibility', 'visible');
+      _placeLabel(bg2, text2, dotX, dotY, `TC ${tcPoint.v.toFixed(2)} dB`);
+    } else {
+      dot2.setAttribute('visibility', 'hidden');
+      bg2?.setAttribute('visibility', 'hidden');
+      text2?.setAttribute('visibility', 'hidden');
+    }
+  }
 }
 
 function _hideEbn0Cursor(ebn0El) {
-  ['ebn0-cursor-line', 'ebn0-cursor-dot', 'ebn0-cursor-text', 'ebn0-cursor-label-bg'].forEach(cls => {
+  ['ebn0-cursor-line', 'ebn0-cursor-dot', 'ebn0-cursor-dot2',
+   'ebn0-cursor-text', 'ebn0-cursor-label-bg',
+   'ebn0-cursor-text2', 'ebn0-cursor-label-bg2'].forEach(cls => {
     ebn0El?.querySelector(`.${cls}`)?.setAttribute('visibility', 'hidden');
   });
 }
 
 // polarEl/ebn0El are the live <svg class="pass-polar">/<svg class="ebn0-chart">
-// elements (already in the DOM); polarPoints/ebn0Series are their respective
-// data arrays. Either side may be absent (no coords resolved, or no metrics
-// for this pass/network) — wiring degrades gracefully to a single-chart cursor.
-export function wireLinkedCursor(polarEl, polarPoints, ebn0El, ebn0Series, procedures) {
+// elements (already in the DOM); polarPoints/ebn0Series/tcSeries are their
+// respective data arrays. Any side may be absent — wiring degrades gracefully.
+// `fallbackRange` ({t0,t1} ms) should be the SAME object the caller already
+// passed to buildEbn0SVG/ebn0HTML — without it, a pass with no Eb/N0 data at
+// all (common; a TC's send time rarely lines up with a telemetry sample)
+// makes ebn0Scales fall back to a degenerate [0, someRealTimestamp] domain,
+// squashing every cursor position to nearly the same spot near the right
+// edge instead of tracking the actual hovered time.
+// Returns { driveFromTime, clear } so a caller outside this pair (e.g.
+// PassAnalyzer.js hovering a TC packet row) can drive the same cursor from
+// an arbitrary timestamp — existing callers that ignore the return value
+// (PassDetailPanel.js) are unaffected.
+//
+// onCursor(t), optional: called with the hovered timestamp on every move
+// (polar OR Eb/N0, and externally via driveFromTime) and with null on
+// clear/mouseleave — lets a caller react to the SAME moment this module
+// already tracks (e.g. PassAnalyzer.js highlighting whichever TC packet was
+// sent closest to it) without this module needing to know anything about
+// what a "TC packet" is. Existing callers that don't pass it are unaffected.
+export function wireLinkedCursor(polarEl, polarPoints, ebn0El, ebn0Series, procedures, tcSeries, fallbackRange, onCursor) {
   const hasPolar = !!(polarEl && polarPoints?.length);
-  const hasEbn0  = !!(ebn0El && ebn0Series?.length);
-  if (hasEbn0) syncEbn0DotSizes(ebn0El); // match the polar plot's actual dot pixel size
-  if (!hasPolar && !hasEbn0) return;
+  // Chart existing (not "has data") is the bar — buildEbn0SVG already draws
+  // empty axes from fallbackRange alone, and the cursor line should track
+  // hover across that empty chart too, not just when a series happens to
+  // have data in it.
+  const hasEbn0  = !!ebn0El;
+  if (hasEbn0) syncEbn0DotSizes(ebn0El);
+  if (!hasPolar && !hasEbn0) return { driveFromTime() {}, clear() {} };
 
   function driveFromTime(t) {
     if (hasPolar) _showPolarCursor(polarEl, _nearestByTime(polarPoints, t));
-    if (hasEbn0)  _showEbn0Cursor(ebn0El, ebn0Series, _nearestByTime(ebn0Series, t), procedures);
+    if (hasEbn0) {
+      const tmPoint = ebn0Series?.length ? _nearestByTime(ebn0Series, t) : null;
+      _showEbn0Cursor(ebn0El, ebn0Series, tmPoint, procedures, tcSeries, t, fallbackRange);
+    }
+    onCursor?.(t);
   }
   function clearAll() {
     if (hasPolar) _hidePolarCursor(polarEl);
     if (hasEbn0)  _hideEbn0Cursor(ebn0El);
+    onCursor?.(null);
   }
 
   if (hasPolar) {
@@ -115,12 +197,15 @@ export function wireLinkedCursor(polarEl, polarPoints, ebn0El, ebn0Series, proce
   if (hasEbn0) {
     const hit = ebn0El.querySelector('.ebn0-hit');
     hit?.addEventListener('mousemove', ev => {
-      const { t0, t1 } = ebn0Scales(ebn0Series, procedures);
+      const { width, height } = _chartDims(ebn0El);
+      const { t0, t1 } = ebn0Scales(ebn0Series, procedures, fallbackRange, tcSeries, width, height);
       const rect = ebn0El.getBoundingClientRect();
-      const px = (ev.clientX - rect.left) / rect.width * CHART_W;
-      const frac = Math.min(1, Math.max(0, (px - PAD_L) / (CHART_W - PAD_L - PAD_R)));
+      const px = (ev.clientX - rect.left) / rect.width * width;
+      const frac = Math.min(1, Math.max(0, (px - PAD_L) / (width - PAD_L - PAD_R)));
       driveFromTime(t0 + frac * (t1 - t0));
     });
     hit?.addEventListener('mouseleave', clearAll);
   }
+
+  return { driveFromTime, clear: clearAll };
 }
