@@ -8,12 +8,15 @@
 // plain JSON API call, which isn't subject to X-Frame-Options at all since
 // nothing is being framed. "Open in Grafana ↗" stays in the header for
 // anyone who wants the full Explore UI (filtering, live tail, etc).
+//
+// Rendering/error-detection/navigation (renderLogRows, createErrorNav) live
+// in logView.js, shared with PassAnalyzer.js's permanent full-pass-log panel
+// — this module only owns the modal shell (overlay/open-close/fetch).
 import { queryLoki } from './lokiQuery.js';
+import { renderLogRows, createErrorNav } from './logView.js';
 
-let _overlay = null, _bodyEl = null, _titleEl = null, _openLink = null, _errNavEl = null, _errCountEl = null;
+let _overlay = null, _bodyEl = null, _titleEl = null, _openLink = null, _errNav = null;
 let _reqGen = 0; // guards against a slower, superseded fetch overwriting a newer click's result
-let _errorLineIndices = []; // indices into the currently-rendered lines that look like errors
-let _errorCursor = -1;      // position within _errorLineIndices the ▲/▼ buttons are currently at
 
 function _ensure() {
   if (_overlay) return;
@@ -36,96 +39,15 @@ function _ensure() {
       <div class="grm-body"></div>
     </div>`;
   document.body.appendChild(_overlay);
-  _bodyEl     = _overlay.querySelector('.grm-body');
-  _titleEl    = _overlay.querySelector('.grm-title');
-  _openLink   = _overlay.querySelector('.grm-open');
-  _errNavEl   = _overlay.querySelector('.grm-err-nav');
-  _errCountEl = _overlay.querySelector('.grm-err-count');
+  _bodyEl   = _overlay.querySelector('.grm-body');
+  _titleEl  = _overlay.querySelector('.grm-title');
+  _openLink = _overlay.querySelector('.grm-open');
+  _errNav   = createErrorNav(_overlay.querySelector('.grm-err-nav'), _bodyEl);
   _overlay.querySelector('.grm-close').addEventListener('click', closeGrafanaModal);
   _overlay.querySelector('.grm-backdrop').addEventListener('click', closeGrafanaModal);
-  _overlay.querySelector('.grm-err-jump').addEventListener('click', () => _gotoError(0));
-  _overlay.querySelector('.grm-err-prev').addEventListener('click', () => _gotoError(_errorCursor - 1));
-  _overlay.querySelector('.grm-err-next').addEventListener('click', () => _gotoError(_errorCursor + 1));
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && _overlay.classList.contains('grm-open-state')) closeGrafanaModal();
   });
-}
-
-// Heuristic — SCC log lines don't carry a structured severity field visible
-// to this app, so error lines are found by matching common log-level/failure
-// wording. Untested against real production log content; if real error lines
-// use different wording than this, they'll silently not be picked up (no
-// false "no errors" alarm bell — the log text itself is still there and
-// readable, just not highlighted/jumpable).
-const ERROR_RE = /\b(error|fail(?:ure|ed)?|exception|critical)\b/i;
-
-function _gotoError(idx) {
-  if (!_errorLineIndices.length) return;
-  _errorCursor = ((idx % _errorLineIndices.length) + _errorLineIndices.length) % _errorLineIndices.length;
-  const lineIdx = _errorLineIndices[_errorCursor];
-  const el = _bodyEl.querySelector(`.grm-log-line[data-idx="${lineIdx}"]`);
-  if (!el) return;
-  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  // Clear any earlier jump's flash first — the animation is one-shot and
-  // doesn't remove its own class on end, so without this every previously
-  // visited error line would stay marked .grm-log-flash forever.
-  _bodyEl.querySelectorAll('.grm-log-flash').forEach(f => f.classList.remove('grm-log-flash'));
-  void el.offsetWidth; // restart the animation if it's already mid-flash from a previous jump to the SAME line
-  el.classList.add('grm-log-flash');
-  if (_errorLineIndices.length > 1) _errCountEl.textContent = `${_errorCursor + 1}/${_errorLineIndices.length}`;
-}
-
-const _escapeHtml = s => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-function _fmtLogTime(nsStr) {
-  const ms = Number(nsStr) / 1e6;
-  const d  = new Date(ms);
-  const p  = n => String(n).padStart(2, '0');
-  return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}.${String(d.getUTCMilliseconds()).padStart(3, '0')}`;
-}
-
-// nominalStart/nominalEnd (ms) are the procedure's OWN recorded start/end —
-// the fetch window is padded well beyond that (see PAD_MS below) because
-// that recorded time is often off by a few seconds from when Loki actually
-// received the corresponding lines, and a tight window was cutting real
-// lines off. The wider window means lines from the adjacent procedure
-// before/after routinely show up too — rather than hide that (there's no
-// per-procedure field to filter on, only time), lines outside
-// [nominalStart, nominalEnd] are dimmed as context and marked off with a
-// divider, so it stays obvious which lines are THIS procedure's.
-function _renderLines(lines, nominalStart, nominalEnd) {
-  _errorLineIndices = [];
-  if (!lines.length) return `<div class="co-tt-note">No log lines found for this procedure</div>`;
-  const hasNominal = Number.isFinite(nominalStart) && Number.isFinite(nominalEnd);
-
-  // If NOTHING falls inside the procedure's own window, this procedure has
-  // no logs — full stop. The padded window may still have pulled in lines
-  // from the procedure before/after, but dumping those (with no core lines
-  // to anchor them to) would look like "here are its logs" when it's really
-  // "here's its neighbor" — misleading, not useful padding/context.
-  if (hasNominal && !lines.some(l => { const ms = l.ts / 1e6; return ms >= nominalStart && ms <= nominalEnd; })) {
-    return `<div class="co-tt-note">No log lines found for this procedure</div>`;
-  }
-
-  const rows = [];
-  let wasCore = null; // null = not started yet; tracks the previous line's core/context state to place dividers
-  lines.forEach((l, i) => {
-    const ms     = l.ts / 1e6;
-    const isCore = !hasNominal || (ms >= nominalStart && ms <= nominalEnd);
-    if (hasNominal && wasCore !== null && isCore !== wasCore) {
-      rows.push(`<div class="grm-log-divider">${isCore ? '▾ procedure starts' : '▴ procedure ends'}</div>`);
-    }
-    wasCore = isCore;
-    const isErr = ERROR_RE.test(l.text);
-    // Only count/navigate errors within THIS procedure's own window — an
-    // error line from the dimmed before/after context belongs to a
-    // different (adjacent) procedure and would otherwise inflate the count
-    // and get jumped to by ▲/▼ even though it's not part of what was clicked.
-    if (isErr && isCore) _errorLineIndices.push(i);
-    const cls = [isErr && 'grm-log-err', !isCore && 'grm-log-context'].filter(Boolean).join(' ');
-    rows.push(`<div class="grm-log-line${cls ? ' ' + cls : ''}" data-idx="${i}"><span class="grm-log-ts">${_fmtLogTime(l.ts)}</span><span class="grm-log-text">${_escapeHtml(l.text)}</span></div>`);
-  });
-  return `<div class="grm-log">${rows.join('')}</div>`;
 }
 
 export async function openGrafanaModal({ grafanaHost, startMs, endMs, nominalStart, nominalEnd, exploreUrl, title }) {
@@ -134,26 +56,21 @@ export async function openGrafanaModal({ grafanaHost, startMs, endMs, nominalSta
   _titleEl.textContent = title || 'Grafana logs';
   _openLink.href = exploreUrl;
   _bodyEl.innerHTML = `<div class="co-tt-note grm-loading">Loading logs…</div>`;
-  _errNavEl.hidden = true;
-  _errorLineIndices = [];
-  _errorCursor = -1;
+  _errNav.setErrorIndices([]);
   _overlay.classList.add('grm-open-state');
 
   const lines = await queryLoki(grafanaHost, '{service_name="/scc"}', startMs, endMs, 2000);
   if (myGen !== _reqGen) return; // superseded by a newer click
-  _bodyEl.innerHTML = lines == null
-    ? `<div class="co-tt-note">Could not reach Grafana/Loki — use "Open in Grafana ↗" above</div>`
-    : _renderLines(lines, nominalStart, nominalEnd);
 
-  _overlay.querySelector('.grm-err-prev').hidden = _errorLineIndices.length <= 1;
-  _overlay.querySelector('.grm-err-next').hidden = _errorLineIndices.length <= 1;
-  _errCountEl.hidden = _errorLineIndices.length <= 1;
-  _errNavEl.hidden = _errorLineIndices.length === 0;
-  // _errCountEl's text is otherwise only ever written inside _gotoError() —
-  // without this, opening a new procedure's log left the counter showing
-  // whatever the PREVIOUS procedure's count was (or blank, on the very first
-  // open) until the user clicked ▲/▼/"Go to error" at least once.
-  if (_errorLineIndices.length > 1) _errCountEl.textContent = `1/${_errorLineIndices.length}`;
+  if (lines == null) {
+    _bodyEl.innerHTML = `<div class="co-tt-note">Could not reach Grafana/Loki — use "Open in Grafana ↗" above</div>`;
+    return;
+  }
+  const { html, errorIndices, noneInWindow } = renderLogRows(lines, nominalStart, nominalEnd);
+  _bodyEl.innerHTML = (!lines.length || noneInWindow)
+    ? `<div class="co-tt-note">No log lines found for this procedure</div>`
+    : html;
+  _errNav.setErrorIndices(errorIndices);
 
   const coreLine = _bodyEl.querySelector('.grm-log-line:not(.grm-log-context)');
   if (coreLine) coreLine.scrollIntoView({ block: 'center' });
