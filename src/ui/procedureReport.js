@@ -2,31 +2,7 @@
 // pass procedures emit to Grafana Loki — a fixed-width STEP/STATUS/INFO/TIME
 // table ending in a TOTAL PROCEDURE line. Uses the same Loki datasource the
 // app's existing per-procedure Grafana deep-links already point at.
-//
-// Goes through our own server's /api/grafana-loki instead of fetching Grafana
-// directly — Grafana sends no Access-Control-Allow-Origin header, so a
-// same-origin browser fetch() to it is blocked by CORS even though curl/Node
-// (which don't enforce CORS) reach it fine.
-async function _queryLoki(grafanaHost, logql, startMs, endMs, limit) {
-  const params = new URLSearchParams({
-    host:  grafanaHost,
-    query: logql,
-    start: String(Math.round(startMs * 1e6)),
-    end:   String(Math.round(endMs * 1e6)),
-    limit: String(limit),
-  });
-  try {
-    const res = await fetch(`/api/grafana-loki?${params}`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    const lines = [];
-    for (const stream of data?.data?.result ?? []) {
-      for (const [ts, text] of stream.values) lines.push({ ts: Number(ts), text });
-    }
-    lines.sort((a, b) => a.ts - b.ts);
-    return lines;
-  } catch { return null; }
-}
+import { queryLoki as _queryLoki } from './lokiQuery.js';
 
 const STEP_RE  = /^(.*?)\s{2,}(\S+)\s{2,}(.*?)\s{2,}(\d+(?:\.\d+)?)\s*$/;
 const TOTAL_RE = /^TOTAL PROCEDURE\s+(\d+(?:\.\d+)?)\s*$/;

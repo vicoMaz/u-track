@@ -1081,7 +1081,29 @@ body.gantt-collapsed .gantt-rows { display: none; }
   transition: color .15s;
 }
 .grm-close:hover { color: #ff4466; }
-.grm-iframe { flex: 1; border: none; background: #0c0c14; }
+.grm-body {
+  flex: 1;
+  overflow-y: auto;
+  background: #0c0c14;
+  padding: 10px 14px;
+}
+.grm-loading { padding: 4px 0; }
+.grm-log {
+  display: flex;
+  flex-direction: column;
+  font-family: 'Courier New', monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.grm-log-line {
+  display: flex;
+  gap: 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.grm-log-line:hover { background: #16162a; }
+.grm-log-ts { flex-shrink: 0; color: #556; }
+.grm-log-text { color: #ccc; }
 
 .sem-body {
   padding: 16px;

@@ -83,8 +83,9 @@ function _procedureListHTML(pass, grafanaHost) {
     const num  = `<span class="co-tt-num">${i + 1}</span>`;
     const name = `<span class="co-tt-pname">${pr.name}</span>`;
     if (grafanaHost && pr.startMs && pr.endMs) {
-      const url = grafanaLokiUrl(grafanaHost, pr.startMs - 1000, pr.endMs + 1000);
-      return `<a href="${url}" target="_blank" rel="noopener" data-grafana-modal class="co-tt-proc co-tt-link ${cls}" title="${pr.name}">${num}${name}</a>`;
+      const fromMs = pr.startMs - 1000, toMs = pr.endMs + 1000;
+      const url = grafanaLokiUrl(grafanaHost, fromMs, toMs);
+      return `<a href="${url}" target="_blank" rel="noopener" data-grafana-modal data-loki-host="${grafanaHost}" data-loki-start="${fromMs}" data-loki-end="${toMs}" class="co-tt-proc co-tt-link ${cls}" title="${pr.name}">${num}${name}</a>`;
     }
     return `<div class="co-tt-proc ${cls}" title="${pr.name}">${num}${name}</div>`;
   }).join('');
