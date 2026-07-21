@@ -107,7 +107,11 @@ function _renderLines(lines, nominalStart, nominalEnd) {
     }
     wasCore = isCore;
     const isErr = ERROR_RE.test(l.text);
-    if (isErr) _errorLineIndices.push(i);
+    // Only count/navigate errors within THIS procedure's own window — an
+    // error line from the dimmed before/after context belongs to a
+    // different (adjacent) procedure and would otherwise inflate the count
+    // and get jumped to by ▲/▼ even though it's not part of what was clicked.
+    if (isErr && isCore) _errorLineIndices.push(i);
     const cls = [isErr && 'grm-log-err', !isCore && 'grm-log-context'].filter(Boolean).join(' ');
     rows.push(`<div class="grm-log-line${cls ? ' ' + cls : ''}" data-idx="${i}"><span class="grm-log-ts">${_fmtLogTime(l.ts)}</span><span class="grm-log-text">${_escapeHtml(l.text)}</span></div>`);
   });
