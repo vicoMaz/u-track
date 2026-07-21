@@ -95,8 +95,18 @@ function _fmtLogTime(nsStr) {
 // divider, so it stays obvious which lines are THIS procedure's.
 function _renderLines(lines, nominalStart, nominalEnd) {
   _errorLineIndices = [];
-  if (!lines.length) return `<div class="co-tt-note">No log lines found in this window</div>`;
+  if (!lines.length) return `<div class="co-tt-note">No log lines found for this procedure</div>`;
   const hasNominal = Number.isFinite(nominalStart) && Number.isFinite(nominalEnd);
+
+  // If NOTHING falls inside the procedure's own window, this procedure has
+  // no logs — full stop. The padded window may still have pulled in lines
+  // from the procedure before/after, but dumping those (with no core lines
+  // to anchor them to) would look like "here are its logs" when it's really
+  // "here's its neighbor" — misleading, not useful padding/context.
+  if (hasNominal && !lines.some(l => { const ms = l.ts / 1e6; return ms >= nominalStart && ms <= nominalEnd; })) {
+    return `<div class="co-tt-note">No log lines found for this procedure</div>`;
+  }
+
   const rows = [];
   let wasCore = null; // null = not started yet; tracks the previous line's core/context state to place dividers
   lines.forEach((l, i) => {
