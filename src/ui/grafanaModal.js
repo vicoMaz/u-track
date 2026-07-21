@@ -135,6 +135,11 @@ export async function openGrafanaModal({ grafanaHost, startMs, endMs, nominalSta
   _overlay.querySelector('.grm-err-next').hidden = _errorLineIndices.length <= 1;
   _errCountEl.hidden = _errorLineIndices.length <= 1;
   _errNavEl.hidden = _errorLineIndices.length === 0;
+  // _errCountEl's text is otherwise only ever written inside _gotoError() —
+  // without this, opening a new procedure's log left the counter showing
+  // whatever the PREVIOUS procedure's count was (or blank, on the very first
+  // open) until the user clicked ▲/▼/"Go to error" at least once.
+  if (_errorLineIndices.length > 1) _errCountEl.textContent = `1/${_errorLineIndices.length}`;
 
   const coreLine = _bodyEl.querySelector('.grm-log-line:not(.grm-log-context)');
   if (coreLine) coreLine.scrollIntoView({ block: 'center' });
