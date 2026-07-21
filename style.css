@@ -1069,6 +1069,21 @@ body.gantt-collapsed .gantt-rows { display: none; }
   flex-shrink: 0;
 }
 .grm-title { font-size: 13px; font-weight: 600; color: #dde; flex: 1; font-family: 'Courier New', monospace; }
+.grm-err-nav { display: flex; align-items: center; gap: 4px; }
+.grm-err-jump, .grm-err-prev, .grm-err-next {
+  background: rgba(255,68,85,0.12);
+  color: #ff6b7a;
+  border: 1px solid #663344;
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 3px 8px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.grm-err-prev, .grm-err-next { padding: 3px 6px; }
+.grm-err-jump:hover, .grm-err-prev:hover, .grm-err-next:hover { background: rgba(255,68,85,0.22); border-color: #ff4455; }
+.grm-err-count { font-size: 10px; color: #ff8899; font-variant-numeric: tabular-nums; min-width: 26px; text-align: center; }
 .grm-open {
   font-size: 11px; color: #778; text-decoration: none;
   border: 1px solid #2a2a4a; border-radius: 4px; padding: 3px 8px;
@@ -1104,6 +1119,14 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .grm-log-line:hover { background: #16162a; }
 .grm-log-ts { flex-shrink: 0; color: #556; }
 .grm-log-text { color: #ccc; }
+.grm-log-err { background: rgba(255,68,85,0.12); }
+.grm-log-err .grm-log-ts { color: #ff4455; }
+.grm-log-err .grm-log-text { color: #ff6b7a; font-weight: 600; }
+@keyframes grm-log-flash-kf {
+  0%   { background: rgba(255,68,85,0.55); }
+  100% { background: rgba(255,68,85,0.12); } /* settles back to .grm-log-err's own steady tint, not fully transparent — this line stays marked as an error after the flash */
+}
+.grm-log-flash { animation: grm-log-flash-kf 1s ease-out; }
 
 .sem-body {
   padding: 16px;
