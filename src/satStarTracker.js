@@ -7,6 +7,13 @@
 // edits still apply on the very next render tick, same as before.
 export const SUN_EXCL_DEFAULT_DEG   = 35;
 export const EARTH_EXCL_DEFAULT_DEG = 22;
+// Cosmetic FOV cone half-angle for the 3D globe rendering (SatEntity.js) —
+// NOT a keep-out/exclusion angle (those are the two above, checked against
+// sunAngleDeg/earthAngleDeg in TimePlayer.js's _isConeBlinded). Shared here
+// so sttPov.js's POV widget draws the identical FOV reference ring the 3D
+// cone's own visual size already represents, instead of a second, possibly-
+// drifting copy of "15".
+export const ST_FOV_HALF_ANGLE_DEG = 15;
 
 function _numOr(raw, fallback) {
   const n = parseFloat(raw);

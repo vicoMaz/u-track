@@ -22,7 +22,12 @@ const SVG_EYE_STAR_OFF = `<svg xmlns="http://www.w3.org/2000/svg" width="13" hei
 // ─── ID-key helpers for change detection ─────────────────────────────────
 
 let _satIdKey = '';
-const _satListKey = () => store.satellites.map(s => s.id).join('\0');
+// Only satellites THIS client can actually reach (store.accessibleSatellites)
+// — a colleague whose VPN doesn't route to a given satellite never sees it
+// in this operational list. Settings' own satellite list is the exception
+// (see renderSettingsSatList below) — that one still shows everything so an
+// unreachable satellite can be found and its IP fixed.
+const _satListKey = () => store.accessibleSatellites.map(s => s.id).join('\0');
 
 // Which satellites have their station rows collapsed
 const _stationsCollapsed = new Set();
@@ -33,7 +38,7 @@ function renderSatList() {
   const list = document.getElementById('sat-list');
   if (!list) return;
   list.innerHTML = '';
-  for (const sat of store.satellites) {
+  for (const sat of store.accessibleSatellites) {
     const hidden     = sat.visible === false;
     const stHidden   = !satStarTrackerConesVisible(sat.noradId);
     const networks   = store.getSatNetworks(sat.id);
@@ -106,7 +111,7 @@ function renderSatList() {
 function _patchSatList() {
   const list = document.getElementById('sat-list');
   if (!list) return;
-  for (const sat of store.satellites) {
+  for (const sat of store.accessibleSatellites) {
     const group = list.querySelector(`[data-item-id="${sat.id}"]`);
     if (!group) { renderSatList(); return; }
     const hidden = sat.visible === false;
@@ -432,6 +437,7 @@ function renderSettingsSatList() {
   list.innerHTML = '';
   for (const sat of store.satellites) {
     const model = sat.model ?? '12U';
+    const unreachable = store.satAccessible[sat.id] === false;
     const item  = document.createElement('div');
     item.className = 'st-item st-sat-item';
     item.style.setProperty('--sat-color', sat.color);
@@ -439,6 +445,7 @@ function renderSettingsSatList() {
       <span class="st-sat-dot" style="background:${sat.color}"></span>
       <span class="st-item-name">${sat.name}</span>
       <span class="st-model-badge${model === 'FF' ? ' ff-active' : ''}">${model}</span>
+      ${unreachable ? '<span class="st-unreachable-badge" title="Not reachable on your current VPN — hidden from the sat panel, Fleet table, globe/map and weekly schedule until it responds again">unreachable</span>' : ''}
       <button class="st-gear-btn" title="Edit">⚙</button>
       <button class="remove-btn" data-id="${sat.id}" data-norad="${sat.noradId}" title="Remove">×</button>
     `;
@@ -551,7 +558,7 @@ export function initInputPanel() {
   });
 
   store.subscribe((key) => {
-    if (key === 'satellites' || key === 'trackedSatId') {
+    if (key === 'satellites' || key === 'trackedSatId' || key === 'satAccessible') {
       const newKey     = _satListKey();
       const idsChanged = newKey !== _satIdKey;
       _satIdKey = newKey;

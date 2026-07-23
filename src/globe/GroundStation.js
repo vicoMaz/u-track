@@ -14,6 +14,18 @@ export class GroundStation {
 
   _build() {
     const { lat, lon, name, color } = this._gs;
+    // Belt-and-suspenders: store.js's _groupSites already filters out
+    // non-finite antenna coordinates before averaging, but this is cheap
+    // insurance against any other future source of bad data — a NaN/undefined
+    // position handed to Cesium.Cartesian3.fromDegrees doesn't error here,
+    // it silently produces a degenerate Cartesian3 that crashes much later,
+    // deep inside Cesium's own geometry-combining pipeline (a Cartographic
+    // conversion returning undefined), which is a much harder crash to trace
+    // back to this.
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      console.warn(`[GroundStation] skipping "${name}" — invalid coordinates (lat=${lat}, lon=${lon})`);
+      return;
+    }
     const col = Cesium.Color.fromCssColorString(color);
     const pos = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
 
@@ -43,8 +55,14 @@ export class GroundStation {
 
     // Visibility footprint — ellipse whose radius tracks store.orbitAlt via CallbackProperty.
     // Entity.show is a plain boolean; it must be set imperatively via updateFootprint().
+    // `mask` (optional, degrees) is a minimum elevation angle: the classic
+    // ground-coverage-angle formula λ = acos((Re/(Re+h))·cosε) − ε, which
+    // reduces to the plain horizon formula below when ε = 0 (the default for
+    // every ground station that doesn't set one).
     const radiusCb = new Cesium.CallbackProperty(() => {
-      const rho = Math.acos(Math.min(1, R_EARTH_M / (R_EARTH_M + store.orbitAlt * 1000)));
+      const eps = (this._gs.mask ?? 0) * Math.PI / 180;
+      const ratio = Math.min(1, (R_EARTH_M / (R_EARTH_M + store.orbitAlt * 1000)) * Math.cos(eps));
+      const rho = Math.max(0, Math.acos(ratio) - eps);
       return rho * R_EARTH_M;
     }, false);
 

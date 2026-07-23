@@ -211,6 +211,30 @@ body.tracking-active #side-panel { top: 100px; }
   flex-shrink: 0;
 }
 
+/* Shown when store.readOnlyVpn is true — see readOnlyBadge.js — i.e. this
+   client's VPN only carries the SCC RO (.5) monitoring subnet, none of the
+   write-capable ones. Amber "caution", not red "error": nothing is broken,
+   the app just won't have data for several features. */
+.readonly-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 10px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(255, 176, 46, 0.1);
+  border: 1px solid rgba(255, 176, 46, 0.35);
+  color: #ffb02e;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  flex-shrink: 0;
+  cursor: default;
+}
+.readonly-pill[hidden] { display: none; }
+
 .tab-bar-sep {
   width: 1px;
   height: 18px;
@@ -391,6 +415,85 @@ body.tracking-active #side-panel { top: 100px; }
 .gs-net-name { flex: 1; font-size: 11px; color: #aaa; }
 .gs-net-count { font-size: 10px; color: #666; white-space: nowrap; }
 
+/* ── Custom Points panel ────────────────────────────── */
+.pt-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #2a2a3a;
+}
+.pt-add-form input {
+  background: #1a1a28;
+  border: 1px solid #2a2a3a;
+  border-radius: 4px;
+  color: #ccc;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.pt-add-form input:focus { border-color: #ffd60a55; }
+.pt-add-form input::placeholder { color: #556; }
+/* Hide number spinner arrows */
+.pt-add-form input[type=number]::-webkit-outer-spin-button,
+.pt-add-form input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.pt-add-form input[type=number] { -moz-appearance: textfield; }
+
+.pt-coord-row { display: flex; gap: 6px; }
+.pt-coord-row input { width: 0; flex: 1; min-width: 0; }
+
+#pt-add-btn {
+  flex-shrink: 0;
+  background: #ffd60a1a;
+  border: 1px solid #ffd60a55;
+  border-radius: 4px;
+  color: #ffd60a;
+  padding: 5px 10px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+#pt-add-btn:hover { background: #ffd60a33; }
+
+#pt-list { display: flex; flex-direction: column; gap: 4px; }
+
+.pt-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 6px;
+  background: #1a1a28;
+  border-radius: 4px;
+  border-left: 3px solid #ffd60a;
+}
+.pt-item-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pt-dot {
+  width: 7px; height: 7px; flex-shrink: 0;
+  border-radius: 50%;
+  background: #ffd60a;
+}
+.pt-name {
+  flex: 1; font-size: 11px; color: #ccc;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pt-coords {
+  font-size: 10px; color: #666; white-space: nowrap;
+  padding-left: 13px; /* align under name, past dot + gap */
+}
+.pt-item .remove-btn {
+  background: none; border: none; color: #555; cursor: pointer; font-size: 14px;
+  line-height: 1; flex-shrink: 0;
+}
+.pt-item .remove-btn:hover { color: #ff3860; }
+
 /* ── Time Player ────────────────────────────────────── */
 #time-player {
   position: fixed;
@@ -439,18 +542,26 @@ body.tracking-active #time-player { display: flex; }
   margin: 0 2px;
 }
 
-#now-btn {
+/* NOW / HOME / RECENTER — the three view-positioning buttons. Icon-only
+   (●/⌂/◎) — each one's distinct effect on time vs. zoom is spelled out in
+   its title tooltip (see index.html) rather than a text label. */
+.tp-nav-btn {
   background: #1a1a28;
   border: 1px solid #333;
   border-radius: 4px;
   color: #888;
-  padding: 4px 8px;
+  padding: 3px 7px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 15px;
+  line-height: 1;
   flex-shrink: 0;
+  min-width: 28px;
   transition: color 0.15s, border-color 0.15s, background-color 0.15s;
 }
-#now-btn:hover, #now-btn.active { border-color: #00d4ff; color: #00d4ff; }
+.tp-nav-btn:hover { border-color: #00d4ff; color: #00d4ff; }
+/* Only NOW carries an "already there" indicator — HOME/RECENTER are one-shot
+   actions, not a state to reflect. */
+#now-btn.active { border-color: #00d4ff; color: #00d4ff; }
 
 #play-btn {
   background: #1a1a28;
@@ -477,21 +588,6 @@ body.tracking-active #time-player { display: flex; }
   cursor: pointer;
   flex-shrink: 0;
 }
-
-/* Step buttons */
-.step-btn {
-  background: #1a1a28;
-  border: 1px solid #2a2a3a;
-  border-radius: 4px;
-  color: #666;
-  padding: 3px 7px;
-  cursor: pointer;
-  font-size: 11px;
-  flex-shrink: 0;
-  transition: color 0.12s, border-color 0.12s, background-color 0.12s;
-  font-variant-numeric: tabular-nums;
-}
-.step-btn:hover { border-color: #00d4ff; color: #00d4ff; }
 
 .scrub-wrap {
   flex: 1;
@@ -578,6 +674,24 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .gantt-collapse-btn:hover { color: #aaa; }
 .gantt-stt-detail.gantt-collapsed { display: none; }
+/* Opens the docked STT POV panel (sttPovWidget.js) — a real button, not a
+   click on the bare track, since #timeline-gantt's drag-to-pan handler
+   swallows plain clicks on anything not explicitly exempted (see its own
+   comment in TimePlayer.js). */
+.stt-pov-open-btn {
+  background: none;
+  border: none;
+  color: #ccc;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  padding: 0 4px;
+  margin-left: 2px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.1s;
+}
+.stt-pov-open-btn:hover { color: #ffd166; }
 .gantt-track {
   position: absolute;
   left: var(--track-ml, 68px);
@@ -598,10 +712,11 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .gantt-bar-gap {
   cursor: help;
 }
-/* A gap with a successful "Download Gap TMR" request — green diagonal dashes,
-   extending through to the next pass (see TimePlayer.js's _pendingGapDownloads).
-   Reverts to .gantt-bar-gap's plain dark fill once that pass has passed
-   without the gap actually clearing. */
+/* A gap with a matching PUS-15 downlink already scheduled on SCC's next pass
+   (see TimePlayer.js's _getSccPassCheck/findMatchingGapProcedure) — green
+   diagonal dashes, contained to the gap's own bounds. Reverts to
+   .gantt-bar-gap's plain dark fill if that pass passes without the gap
+   actually clearing. */
 .gantt-bar-gap-pending {
   cursor: help;
   background: repeating-linear-gradient(
@@ -610,6 +725,27 @@ body.gantt-collapsed .gantt-rows { display: none; }
     transparent 3px, transparent 7px
   ), #12121e;
   border: 1px solid #00cc6688;
+}
+/* Onboard TM buffer is a ~3-day circular store — these two flag a gap by how
+   close it is to (or past) that overwrite limit (see TimePlayer.js's
+   GAP_WARN_MS/GAP_LOST_MS/_gapUrgency). */
+.gantt-bar-gap-warn {
+  cursor: help;
+  background: repeating-linear-gradient(
+    45deg,
+    #ffcc00 0, #ffcc00 3px,
+    transparent 3px, transparent 7px
+  ), #12121e;
+  border: 1px solid #ffcc0088;
+}
+.gantt-bar-gap-lost {
+  cursor: help;
+  background: repeating-linear-gradient(
+    45deg,
+    #ff4466 0, #ff4466 3px,
+    transparent 3px, transparent 7px
+  ), #12121e;
+  border: 1px solid #ff446688;
 }
 #gantt-cursor {
   position: absolute;
@@ -684,6 +820,12 @@ body.gantt-collapsed .gantt-rows { display: none; }
   border-radius: 0 4px 4px 0;
   font-family: 'Courier New', monospace;
   z-index: 2;
+  /* Purely a read-only display (see SatInfo.js — no listeners on it or its
+     children) but its content height spans several row-heights and sits
+     right over the row-label gutter (Plans/TMR BUS/TMR PAY/Passes/...) —
+     without this, hovering a label underneath it never reaches that label,
+     so e.g. the TMR rows' title tooltip (see index.html) silently never fires. */
+  pointer-events: none;
 }
 #gantt-sat-info.hidden { display: none; }
 #gsi-name {
@@ -715,6 +857,128 @@ body.gantt-collapsed .gantt-rows { display: none; }
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 160px;
+}
+
+/* ── STT POV panel — docked, opened via the gantt's STT row 👁 button ──
+   Live-updates with store.currentTime — see sttPovWidget.js. Positioned
+   absolute within #timeline-gantt (its nearest positioned ancestor), floated
+   fully ABOVE it (top:0 + translateY(-100%)) so it sits flush against the
+   gantt's top edge instead of overlapping/covering the rows underneath —
+   same technique #gantt-toggle already uses to sit above the box. */
+.stt-pov-panel {
+  display: none;
+  position: absolute;
+  top: 0; right: 10px;
+  transform: translateY(-100%);
+  z-index: 5;
+  background: rgba(14, 14, 22, 0.95);
+  border: 1px solid #2a2a44;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  box-shadow: 0 -4px 16px rgba(0,0,0,.4);
+  /* Wide enough for the header's title + legend + close on one line, and
+     still fits two 196px circles (sttPov.js's RENDER_PX) side by side for
+     FF's STT1+STT2. */
+  max-width: 480px;
+}
+.stt-pov-panel.stt-pov-open { display: block; }
+.stt-pov-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #1e1e32;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8888aa;
+}
+.stt-pov-title { flex-shrink: 0; }
+/* Exact per-satellite FOV/Earth-exclusion/Sun-exclusion values — same
+   numbers the reference rings inside each circle are drawn at (sttPov.js) —
+   spelled out in the header instead of relying on the tiny in-circle
+   labels alone. Plain weight/case (unlike the header's own uppercase/bold),
+   so it doesn't visually compete with the "STT POV" title next to it. */
+.stt-pov-legend {
+  flex: 1;
+  min-width: 0;
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  color: #667;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stt-pov-close {
+  background: none; border: none; color: #556; font-size: 15px;
+  cursor: pointer; padding: 0 2px; line-height: 1;
+  transition: color .15s;
+}
+.stt-pov-close:hover { color: #ff4466; }
+.stt-pov-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px;
+}
+.stt-pov-cone { display: flex; flex-direction: column; align-items: center; }
+/* Stacks the clipped base <svg> (rings/crosshair/Earth's disk) and the
+   unclipped overlay <svg> (Sun/Earth marker icons + their labels) exactly
+   on top of each other — same width/height/viewBox on both (sttPov.js), so
+   coordinates line up 1:1 between the two layers. */
+.stt-pov-stack { position: relative; width: 196px; height: 196px; }
+/* True circle, not a circle drawn inside a square canvas. Uses clip-path
+   (an exact pixel radius), NOT border-radius:50% — border-radius clips to
+   the element's own 196×196 render box (see sttPov.js's RENDER_PX), giving
+   a circle of radius 98px = 60 viewBox units, which is BIGGER than R (52,
+   sttPov.js) — the actual boresight/Sun/Earth crop boundary. That 8-unit
+   gap meant nothing ever really got clipped at the drawn rim: markers
+   positioned "at the edge" (r=R=52) just sat inside empty, uncropped space
+   out to r=60 instead of being cut off by it. clip-path pins the crop to R
+   itself: 52 viewBox units × (196px / 120 viewBox units) = 84.93px. */
+.stt-pov-svg {
+  display: block;
+  clip-path: circle(84.93px at 50% 50%);
+}
+/* Sun/Earth markers sit right at r=R (the true edge) — deliberately NOT
+   clipped, so they render in full "in front of" the base layer's circular
+   mask instead of being cut in half by it. */
+.stt-pov-overlay-svg {
+  position: absolute;
+  top: 0; left: 0;
+  pointer-events: none;
+}
+.stt-pov-caption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-family: 'Courier New', monospace;
+  color: #8888aa;
+  margin-top: 2px;
+}
+.stt-pov-status {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.stt-pov-status.clear   { color: #6fdc9a; background: rgba(0,204,102,0.12); }
+.stt-pov-status.blinded { color: #ff6b6b; background: rgba(255,48,48,0.15); }
+.stt-pov-angles {
+  font-size: 9px;
+  font-family: 'Courier New', monospace;
+  color: #556;
+  margin-top: 1px;
+}
+.stt-pov-empty {
+  width: 196px; height: 196px; /* matches sttPov.js's RENDER_PX */
+  display: flex; align-items: center; justify-content: center;
+  color: #556; font-size: 11px; text-align: center;
 }
 
 /* ── Leaflet overrides ──────────────────────────────── */
@@ -987,6 +1251,14 @@ body.gantt-collapsed .gantt-rows { display: none; }
   padding: 1px 5px; white-space: nowrap; flex-shrink: 0;
 }
 .st-model-badge.ff-active { color: #c77dff; border-color: #5a2a8a; }
+.st-unreachable-badge {
+  font-size: 9px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase;
+  color: #ff8899; border: 1px solid #663344; border-radius: 3px;
+  background: rgba(255,68,85,0.08);
+  padding: 1px 5px; white-space: nowrap; flex-shrink: 0;
+  cursor: default;
+}
 .st-gear-btn {
   margin-left: auto;
   background: none; border: 1px solid #1e2a3a; border-radius: 3px;
@@ -1151,6 +1423,46 @@ body.gantt-collapsed .gantt-rows { display: none; }
    .grm-log-err/.grm-log-context without fighting either one's own
    background/opacity. */
 .grm-log-cursor { box-shadow: 0 0 0 1.5px #7ad4ff inset; }
+
+/* ── Az/El (Cartesian) pass-plot pop-up — passAzElModal.js ─────────── */
+.avm-overlay {
+  position: fixed; inset: 0; z-index: 60000; /* same layer as .grm-overlay — never both open at once */
+  display: none;
+  align-items: center; justify-content: center;
+}
+.avm-overlay.avm-open-state { display: flex; }
+.avm-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.7); }
+.avm-card {
+  position: relative; z-index: 1;
+  width: min(700px, 92vw);
+  background: #12121e;
+  border: 1px solid #2a2a4a;
+  border-radius: 10px;
+  box-shadow: 0 12px 48px rgba(0,0,0,.7);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.avm-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #1e1e32;
+  flex-shrink: 0;
+}
+.avm-title {
+  font-size: 13px; font-weight: 600; color: #dde; font-family: 'Courier New', monospace;
+  flex: 1;
+}
+.avm-close {
+  background: none; border: none; color: #556; font-size: 20px;
+  cursor: pointer; padding: 0 2px; line-height: 1;
+  transition: color .15s;
+}
+.avm-close:hover { color: #ff4466; }
+.avm-body {
+  padding: 10px 14px 14px;
+  background: #0c0c14;
+}
+.avm-body svg { display: block; width: 100%; height: auto; }
 
 .sem-body {
   padding: 16px;
@@ -1584,11 +1896,13 @@ body.gantt-collapsed .gantt-rows { display: none; }
    ═══════════════════════════════════════════════════════════════ */
 
 #fleet-view,
-#schedule-view {
+#schedule-view,
+#analyzer-view {
   background: #0a0a0f;
 }
 #fleet-view.active,
-#schedule-view.active {
+#schedule-view.active,
+#analyzer-view.active {
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1629,14 +1943,14 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 15.5px; /* 13px * 1.2 — "everything is too small" in the fleet table */
   white-space: nowrap;
 }
 
 .co-th {
   padding: 5px 4px;
-  text-align: left;
-  font-size: 11px;
+  text-align: center;
+  font-size: 13px; /* 11px * 1.2 */
   font-weight: 600;
   color: #555;
   text-transform: uppercase;
@@ -1663,6 +1977,7 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-row td {
   padding: 7px 4px;
   vertical-align: middle;
+  text-align: center;
 }
 
 /* Colored accent from SCC's own sccColor (globals endpoint) — same left-edge
@@ -1694,7 +2009,7 @@ body.gantt-collapsed .gantt-rows { display: none; }
   background: #0d3b28;
   border: 1px solid #2db872;
   border-radius: 3px;
-  font-size: 9.5px;
+  font-size: 11.5px; /* 9.5px * 1.2 */
   font-weight: 700;
   letter-spacing: 0.04em;
   vertical-align: middle;
@@ -1712,17 +2027,39 @@ body.gantt-collapsed .gantt-rows { display: none; }
   0%, 100% { opacity: 0.4; }
   50%      { opacity: 1; }
 }
+/* Progress fill — a darker overlay advancing left→right as the pass runs
+   from AOS to LOS (--pass-progress set in JS, 0-1). Its width is already
+   bounded by the badge's own box (a percentage), so nothing needs clipping
+   here — that matters because overflow:hidden on the badge itself would
+   also clip the ::after glow above, which relies on bleeding past the box. */
+.co-pass-live-badge::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  z-index: 0;
+  width: calc(var(--pass-progress, 0) * 100%);
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: inherit;
+  transition: width 1s linear;
+  pointer-events: none;
+}
+.co-pass-live-text {
+  position: relative;
+  z-index: 1;
+}
 
 /* Whole row gets a subtle live tint + left-edge glow while a pass is in progress */
 .co-row-live {
   background: rgba(45,184,114,0.06);
 }
 .co-row-live td:first-child {
-  box-shadow: inset 3px 0 0 0 #2db872, 0 0 8px -2px rgba(45,184,114,0.6);
+  /* Negative x-offset confines this to the left edge only — a plain "0 0"
+     offset (as this briefly was) glows on all four sides of the whole cell,
+     which for a wide first column reads as an unintentional box around the
+     satellite name rather than a left-edge accent. */
+  box-shadow: inset 3px 0 0 0 #2db872, -10px 0 10px -4px rgba(45,184,114,0.6);
 }
 .co-ping-cell {
-  text-align: center;
-  vertical-align: middle;
   white-space: nowrap;
   width: 80px;
 }
@@ -1744,13 +2081,13 @@ body.gantt-collapsed .gantt-rows { display: none; }
   margin-top: 4px;
 }
 .co-ping-detail-ago {
-  font-size: 9px;
+  font-size: 11px; /* 9px * 1.2 */
   color: #ff6680;
   font-weight: 600;
   letter-spacing: 0.02em;
 }
 .co-ping-detail-time {
-  font-size: 9px;
+  font-size: 11px; /* 9px * 1.2 */
   color: #556677;
   font-family: 'Courier New', monospace;
 }
@@ -1803,35 +2140,41 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-contact-cell { min-width: 105px; }
 
 .co-contact-stack {
-  display: flex;
+  display: inline-flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 3px;
 }
 .co-next-contact {
-  font-size: 10.5px;
+  font-size: 12.5px; /* 10.5px * 1.2 */
   color: #99aacc;
 }
 
-.co-contact-time { color: #888; font-size: 11.5px; }
-.co-uptime { font-size: 11px; color: #aaa; }
-.co-uptime-raw { font-size: 10px; color: #556; margin-left: 4px; }
+.co-contact-time { color: #888; font-size: 14px; } /* 11.5px * 1.2 */
+.co-uptime { font-size: 13px; color: #aaa; } /* 11px * 1.2 */
+.co-uptime-raw { font-size: 12px; color: #556; margin-left: 4px; } /* 10px * 1.2 */
 
 /* ── Mode cell ──────────────────────────────────────────────────── */
 .co-mode-cell   { min-width: 110px; }
-.co-mode-stack  { display: flex; flex-direction: column; gap: 4px; }
+/* inline-flex + flex-start: rows shrink-wrap to their own content and align
+   to THIS block's own left edge (so SYS/GNC/UP labels line up with each
+   other), while the block itself centers as a unit within the wider cell via
+   the row's text-align:center — center-aligning each row independently would
+   leave the labels at different x-offsets since the rows are different widths. */
+.co-mode-stack  { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .co-mode-row    { display: flex; align-items: center; gap: 6px; }
 .co-mode-label  {
-  font-size: 9px; font-weight: 700; letter-spacing: 0.08em;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em; /* 9px * 1.2 */
   color: #445566; min-width: 20px; text-transform: uppercase;
 }
 .co-evt-stack  { display: grid; grid-template-columns: 26px auto auto; justify-content: center; gap: 3px 4px; align-items: center; }
-.co-evt-delta  { font-size: 10px; font-weight: 700; color: #ffaa22; font-variant-numeric: tabular-nums; }
+.co-evt-delta  { font-size: 12px; font-weight: 700; color: #ffaa22; font-variant-numeric: tabular-nums; } /* 10px * 1.2 */
 
 .co-pill {
   display: inline-block;
   padding: 1px 5px;
   border-radius: 3px;
-  font-size: 10px;
+  font-size: 12px; /* 10px * 1.2 */
   font-weight: 700;
   letter-spacing: 0.06em;
 }
@@ -1857,16 +2200,28 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-dots-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 1px 5px;
+  gap: 9px;
   width: fit-content;
+  margin: 0 auto;
 }
 
+/* A real CSS-drawn circle (background/border), not a ●/○ character — three
+   rounds of trying to center a ring against a text glyph's own box all
+   failed because a font glyph's visual ink isn't reliably centered within
+   its own em-box/line-height box (that's a font-rendering detail, not
+   something any CSS box-alignment technique controls). With an actual sized
+   box there's no ambiguity left: the ring below is just a box-shadow
+   following this box's own edge, guaranteed circular and concentric. Kept
+   the same ~diameter and inline layout the old glyph had, so density/spacing
+   in the grid is unchanged. */
 .co-dot {
-  font-size: 13px;
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
   cursor: pointer;
   transition: transform 0.12s;
-  line-height: 1;
-  text-align: center;
 }
 .co-dot:hover { transform: scale(1.8); }
 
@@ -1878,8 +2233,27 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-dot-open      { color: #44aadd; }
 .co-dot-pending   { color: #cc9933; }
 
-/* legend dots stay readable */
-.co-legend-row .co-dot { font-size: 13px; }
+/* Was a hollow ○ glyph — now the same box as every other dot, just outlined
+   instead of filled. Scoped to .co-dot.co-dot-future (not the bare class)
+   since .co-dot-future is also reused on .co-tt-future-status elsewhere
+   purely for its color, not as a literal circle. */
+.co-dot.co-dot-future {
+  background: transparent;
+  border: 1.5px solid currentColor;
+}
+
+/* Whichever pass PassDetailPanel's slide-in currently has open, regardless of
+   which view opened it (Fleet dots here, Weekly Schedule, or the gantt) — a
+   persistent ring, same color as the dot itself, so the pass stays
+   identifiable while the panel is open. outline+offset (a ring with a visible
+   gap) rather than a flush box-shadow — a future/hollow dot already has its
+   own flush border (.co-dot.co-dot-future above), so a flush ring here would
+   be indistinguishable from just "this is an upcoming pass." The gap makes
+   "selected" read as a distinct marker on top of whatever the dot already is. */
+.co-dot-selected {
+  outline: 1.5px solid currentColor;
+  outline-offset: 2px;
+}
 
 /* ── Tooltip ───────────────────────────────────────────────────── */
 .co-tooltip {
@@ -1896,6 +2270,10 @@ body.gantt-collapsed .gantt-rows { display: none; }
   max-width: 300px;
   box-shadow: 0 4px 20px #00000066;
   font-size: 11.5px;
+  /* Backstop alongside the min-width:0 fixes below — nothing in this tooltip
+     legitimately needs to render outside its own box, so clip it outright
+     rather than relying solely on every descendant's flex math being correct. */
+  overflow: hidden;
 }
 .co-tt-more-hint {
   margin-top: 6px;
@@ -1910,6 +2288,24 @@ body.gantt-collapsed .gantt-rows { display: none; }
   overflow: visible;
 }
 .pass-polar .polar-hit { cursor: crosshair; }
+.polar-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.pv-azel-btn {
+  background: #1a1a28;
+  border: 1px solid #2a2a3a;
+  border-radius: 4px;
+  color: #778;
+  font-size: 10px;
+  font-family: 'Courier New', monospace;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: color .15s, border-color .15s, background-color .15s;
+}
+.pv-azel-btn:hover { color: #00d4ff; border-color: #00d4ff55; }
 .co-tt-details-row {
   display: flex;
   align-items: flex-start;
@@ -1917,7 +2313,8 @@ body.gantt-collapsed .gantt-rows { display: none; }
   gap: 8px;
   margin-top: 2px;
 }
-.co-tt-details-row .pass-polar { margin: 0; flex: 0 0 auto; }
+.co-tt-details-row .pass-polar { margin: 0; }
+.co-tt-details-row .polar-wrap { flex: 0 0 auto; }
 .ebn0-block {
   display: flex;
   flex-direction: column;
@@ -1928,24 +2325,28 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .ebn0-legend {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  gap: 2px;
+  margin-top: 4px;
+}
+.ebn0-legend-row {
+  display: flex;
+  align-items: center;
   gap: 5px;
-  margin-top: 2px;
+  white-space: nowrap;
 }
 .ebn0-legend-swatch {
   display: inline-block;
-  width: 10px;
-  height: 2px;
+  width: 14px; height: 2px;
   border-radius: 1px;
-  background: #a78bfa;
   flex-shrink: 0;
 }
-.ebn0-legend-label {
-  font-size: 9.5px;
-  color: #a78bfa;
-  font-weight: 600;
-}
+.ebn0-swatch-tm { background: #a78bfa; }
+.ebn0-swatch-tc { background: #4ad4ff; }
+.ebn0-legend-label { font-size: 9.5px; font-weight: 600; }
+.ebn0-label-tm { color: #a78bfa; }
+.ebn0-label-tc { color: #4ad4ff; }
 .ebn0-stats {
   font-size: 9.5px;
   color: #8888aa;
@@ -1993,9 +2394,50 @@ body.gantt-collapsed .gantt-rows { display: none; }
   vertical-align: middle;
 }
 .co-tt-result { margin-bottom: 5px; font-weight: 600; }
+/* Small bordered box in the tooltip's own top-right corner — same look as
+   PassDetailPanel.js's .pdp-microscope button, just sized down to fit this
+   much smaller tooltip. Absolutely positioned against .co-tooltip itself
+   (position:fixed, so it's already a positioning context) rather than
+   inline in the header, so it stays put in the corner regardless of how
+   long the satellite name/station/network text ends up being. */
+.co-tt-microscope {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  background: transparent;
+  border: 1px solid #2a2a4a;
+  border-radius: 4px;
+  color: #889;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+}
+.co-tt-microscope:hover { color: #fff; border-color: #4444aa; background: #1e1e30; }
+/* Reserves room so the header text can't run underneath the corner box —
+   only applied when the box is actually present (a future pass has none). */
+.co-tt-header:has(.co-tt-microscope) { padding-right: 26px; }
 .co-tt-procs  { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
-.co-tt-proc   { font-size: 11px; font-family: 'Courier New', monospace; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; white-space: nowrap; }
-.co-tt-pname  { flex: 1; }
+/* min-width:0 is needed HERE too, not just on .co-tt-pname below — this row is
+   itself a flex item of .co-tt-procs, and a flex item's default min-width:auto
+   is its content-based (unshrinkable) size when its own overflow is visible.
+   Without this override, a long nowrap procedure name forced this whole row
+   wider than the tooltip, and since .co-tooltip has no overflow clamp of its
+   own, the excess simply bled out past the tooltip's right edge instead of
+   ellipsizing — min-width:0 has to be set at every nesting level for the
+   inner ellipsis to actually take effect. */
+.co-tt-proc   { font-size: 11px; font-family: 'Courier New', monospace; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; white-space: nowrap; min-width: 0; }
+.co-tt-pname  {
+  flex: 1;
+  min-width: 0; /* flex items default to min-width:auto, which blocks shrinking below content size and defeats the ellipsis below */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .co-tt-link   { display: block; text-decoration: none; border-radius: 3px; padding: 1px 3px; }
 .co-tt-link:hover { background: rgba(255,255,255,0.08); text-decoration: underline; }
 .co-tt-note          { color: #555; font-style: italic; }
@@ -2008,8 +2450,8 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-tt-ecl-bar .oi-eclipse-bar { height: 14px; }
 .co-tt-ecl-bar .oi-eclipse-legend { font-size: 10px; margin-top: 3px; }
 .co-tt-sep { border-top: 1px solid #2a2a4a; margin: 8px 0 4px; }
-.co-batt-mon-note { font-size: 10px; color: #555; margin-bottom: 6px; }
-.co-batt-mon-row  { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; font-family: 'Courier New', monospace; margin-bottom: 2px; }
+.co-batt-mon-note { font-size: 12px; color: #555; margin-bottom: 6px; } /* 10px * 1.2 */
+.co-batt-mon-row  { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; font-family: 'Courier New', monospace; margin-bottom: 2px; } /* 11px * 1.2 */
 .co-batt-mon-lvl  { font-weight: 700; min-width: 70px; }
 .co-batt-mon-band { color: #aaa; }
 .co-mon-nominal  { color: #2db872; }
@@ -2102,6 +2544,8 @@ body.gantt-collapsed .gantt-rows { display: none; }
   color: #00cc66;
   font-family: 'Courier New', monospace;
 }
+.co-tt-gap-warn { color: #ffcc00; }
+.co-tt-gap-lost { color: #ff4466; }
 
 /* ── Pass Detail Panel — vertical slide-in from the right, opened by clicking
    a pass (dot/block/gantt bar). Holds the full detail that used to overload
@@ -2137,7 +2581,8 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .pdp-title { font-size: 15px; font-weight: 700; color: #ccc; }
 .pdp-sat-name { letter-spacing: 0.02em; }
-.pdp-close {
+.pdp-header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.pdp-close, .pdp-microscope {
   background: transparent;
   border: 1px solid #2a2a4a;
   color: #889;
@@ -2150,10 +2595,12 @@ body.gantt-collapsed .gantt-rows { display: none; }
   flex-shrink: 0;
   transition: color 0.15s, border-color 0.15s, background-color 0.15s;
 }
-.pdp-close:hover { color: #fff; border-color: #4444aa; background: #1e1e30; }
+.pdp-close:hover, .pdp-microscope:hover { color: #fff; border-color: #4444aa; background: #1e1e30; }
+.pdp-microscope { font-size: 13px; }
 .pdp-body {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden; /* same long-procedure-name bleed risk as .co-tooltip, at a wider but still finite width */
   padding: 14px;
   font-size: 11.5px;
 }
@@ -2217,7 +2664,17 @@ body.tracking-active .info-toast { top: 102px; }
   transform: translateX(0);
   opacity: 1;
 }
-.info-toast.warn.visible { pointer-events: auto; } /* clickable Ignore button */
+.info-toast.warn.visible {
+  pointer-events: auto; /* clickable Ignore button */
+  /* Sits up indefinitely with no auto-dismiss — a faint pulsing glow keeps
+     drawing the eye back to it instead of fading into background noise
+     the way a static toast does once you've looked away once. */
+  animation: info-toast-warn-glow-kf 2.4s ease-in-out infinite;
+}
+@keyframes info-toast-warn-glow-kf {
+  0%, 100% { box-shadow: 0 10px 30px #000000aa, 0 0 0 rgba(224, 160, 48, 0); }
+  50%      { box-shadow: 0 10px 30px #000000aa, 0 0 18px 2px rgba(224, 160, 48, 0.5); }
+}
 .info-toast-icon { font-size: 13px; color: #4488ff; flex-shrink: 0; }
 .info-toast-msg { flex: 1; }
 .info-toast-ignore {
@@ -2232,8 +2689,25 @@ body.tracking-active .info-toast { top: 102px; }
   transition: color 0.15s, border-color 0.15s, background-color 0.15s;
 }
 .info-toast-ignore:hover { background: #2a2a48; border-color: #4444aa; color: #ccc; }
-.info-toast.warn { border-left-color: #e0a030; }
-.info-toast.warn .info-toast-icon { color: #e0a030; }
+/* Noticeably more prominent than a routine toast — this is a "your VPN is
+   probably down" condition that stays up indefinitely until it resolves or
+   the user dismisses it, not a fire-and-forget confirmation, so it gets a
+   tinted background (not just a left-edge accent), a full amber border, and
+   a bigger icon. */
+.info-toast.warn {
+  background: #241a08;
+  border-color: #7a5010;
+  border-left-color: #e0a030;
+  border-left-width: 4px;
+}
+.info-toast.warn .info-toast-icon {
+  color: #ffb84d;
+  font-size: 16px;
+}
+.info-toast.warn .info-toast-msg {
+  color: #ffd9a0;
+  font-weight: 600;
+}
 
 /* Legend in passes header tooltip */
 .co-legend-title {
@@ -2261,24 +2735,25 @@ body.tracking-active .info-toast { top: 102px; }
 
 /* ── Eclipse / Orbit merged cell ───────────────────────────────── */
 .co-orbit-stack {
-  display: flex;
+  display: inline-flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 4px;
   cursor: pointer;
   min-width: 108px;
 }
 .co-orbit-row   { display: flex; align-items: center; gap: 6px; }
 .co-orbit-label {
-  font-size: 9px; font-weight: 700; letter-spacing: 0.08em;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em; /* 9px * 1.2 */
   color: #445566; min-width: 24px; text-transform: uppercase;
 }
 
-.co-ecl-shadow { color: #88aadd; font-size: 11px; }
-.co-ecl-sun    { color: #ddbb44; font-size: 11px; }
+.co-ecl-shadow { color: #88aadd; font-size: 13px; } /* 11px * 1.2 */
+.co-ecl-sun    { color: #ddbb44; font-size: 13px; } /* 11px * 1.2 */
 
-.co-alt-val { color: #c0ccee; font-size: 11px; font-variant-numeric: tabular-nums; }
+.co-alt-val { color: #c0ccee; font-size: 13px; font-variant-numeric: tabular-nums; } /* 11px * 1.2 */
 
-.co-tle-age   { font-size: 11px; font-weight: 500; }
+.co-tle-age   { font-size: 13px; font-weight: 500; } /* 11px * 1.2 */
 .co-tle-fresh { color: #4a9e6a; }
 .co-tle-old   { color: #ffcc00; }
 .co-tle-stale { color: #ff4466; }
@@ -2287,21 +2762,38 @@ body.tracking-active .info-toast { top: 102px; }
 /* ── Battery ───────────────────────────────────────────────────── */
 .co-batt-cell  { min-width: 75px; font-variant-numeric: tabular-nums; }
 .co-rw-cell    { min-width: 52px; }
-.co-rw-grid    { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; width: 44px; }
-.co-rw-num     { font-size: 13px; font-weight: 800; text-align: center; line-height: 1.3; }
-.co-rw-on      { color: #c0ccee; }
-.co-rw-off     { color: #ff4466; }
-.co-rw-unknown { color: #444; }
+.co-rw-grid    { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; width: 46px; margin: 0 auto; }
+.co-rw-num     { font-size: 13px; font-weight: 700; text-align: center; line-height: 1.6; border-radius: 4px; } /* 11px * 1.2 */
+.co-rw-on      { background: #0e1a28; color: #7a99bb; border: 1px solid #1e3550; }
+.co-rw-off     { background: #1a0008; color: #ff4466; border: 1px solid #660022; }
+.co-rw-unknown { background: #14141c; color: #3a3a46; border: 1px solid #22222e; }
 .co-gnss-cell  { min-width: 90px; }
-.co-gnss-stack { display: flex; flex-direction: column; gap: 6px; }
-.co-gnss-row   { display: flex; align-items: center; gap: 7px; }
+.co-gnss-stack { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.co-gnss-row   { display: flex; align-items: center; gap: 6px; }
+/* Still used by the Ground Alerts legend's plain colored-dot rows (unrelated
+   to the GNSS cell's own chips below) — kept as simple text styles. */
 .co-gnss-led   { font-size: 9px; line-height: 1; flex-shrink: 0; }
-.co-gnss-val   { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .01em; }
-.co-gnss-sub   { font-size: 9px; font-weight: 600; letter-spacing: .06em; color: #445566; text-transform: uppercase; margin-bottom: -2px; }
-.co-gnss-ok    { color: #00cc88; }
-.co-gnss-warn  { color: #ffcc00; }
-.co-gnss-stale { color: #ff4466; }
-.co-gnss-nil   { color: #2e3e4e; }
+.co-gnss-hk    { font-size: 11px; font-weight: 700; }
+/* Tinted pill chips — same visual language as Mode's SYS/GNC badges, RWH's
+   numbered chips, and the Alerts columns' severity pills, so the GNSS column
+   no longer reads as a different visual idiom from the rest of the table. */
+.co-gnss-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 13px; /* 11px * 1.2 */
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .01em;
+}
+.co-gnss-hk-chip { padding: 1px 5px; }
+.co-gnss-ok    { background: #0e2a1a; color: #2db872; border: 1px solid #1e5030; }
+.co-gnss-warn  { background: #1a1000; color: #ffaa22; border: 1px solid #664400; }
+.co-gnss-stale { background: #1a0008; color: #ff4466; border: 1px solid #660022; }
+.co-gnss-nil   { background: #14141c; color: #3a3a46; border: 1px solid #22222e; }
+.co-gnss-mit   { background: #0e1a28; color: #7a99bb; border: 1px solid #1e3550; }
+.co-gnss-count { font-size: 12px; font-weight: 500; opacity: 0.8; } /* 10px * 1.2 */
 
 .co-batt-ok   { color: #c0ccee; font-weight: 400; }
 .co-batt-watch { color: #a0d4ff; font-weight: 500; }
@@ -2349,7 +2841,7 @@ body.tracking-active .info-toast { top: 102px; }
 }
 .co-links-info {
   color: #4a4a6a;
-  font-size: 11px;
+  font-size: 13px; /* 11px * 1.2 */
   cursor: help;
   transition: color 0.15s;
 }
@@ -2361,7 +2853,7 @@ body.tracking-active .info-toast { top: 102px; }
   color: #556;
   text-transform: none;
   letter-spacing: normal;
-  font-size: 10.5px;
+  font-size: 12.5px; /* 10.5px * 1.2 */
   margin-left: 4px;
 }
 
@@ -2378,7 +2870,7 @@ body.tracking-active .info-toast { top: 102px; }
   display: inline-block;
   padding: 3px 8px;
   border-radius: 5px;
-  font-size: 11px;
+  font-size: 13px; /* 11px * 1.2 */
   font-weight: 600;
   text-decoration: none;
   border: 1px solid #2a2a4a;
@@ -2409,14 +2901,14 @@ a.co-link:hover {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  font-size: 11px;
+  font-size: 13px; /* 11px * 1.2 */
   color: #ccc;
   font-family: 'Courier New', monospace;
   white-space: nowrap;
   margin-top: 3px;
 }
 .co-globals-label {
-  font-size: 9px;
+  font-size: 11px; /* 9px * 1.2 */
   font-weight: 700;
   letter-spacing: 0.06em;
   color: #556;
@@ -2684,6 +3176,301 @@ a.co-link:hover {
   font-size: 7.5px;
   color: #888;
   line-height: 1.2;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Pass Analyzer (POC)
+   ═══════════════════════════════════════════════════════════════ */
+.pa-section {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+.pa-page-title {
+  flex-shrink: 0;
+  padding: 8px 16px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #667;
+  text-transform: uppercase;
+}
+.pa-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Thin, dark, low-contrast scrollbars for every scrolling region in this
+   view (TC list, full pass log, procedures column, the body itself) — the
+   default OS scrollbar (thick, light gray) stood out against the dark theme
+   far more than a scroll affordance needs to. */
+.pa-body,
+.pa-tc-slot,
+.pa-full-log-body,
+.pa-left-top .pa-procs {
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: #2a2a4a transparent;
+}
+.pa-body::-webkit-scrollbar,
+.pa-tc-slot::-webkit-scrollbar,
+.pa-full-log-body::-webkit-scrollbar,
+.pa-left-top .pa-procs::-webkit-scrollbar {
+  width: 8px;
+}
+.pa-body::-webkit-scrollbar-track,
+.pa-tc-slot::-webkit-scrollbar-track,
+.pa-full-log-body::-webkit-scrollbar-track,
+.pa-left-top .pa-procs::-webkit-scrollbar-track {
+  background: transparent;
+}
+.pa-body::-webkit-scrollbar-thumb,
+.pa-tc-slot::-webkit-scrollbar-thumb,
+.pa-full-log-body::-webkit-scrollbar-thumb,
+.pa-left-top .pa-procs::-webkit-scrollbar-thumb {
+  background: #2a2a4a;
+  border-radius: 4px;
+}
+.pa-body::-webkit-scrollbar-thumb:hover,
+.pa-tc-slot::-webkit-scrollbar-thumb:hover,
+.pa-full-log-body::-webkit-scrollbar-thumb:hover,
+.pa-left-top .pa-procs::-webkit-scrollbar-thumb:hover {
+  background: #3a3a5a;
+}
+.pa-empty {
+  margin: auto;
+  color: #555;
+  font-style: italic;
+}
+.pa-panel {
+  background: #12121e;
+  border: 1px solid #2a2a4a;
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+.pa-panel-title {
+  font-weight: 600;
+  color: #aaa;
+  font-size: 12px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #1e1e2e;
+}
+.pa-panel-sub {
+  font-weight: 400;
+  font-style: italic;
+  color: #555;
+  font-size: 10.5px;
+  margin-left: 6px;
+}
+.pa-tc-count {
+  font-weight: 700;
+  color: #7ad4ff;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  margin-left: 4px;
+}
+.pa-tc-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 10px;
+  padding: 2px 7px;
+  background: #14141f;
+  border: 1px solid #22222e;
+  border-radius: 4px;
+  color: #889;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.pa-tc-sort:hover { border-color: #3a3a5a; color: #ccc; }
+.pa-tc-sort-arrow { font-size: 9px; }
+.pa-details .co-tt-header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; padding-bottom: 0; border-bottom: none; padding-right: 56px; } /* reserves room so a long satellite/station/network name can't run under the < / > buttons in the corner */
+/* < / > pass step buttons, top-right corner of the card — same small
+   bordered-box treatment as .co-tt-microscope/.pdp-microscope elsewhere,
+   scaled for this context. .pa-details needs position:relative for this to
+   anchor to ITS corner specifically rather than some further ancestor. */
+.pa-details { position: relative; }
+.pa-pass-nav {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 4px;
+}
+.pa-pass-nav button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border: 1px solid #2a2a4a;
+  border-radius: 4px;
+  color: #889;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+}
+.pa-pass-nav button:hover:not(:disabled) { color: #fff; border-color: #4444aa; background: #1e1e30; }
+.pa-pass-nav button:disabled { opacity: 0.3; cursor: default; }
+
+/* A 2×2 GRID again (not independent flex columns) — the point this time is
+   .pa-tc-list and .pa-full-log sharing row 2 so they start at exactly the
+   same Y and split its height evenly, which two independent columns can't
+   guarantee (each one's own "row 1" — pass details+procedures vs. the chart —
+   has a different natural height, so anything below it would start at a
+   different Y in each column). Row 1 sizes to whichever of {pass
+   details+procedures, chart} is taller. Column 1 is wider than the chart
+   column now (TC list needs the room) — column 2's floor came down to
+   compensate, which does mean less width for the chart too, accepted here. */
+.pa-main-row {
+  display: grid;
+  grid-template-columns: minmax(420px, 500px) minmax(700px, 1fr);
+  grid-template-rows: auto 1fr;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto; /* controlled scroll instead of ever squeezing the chart below min-width */
+}
+.pa-left-top {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: start; /* shrinks to its own content instead of stretching to match row 1's height, if the chart cell next to it ends up taller */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pa-left-top .pa-procs {
+  max-height: 280px; /* caps how tall a long procedure list can push row 1 — row 2 needs a reliable height regardless of procedure count */
+  overflow-y: auto;
+}
+.pa-middle {
+  grid-column: 2;
+  grid-row: 1;
+  overflow: visible; /* the polar plot's radial labels intentionally bleed slightly outside its own box */
+}
+.pa-tc-list {
+  grid-column: 1;
+  grid-row: 2;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pa-tc-list .pa-tc-slot { flex: 1; min-height: 0; overflow-y: auto; }
+
+.pa-full-log {
+  grid-column: 2;
+  grid-row: 2;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pa-full-log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+  flex-shrink: 0;
+}
+.pa-full-log-title { font-weight: 600; color: #aaa; font-size: 12px; }
+.pa-full-log-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.pa-full-log-grafana {
+  font-size: 10px;
+  color: #778;
+  text-decoration: none;
+  border: 1px solid #2a2a4a;
+  border-radius: 4px;
+  padding: 2px 6px;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+.pa-full-log-grafana:hover { color: #ccc; border-color: #4444aa; }
+.pa-full-log-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: #0c0c14;
+  border: 1px solid #1e1e2e;
+  border-radius: 5px;
+  padding: 8px 10px;
+}
+
+.pa-tc-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.pa-tc-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  font-family: 'Courier New', monospace;
+  padding: 4px 9px;
+  border-radius: 5px;
+  background: #14141f;
+  border: 1px solid #20202e;
+  cursor: pointer; /* click expands the decoded argument list below it — description is still in the title attribute for hover */
+  transition: border-color .15s, background .15s;
+}
+.pa-tc-row:hover { border-color: #33334a; background: #191927; }
+.pa-tc-row-open { border-color: #446688; background: #16202c; }
+.pa-tc-time  { color: #556; flex-shrink: 0; }
+.pa-tc-label { color: #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Expanded argument detail — inserted as a sibling right after the clicked
+   row (see _toggleTcDetail in PassAnalyzer.js), not inside it, so it isn't
+   fighting the row's own flex layout. Only one open at a time. */
+.pa-tc-detail {
+  margin: -1px 0 2px 24px; /* -1px overlaps the row's own bottom border so the two visually connect */
+  padding: 6px 10px;
+  background: #0e1620;
+  border: 1px solid #2a3a4a;
+  border-top: none;
+  border-radius: 0 0 5px 5px;
+  font-family: 'Courier New', monospace;
+  font-size: 10.5px;
+}
+.pa-tc-args-title { color: #7ad4ff; font-weight: 700; margin-bottom: 4px; }
+.pa-tc-args-rows { display: flex; flex-direction: column; gap: 2px; }
+.pa-tc-arg-row { display: flex; justify-content: space-between; gap: 12px; }
+.pa-tc-arg-name { color: #889; }
+.pa-tc-arg-val  { color: #ddd; font-weight: 600; text-align: right; }
+
+/* TC_11_4 (schedule-another-TC-for-later) rows, merged with the TC it's
+   scheduling — see _matchScheduledTargets in PassAnalyzer.js. Purple accent
+   matches the app's existing section-title color, since this is functionally
+   a small "detail" callout within the plain TC list rather than a severity
+   signal (no red/amber/green — this isn't good or bad, just structurally
+   different from a plain sent-packet row). */
+.pa-tc-row-114 { border-color: #3a2a5a; background: #18131f; }
+.pa-tc-row-114:hover { border-color: #4a3670; background: #1d1726; }
+.pa-tc-args { color: #778; font-size: 9.5px; flex-shrink: 0; }
+.pa-tc-label-target { color: #7ad4ff; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Whichever TC packet was sent closest to the hair cursor's current position
+   on the polar plot / Eb/N0 chart (see wireLinkedCursor's onCursor hook,
+   passCursor.js) — an inset outline rather than touching border-color/
+   background, so it composes cleanly on top of a plain row OR a purple
+   .pa-tc-row-114 merged row without fighting either one's own styling. */
+.pa-tc-row-cursor { box-shadow: 0 0 0 1.5px #7ad4ff inset; }
+.pa-tc-trunc {
+  margin-top: 6px;
+  font-size: 10px;
+  color: #556;
+  font-style: italic;
 }
 
 /* ═══════════════════════════════════════════════════════════════

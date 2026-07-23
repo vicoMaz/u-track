@@ -35,14 +35,22 @@ const GAP_THRESHOLD_MS = 10 * 60_000;  // silence >= this between two real sampl
 const MIN_CANDIDATE_MS = 60_000;       // floor below which a void isn't worth a request at all
 const RETRIES = 2;                     // a page failing outright shouldn't end the whole scan
 const RETRY_DELAY_MS = 250;
-const FILTER  = 'TM_3_25_OBSW_HK_PLT';
-const PARAM   = 'OBSW_AM_SID';
 const PRE_MS  = 24 * 3_600_000; // extend back 24 h before first pass to catch its TMR buffer
 const CONCURRENCY = 6; // candidates walked in parallel — each candidate's own pagination is
                         // inherently sequential (a page's cursor depends on the previous page)
 
-const _ctrl     = new Map(); // noradId → AbortController
-const _debounce = new Map(); // noradId → timer handle
+// Each row on the Visualizer's TMR gantt track independently detects gaps
+// against its own onboard packet store's TM/param — BUS (OBSW HK PLT) and
+// PAY (OBSW HK PAY MGT) are separate stores, so a gap in one says nothing
+// about coverage in the other. The filter/param below are also spelled out
+// in each row's tooltip in index.html — keep both in sync if these change.
+export const TMR_SOURCES = {
+  bus: { filter: 'TM_3_25_OBSW_HK_PLT',     param: 'GENE_AM_CCSDSAPID' },
+  pay: { filter: 'TM_3_25_OBSW_HK_PAY_MGT', param: 'GENE_AM_CCSDSAPID' },
+};
+
+const _ctrl     = new Map(); // `${noradId}:${source}` → AbortController
+const _debounce = new Map(); // `${noradId}:${source}` → timer handle
 
 const _sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -51,13 +59,13 @@ function _rowTime(row) {
   return t ? new Date(t).getTime() : null;
 }
 
-function _buildUrl(sccOrigin, startMs, endMs, maxLimit) {
+function _buildUrl(sccOrigin, startMs, endMs, maxLimit, filter, param) {
   return `${sccOrigin}/api/v1/parameters`
     + `?start=${encodeURIComponent(new Date(startMs).toISOString())}`
     + `&end=${encodeURIComponent(new Date(endMs).toISOString())}`
     + `&orderBy=onBoardTime`
-    + `&filter=${encodeURIComponent(FILTER)}`
-    + `&requestedParameters=${encodeURIComponent(PARAM)}`
+    + `&filter=${encodeURIComponent(filter)}`
+    + `&requestedParameters=${encodeURIComponent(param)}`
     + `&maxLimit=${maxLimit}`;
 }
 
@@ -65,8 +73,8 @@ function _buildUrl(sccOrigin, startMs, endMs, maxLimit) {
 // Retries on failure/non-2xx; throws once exhausted (or on abort) rather than
 // silently returning an empty page — callers decide what "we don't actually
 // know" should mean for them instead of it being indistinguishable from "confirmed empty".
-async function _queryPage(sccOrigin, startMs, endMs, maxLimit, signal) {
-  const url = _buildUrl(sccOrigin, startMs, endMs, maxLimit);
+async function _queryPage(sccOrigin, startMs, endMs, maxLimit, filter, param, signal) {
+  const url = _buildUrl(sccOrigin, startMs, endMs, maxLimit, filter, param);
   for (let attempt = 0; attempt <= RETRIES; attempt++) {
     try {
       const res = await fetch(url, { signal });
@@ -82,8 +90,8 @@ async function _queryPage(sccOrigin, startMs, endMs, maxLimit, signal) {
   throw new Error('unreachable');
 }
 
-async function _hasAnyData(sccOrigin, startMs, endMs, signal) {
-  const rows = await _queryPage(sccOrigin, startMs, endMs, 1, signal);
+async function _hasAnyData(sccOrigin, startMs, endMs, filter, param, signal) {
+  const rows = await _queryPage(sccOrigin, startMs, endMs, 1, filter, param, signal);
   return rows.length > 0;
 }
 
@@ -142,12 +150,12 @@ function _gapCandidates(rangeStart, rangeEnd, passIntervals) {
 // time depending on how dense the telemetry actually is — continuous
 // coverage resolves in very few requests, and any genuine silence is
 // bounded by real timestamps, never a coarse grid.
-async function _walkCandidate(sccOrigin, start, end, signal) {
+async function _walkCandidate(sccOrigin, start, end, filter, param, signal) {
   const gaps = []; // discovered newest-first, reversed to chronological order before returning
   let cursor = end; // upper bound; walks backward toward `start`
   try {
     while (cursor > start) {
-      const rows = await _queryPage(sccOrigin, start, cursor, MAX_ROWS, signal);
+      const rows = await _queryPage(sccOrigin, start, cursor, MAX_ROWS, filter, param, signal);
       if (!rows.length) {
         if (cursor - start >= GAP_THRESHOLD_MS) gaps.push({ start, end: cursor });
         return gaps.reverse();
@@ -189,21 +197,26 @@ async function _walkCandidate(sccOrigin, start, end, signal) {
   return gaps.reverse();
 }
 
-export function scheduleTmrFetch(sat, pastPasses, onDone) {
-  clearTimeout(_debounce.get(sat.noradId));
-  _debounce.set(sat.noradId, setTimeout(() => {
-    _fetchTmrWindows(sat, pastPasses).then(result => {
+// `source` selects one of TMR_SOURCES (e.g. 'bus' | 'pay') — each fetched and
+// debounced independently so one row's request never aborts the other's.
+export function scheduleTmrFetch(sat, pastPasses, source, onDone) {
+  const key = `${sat.noradId}:${source}`;
+  clearTimeout(_debounce.get(key));
+  _debounce.set(key, setTimeout(() => {
+    _fetchTmrWindows(sat, pastPasses, source).then(result => {
       if (result) onDone(result);
     });
   }, 400));
 }
 
-async function _fetchTmrWindows(sat, pastPasses) {
-  _ctrl.get(sat.noradId)?.abort();
+async function _fetchTmrWindows(sat, pastPasses, source) {
+  const key = `${sat.noradId}:${source}`;
+  _ctrl.get(key)?.abort();
   const ctrl = new AbortController();
-  _ctrl.set(sat.noradId, ctrl);
+  _ctrl.set(key, ctrl);
   const { signal } = ctrl;
 
+  const { filter, param } = TMR_SOURCES[source];
   const ip = satSubsystemOrigin(sat.noradId, 'scc');
   if (!ip || !pastPasses.length) return null;
 
@@ -218,12 +231,12 @@ async function _fetchTmrWindows(sat, pastPasses) {
   // blip instead of just leaving the previous (possibly still-loading) state alone.
   let anyData;
   try {
-    anyData = await _hasAnyData(ip, rangeStart, rangeEnd, signal);
+    anyData = await _hasAnyData(ip, rangeStart, rangeEnd, filter, param, signal);
   } catch {
     return null;
   }
   if (!anyData) {
-    _ctrl.delete(sat.noradId);
+    _ctrl.delete(key);
     return rangeEnd - rangeStart >= GAP_THRESHOLD_MS
       ? { rangeStart, rangeEnd, gapWindows: [{ start: rangeStart, end: rangeEnd }] }
       : { rangeStart, rangeEnd, gapWindows: [] };
@@ -235,13 +248,13 @@ async function _fetchTmrWindows(sat, pastPasses) {
 
   let results;
   try {
-    results = await _pooledMap(candidates, c => _walkCandidate(ip, c.start, c.end, signal), CONCURRENCY);
+    results = await _pooledMap(candidates, c => _walkCandidate(ip, c.start, c.end, filter, param, signal), CONCURRENCY);
   } catch {
     return null; // aborted mid-flight (superseded by a newer call) — discard silently
   }
 
   if (signal.aborted) return null;
-  _ctrl.delete(sat.noradId);
+  _ctrl.delete(key);
 
   return { rangeStart, rangeEnd, gapWindows: results.flat() };
 }

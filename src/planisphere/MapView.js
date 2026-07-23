@@ -149,7 +149,7 @@ export function initMap() {
 
   store.subscribe((key) => {
     if (key === 'currentTime')    updateMarkers();
-    if (key === 'satellites')     syncMarkers();
+    if (key === 'satellites' || key === 'satAccessible') syncMarkers();
     if (key === 'groundStations') syncGSMarkers();
     if (key === 'orbitAlt') {
       _drawNight(store.currentTime, true);
@@ -281,8 +281,10 @@ function _updateGSFootprints() {
 // ─── Satellite markers ────────────────────────────────────────────────────
 
 function syncMarkers() {
-  const currentIds = new Set(store.satellites.map(s => s.id));
-  for (const sat of store.satellites) {
+  // Only satellites THIS client can reach — see store.accessibleSatellites.
+  const sats = store.accessibleSatellites;
+  const currentIds = new Set(sats.map(s => s.id));
+  for (const sat of sats) {
     if (!markers.has(sat.id)) markers.set(sat.id, new SatMarker(map, sat));
     markers.get(sat.id)?.setVisible(sat.visible !== false);
   }

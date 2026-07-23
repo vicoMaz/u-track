@@ -11,6 +11,7 @@ import {
   hydrateScheduledProcedures,
 } from './passTooltip.js';
 import { openPassDetail } from './PassDetailPanel.js';
+import { MITIGATION_WINDOW_DAYS } from '../satGnssMitigation.js';
 
 // URL builders — subnet routing: .1=SCC, .2=FDS, .3=GNM, .4=MIC, .5=SCC RO (see satSubsystems.js).
 // FDS/GNM/SCC may be overridden as bare IPs OR full URLs (e.g. a hostname+HTTPS
@@ -154,25 +155,60 @@ function _linkBadge(label, url, version) {
 
 const _OUTCOME_CLS = { SUCCESS: 'co-dot-success', FAILURE: 'co-dot-fail', CANCELLED: 'co-dot-cancelled' };
 
-function _passDots(passes) {
+function _passDots(passes, satId) {
   if (!passes?.length) return '<span class="co-nil">—</span>';
+  const sel = store.selectedPass;
   const html = passes.map((p, i) => {
-    let cls, ch;
-    if (p.future) {
-      cls = 'co-dot-future'; ch = '○';
-    } else {
-      cls = _OUTCOME_CLS[p.outcome] ?? 'co-dot-success'; ch = '●';
-    }
-    return `<span class="co-dot ${cls}" data-idx="${i}">${ch}</span>`;
+    // Each dot is now a plain CSS-drawn circle (background/border, no glyph
+    // text) — see .co-dot in style.css for why: a ring can only align
+    // reliably to an actual box, not to a ●/○ character's own ink, which
+    // browsers don't center within their font box the way you'd expect.
+    const cls = p.future ? 'co-dot-future' : (_OUTCOME_CLS[p.outcome] ?? 'co-dot-success');
+    // Marks whichever dot PassDetailPanel's slide-in is currently showing —
+    // set/cleared on open/close from any view, not just this one (see
+    // store.selectedPass) — matched by start time since the pass array is
+    // wholesale-replaced on every satPasses refetch.
+    const selected = sel && sel.satId === satId && sel.start === p.start.getTime();
+    return `<span class="co-dot ${cls}${selected ? ' co-dot-selected' : ''}" data-idx="${i}"></span>`;
   }).join('');
   return `<div class="co-dots-grid">${html}</div>`;
 }
 
-// True while `now` falls inside a pass window (aos0 → los0), regardless of the
-// stale `future` flag captured at fetch time — used to glow the fleet row LIVE
-// while a satellite is actually overhead a station.
-function _inPassNow(passes, now) {
-  return !!(passes ?? []).find(p => p.start <= now && now <= p.end);
+// The pass `now` currently falls inside (aos0 → los0), regardless of the
+// stale `future` flag captured at fetch time — or null. Used both to glow the
+// fleet row LIVE while a satellite is actually overhead a station, and to
+// compute how far through that pass it currently is.
+function _currentPass(passes, now) {
+  return (passes ?? []).find(p => p.start <= now && now <= p.end) ?? null;
+}
+
+// 0-1 fraction through the pass — clamped since receive/propagation jitter
+// could otherwise push `now` a hair outside [start,end] between the
+// _currentPass check above and this being read a moment later.
+function _passProgress(pass, now) {
+  if (!pass) return 0;
+  const span = pass.end - pass.start;
+  return span > 0 ? Math.min(1, Math.max(0, (now - pass.start) / span)) : 1;
+}
+
+// Anchors the tooltip to the hovered element's own edge instead of the
+// cursor's entry point — the battery cell is short and stacked (voltage +
+// SoC%), so a cursor-anchored tooltip (positionTooltip's usual +14px offset
+// from wherever the mouse happened to enter) landed right on top of the cell
+// it was describing, and often the row below it too. Flips to the left of
+// the element if the right side wouldn't fit.
+function _positionTooltipAtEl(el, tooltip) {
+  const rect = el.getBoundingClientRect();
+  const pad  = 10;
+  const w = tooltip.offsetWidth  || 200;
+  const h = tooltip.offsetHeight || 90;
+  let x = rect.right + pad;
+  if (x + w > window.innerWidth - 8) x = rect.left - w - pad;
+  let y = rect.top;
+  x = Math.max(8, Math.min(x, window.innerWidth  - w - 8));
+  y = Math.max(8, Math.min(y, window.innerHeight - h - 8));
+  tooltip.style.left = x + 'px';
+  tooltip.style.top  = y + 'px';
 }
 
 function _battMonTooltip(mon) {
@@ -236,22 +272,49 @@ function _gnssAgeCls(ms) {
   return ms < 43_200_000 ? 'co-gnss-ok' : ms < 86_400_000 ? 'co-gnss-warn' : 'co-gnss-stale';
 }
 
-function _gnssCell(gnss) {
-  if (!gnss) return '<span class="co-nil">—</span>';
+// mit is not part of GNSS health per se (a recent mitigation means the
+// self-healing procedure worked, not that anything is currently wrong) — so
+// it gets its own neutral-but-visible co-gnss-mit color, distinct from both
+// the ok/warn/stale traffic-light rows above it AND from co-gnss-nil (which
+// stays reserved for the true "no data" placeholder, so a populated row never
+// looks like an empty one). The ♻ icon marks it as the recycled/reset
+// (OFF/ON/CONFIG) row at a glance; the 30-day count is shown inline, not just
+// in the hover tooltip. Rendered as a tinted chip (co-gnss-chip), matching
+// the pill language Mode/RWH/Alerts already use elsewhere in this table.
+function _mitigationRow(mit) {
+  if (!mit) return `<div class="co-gnss-row"><span class="co-gnss-chip co-gnss-nil" title="No mitigation data yet">♻ —</span></div>`;
+  const val   = mit.lastMs != null ? _fmtAgo(Date.now() - mit.lastMs) : `none in ${MITIGATION_WINDOW_DAYS}d`;
+  const count = mit.saturated ? `≥${mit.count30d}` : mit.count30d;
+  return `<div class="co-gnss-row" title="GNSS_MITIGATION applies an OFF/ON/CONFIG GNSS fix when it detects an abnormal configuration">` +
+    `<span class="co-gnss-chip co-gnss-mit">♻ ${val}</span><span class="co-gnss-count">${count}×/${MITIGATION_WINDOW_DAYS}d</span></div>`;
+}
+
+// FINESTEERING age + HK validity fused onto one row (was 3 lines: a sub-label
+// plus one row each) — HK validity collapses to a ✓/✗ glyph here, with the
+// full "HK VALID"/"HK INVALID" wording moved into its title tooltip, since
+// the two together were making this column noticeably taller than its
+// neighbors (Mode/Battery/RWH) for no informational gain. Both rendered as
+// tinted co-gnss-chip pills, same visual language as Mode's SYS/GNC badges,
+// RWH's numbered chips, and the Alerts columns' severity pills.
+function _gnssCell(gnss, mit) {
+  if (!gnss && !mit) return '<span class="co-nil">—</span>';
   const now = Date.now();
   let bothCls, bothVal;
-  if (!gnss.lastBothGood) {
+  if (!gnss?.lastBothGood) {
     bothCls = 'co-gnss-nil'; bothVal = '—';
   } else {
     bothCls = _gnssAgeCls(now - gnss.lastBothGood.getTime());
     bothVal = _fmtAgo(now - gnss.lastBothGood.getTime());
   }
-  const hkCls = gnss.hkIsValid == null ? 'co-gnss-nil' : gnss.hkIsValid ? 'co-gnss-ok' : 'co-gnss-stale';
-  const hkVal = gnss.hkIsValid == null ? '—' : gnss.hkIsValid ? 'HK VALID' : 'HK INVALID';
+  const hkOk    = gnss?.hkIsValid;
+  const hkCls   = hkOk == null ? 'co-gnss-nil' : hkOk ? 'co-gnss-ok' : 'co-gnss-stale';
+  const hkSym   = hkOk == null ? '—' : hkOk ? '✓' : '✗';
+  const hkTitle = hkOk == null ? 'HK validity unknown' : hkOk ? 'HK VALID — last received packet' : 'HK INVALID — last received packet';
   return `<div class="co-gnss-stack">
-    <span class="co-gnss-sub">FINESTEERING</span>
-    <div class="co-gnss-row ${bothCls}" title="Time since last FINESTEERING and HK VALID together"><span class="co-gnss-led">●</span><span class="co-gnss-val">${bothVal}</span></div>
-    <div class="co-gnss-row ${hkCls}" title="HK validity — last received packet"><span class="co-gnss-led">●</span><span class="co-gnss-val">${hkVal}</span></div>
+    <div class="co-gnss-row" title="Time since last FINESTEERING and HK VALID together">
+      <span class="co-gnss-chip ${bothCls}">${bothVal}</span><span class="co-gnss-chip co-gnss-hk-chip ${hkCls}" title="${hkTitle}">${hkSym}</span>
+    </div>
+    ${_mitigationRow(mit)}
   </div>`;
 }
 
@@ -305,7 +368,8 @@ function _rwCell(rw) {
 
 function _rowHTML(sat, now, eclipse) {
   const tm = store.satTelemetry[sat.id] ?? null;
-  const inPass = _inPassNow(store.satPasses[sat.id], now);
+  const currentPass = _currentPass(store.satPasses[sat.id], now);
+  const inPass = !!currentPass;
 
   const lastContactMs = tm?.receptionTime ? new Date(tm.receptionTime).getTime() : null;
   const elapsed = lastContactMs !== null ? now - lastContactMs : null;
@@ -377,15 +441,23 @@ function _rowHTML(sat, now, eclipse) {
   const sccColor = store.satGlobals[sat.id]?.sccColor;
   const rowStyle = sccColor ? ` style="--scc-color:${sccColor}"` : '';
 
+  // The dark fill inside the badge (via --pass-progress, read by its ::before
+  // in style.css) advances left-to-right as the pass runs from AOS to LOS —
+  // the text sits in its own inner span (co-pass-live-text) so it stays
+  // readable above that fill regardless of stacking-order edge cases.
+  const liveBadge = currentPass
+    ? `<span class="co-pass-live-badge" style="--pass-progress:${_passProgress(currentPass, now).toFixed(3)}"><span class="co-pass-live-text">● LIVE</span></span>`
+    : '';
+
   return `<tr class="co-row${inPass ? ' co-row-live' : ''}" data-sat-id="${sat.id}"${rowStyle}>
-    <td class="co-name-cell">${sat.name}${inPass ? '<span class="co-pass-live-badge">● LIVE</span>' : ''}</td>
+    <td class="co-name-cell">${sat.name}${liveBadge}</td>
     <td class="co-ping-cell" data-field="ping-cell">${_buildPingCell(sat.id)}</td>
     <td class="co-contact-cell">${contactCell}</td>
     <td class="co-mode-cell">${modeCell}</td>
     <td class="co-batt-cell">${battCell}</td>
     <td class="co-rw-cell">${_rwCell(tm?.rw)}</td>
-    <td class="co-gnss-cell">${_gnssCell(store.satGnss[sat.id])}</td>
-    <td class="co-passes-cell" data-sat-id="${sat.id}">${_passDots(store.satPasses[sat.id])}</td>
+    <td class="co-gnss-cell">${_gnssCell(store.satGnss[sat.id], store.satGnssMitigation[sat.id])}</td>
+    <td class="co-passes-cell" data-sat-id="${sat.id}">${_passDots(store.satPasses[sat.id], sat.id)}</td>
     <td>${orbitCell}</td>
     <td class="co-alerts-cell">${_groundEvtBadge(store.satGroundEvents[sat.id])}</td>
     <td class="co-alerts-cell">${_evtBadge(tm?.events, store.satEventBaseline[sat.id])}</td>
@@ -439,11 +511,11 @@ export function initChadOps() {
     <div class="co-legend-title">Pass horizon · ±7 days</div>
     <div class="co-legend-sub">Each dot is one pass. Grid reads left→right, oldest to newest. Refreshed every ping cycle.</div>
     <div class="co-legend-title co-legend-gap">Past</div>
-    <div class="co-legend-row"><span class="co-dot co-dot-success">●</span> Success</div>
-    <div class="co-legend-row"><span class="co-dot co-dot-fail">●</span> Failure</div>
-    <div class="co-legend-row"><span class="co-dot co-dot-cancelled">●</span> Cancelled</div>
+    <div class="co-legend-row"><span class="co-dot co-dot-success"></span> Success</div>
+    <div class="co-legend-row"><span class="co-dot co-dot-fail"></span> Failure</div>
+    <div class="co-legend-row"><span class="co-dot co-dot-cancelled"></span> Cancelled</div>
     <div class="co-legend-title co-legend-gap">Future</div>
-    <div class="co-legend-row"><span class="co-dot co-dot-future">○</span> Upcoming (no outcome yet)</div>`;
+    <div class="co-legend-row"><span class="co-dot co-dot-future"></span> Upcoming (no outcome yet)</div>`;
 
   const passesHeader = document.getElementById('co-passes-th');
   if (passesHeader) {
@@ -464,8 +536,10 @@ export function initChadOps() {
     <div class="co-legend-row"><span class="co-gnss-led" style="color:#ffcc00">●</span> &lt; 24 h</div>
     <div class="co-legend-row"><span class="co-gnss-led" style="color:#ff4466">●</span> ≥ 24 h</div>
     <div class="co-legend-title co-legend-gap">HK VALID — GNSS_AM_HW_HK_VALID</div>
-    <div class="co-legend-row"><span class="co-gnss-led" style="color:#00cc88">●</span> Last packet = VALID</div>
-    <div class="co-legend-row"><span class="co-gnss-led" style="color:#ff4466">●</span> Last packet = INVALID</div>`;
+    <div class="co-legend-row"><span class="co-gnss-hk" style="color:#00cc88">✓</span> Last packet = VALID</div>
+    <div class="co-legend-row"><span class="co-gnss-hk" style="color:#ff4466">✗</span> Last packet = INVALID</div>
+    <div class="co-legend-title co-legend-gap">GNSS_MITIGATION procedure (♻)</div>
+    <div class="co-legend-row">Time since last applied "OFF/ON/CONFIG GNSS" fix, and how many times in the last ${MITIGATION_WINDOW_DAYS} days</div>`;
 
   const gnssHeader = document.getElementById('co-gnss-th');
   if (gnssHeader) {
@@ -552,13 +626,13 @@ export function initChadOps() {
 
     // Battery monitoring tooltip
     tbody.querySelectorAll('.co-batt-hover[data-batt-mon]').forEach(el => {
-      el.addEventListener('mouseenter', e => {
+      el.addEventListener('mouseenter', () => {
         try {
           const mon = JSON.parse(el.dataset.battMon);
           _cancelHide();
           tooltip.innerHTML     = _battMonTooltip(mon);
           tooltip.style.display = 'block';
-          _positionTooltip(e, tooltip);
+          _positionTooltipAtEl(el, tooltip);
         } catch { /* bad JSON, ignore */ }
       });
       el.addEventListener('mouseleave', _scheduleHide);
@@ -594,14 +668,18 @@ export function initChadOps() {
     const nowDate = new Date(now);
     const sunDir  = sunDirectionECI(nowDate);
 
-    if (!store.satellites.length) {
-      tbody.innerHTML = `<tr><td colspan="9" class="co-empty">No satellites loaded — add one to begin.</td></tr>`;
+    // Only satellites THIS client can reach — see store.accessibleSatellites.
+    const fleet = store.accessibleSatellites;
+    if (!fleet.length) {
+      tbody.innerHTML = `<tr><td colspan="9" class="co-empty">${
+        store.satellites.length ? 'No satellites reachable on your current VPN.' : 'No satellites loaded — add one to begin.'
+      }</td></tr>`;
       return;
     }
 
     // Worst-first: a satellite with a problem sorts to the top regardless of
     // add order, so it's found without reading every row on a large fleet.
-    const sorted = [...store.satellites].sort((a, b) => worstSev(b) - worstSev(a));
+    const sorted = [...fleet].sort((a, b) => worstSev(b) - worstSev(a));
 
     tbody.innerHTML = sorted.map(sat => {
       let eclipse = null;
@@ -621,9 +699,9 @@ export function initChadOps() {
     const nowDate = new Date(now);
     const sunDir  = sunDirectionECI(nowDate);
 
-    for (const sat of store.satellites) {
+    for (const sat of store.accessibleSatellites) {
       const row = tbody.querySelector(`tr[data-sat-id="${sat.id}"]`);
-      if (!row) { render(); return; } // satellite added since last full render
+      if (!row) { render(); return; } // satellite added (or became reachable) since last full render
 
       const tm = store.satTelemetry[sat.id] ?? null;
 
@@ -652,19 +730,27 @@ export function initChadOps() {
         else                  { eclEl.className = 'co-ecl-sun';    eclEl.textContent = '☀ SUN'; }
       }
 
-      // In-pass LIVE glow (changes on aos0/los0 boundaries)
+      // In-pass LIVE glow + progress fill (progress advances every tick, not
+      // just at aos0/los0 boundaries — the badge itself is only created/removed
+      // at those boundaries).
       const nameEl = row.querySelector('.co-name-cell');
       if (nameEl) {
-        const inPass = _inPassNow(store.satPasses[sat.id], now);
-        row.classList.toggle('co-row-live', inPass);
+        const currentPass = _currentPass(store.satPasses[sat.id], now);
+        row.classList.toggle('co-row-live', !!currentPass);
         let badge = nameEl.querySelector('.co-pass-live-badge');
-        if (inPass && !badge) {
+        if (currentPass && !badge) {
           badge = document.createElement('span');
-          badge.className   = 'co-pass-live-badge';
-          badge.textContent = '● LIVE';
+          badge.className = 'co-pass-live-badge';
+          const text = document.createElement('span');
+          text.className   = 'co-pass-live-text';
+          text.textContent = '● LIVE';
+          badge.appendChild(text);
           nameEl.appendChild(badge);
-        } else if (!inPass && badge) {
+        } else if (!currentPass && badge) {
           badge.remove();
+        }
+        if (currentPass && badge) {
+          badge.style.setProperty('--pass-progress', _passProgress(currentPass, now).toFixed(3));
         }
       }
 
@@ -680,7 +766,7 @@ export function initChadOps() {
 
       // GNSS timers advance every tick
       const gnssEl = row.querySelector('.co-gnss-cell');
-      if (gnssEl) gnssEl.innerHTML = _gnssCell(store.satGnss[sat.id]);
+      if (gnssEl) gnssEl.innerHTML = _gnssCell(store.satGnss[sat.id], store.satGnssMitigation[sat.id]);
 
     }
   }
@@ -735,7 +821,7 @@ export function initChadOps() {
   });
 
   store.subscribe(key => {
-    if ((key === 'satellites' || key === 'satTelemetry' || key === 'satPasses' || key === 'satGnss' || key === 'satGlobals' || key === 'satVersions' || key === 'satGroundEvents') && _active) _scheduleRender();
+    if ((key === 'satellites' || key === 'satAccessible' || key === 'satTelemetry' || key === 'satPasses' || key === 'satGnss' || key === 'satGnssMitigation' || key === 'satGlobals' || key === 'satVersions' || key === 'satGroundEvents' || key === 'selectedPass') && _active) _scheduleRender();
     if (key === 'pingStatus' && _active) _updatePingDots();
   });
 }

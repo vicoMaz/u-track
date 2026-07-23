@@ -10,8 +10,81 @@
 // actually honors `limit` (verified: limit=5000/8000/20000 → exactly that
 // many rows back, no hidden cap). It also doesn't need satellite_id/pass_id —
 // each satellite has its own GNM host, so the origin alone scopes the query.
+//
+// TC Eb/N0 = 10·log10(SBT_AM_RX_DEMOD_EB / SBT_AM_RX_DEMOD_N0), from the
+// satellite's own SCC telemetry (packet TM_3_25_OBSW_HK_SBT). This measures
+// how well the satellite is receiving uplink TCs — overlaid on the same chart.
 import { satSubsystemOrigin } from '../satSubsystems.js';
 import { MARKER_COLORS, MARKER_PX_RADIUS } from './passPolar.js';
+
+// ── TC Eb/N0 — SCC telemetry fetch ───────────────────────────────
+
+const SBT_PACKET = 'TM_3_25_OBSW_HK_SBT';
+
+async function _fetchSccParam(noradId, packet, param, startMs, endMs) {
+  const origin = satSubsystemOrigin(noradId, 'scc');
+  if (!origin) return null;
+  const url = `${origin}/api/v1/parameters`
+    + `?start=${encodeURIComponent(new Date(startMs).toISOString())}`
+    + `&end=${encodeURIComponent(new Date(endMs).toISOString())}`
+    + `&orderBy=onBoardTime`
+    + `&filter=${encodeURIComponent(packet)}`
+    + `&requestedParameters=${encodeURIComponent(param)}`
+    + `&maxLimit=8000`;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const rows = Array.isArray(data[0]) ? data[0]
+               : Array.isArray(data.parameters) ? data.parameters
+               : Array.isArray(data) ? data : null;
+    if (!rows) return null;
+    return rows.map(row => {
+      const t = row?.onBoardTime ?? row?.generationTime ?? row?.receptionTime;
+      const pParam = row.parameter;
+      let v = null;
+      if (pParam) {
+        const pv = pParam.physicalValue ?? pParam.engValue;
+        v = pv != null ? parseFloat(pv.value ?? pv.stringValue ?? pv)
+          : pParam.value !== undefined ? parseFloat(pParam.value) : null;
+      } else {
+        const pv = row.physicalValue ?? row.engValue;
+        v = pv != null ? parseFloat(pv.value ?? pv.stringValue ?? pv)
+          : row.value !== undefined ? parseFloat(row.value) : null;
+      }
+      return t && v != null && !isNaN(v) ? { t: new Date(t).getTime(), v } : null;
+    }).filter(Boolean).sort((a, b) => a.t - b.t);
+  } catch { return null; }
+}
+
+const _tcCache = new Map();
+
+export async function fetchTcEbn0Series(noradId, startMs, endMs) {
+  const key = `tc|${noradId}|${startMs}|${endMs}`;
+  if (_tcCache.has(key)) return _tcCache.get(key);
+
+  const [ebRows, n0Rows] = await Promise.all([
+    _fetchSccParam(noradId, SBT_PACKET, 'SBT_AM_RX_DEMOD_EB', startMs, endMs),
+    _fetchSccParam(noradId, SBT_PACKET, 'SBT_AM_RX_DEMOD_N0', startMs, endMs),
+  ]);
+
+  let result = null;
+  if (ebRows?.length && n0Rows?.length) {
+    const series = [];
+    for (const eb of ebRows) {
+      // Match to nearest N0 sample (same packet → timestamps should align exactly)
+      const n0 = n0Rows.reduce((best, r) =>
+        Math.abs(r.t - eb.t) < Math.abs(best.t - eb.t) ? r : best
+      );
+      if (Math.abs(n0.t - eb.t) < 5000 && eb.v > 0 && n0.v > 0) {
+        series.push({ t: eb.t, v: 10 * Math.log10(eb.v / n0.v) });
+      }
+    }
+    if (series.length) result = series;
+  }
+  _tcCache.set(key, result);
+  return result;
+}
 
 async function _fetchMetric(noradId, name, startMs, endMs, limit) {
   const origin = satSubsystemOrigin(noradId, 'gnm');
@@ -97,15 +170,26 @@ const MARKER_RADIUS = {
 // empty-plot case (no Eb/N0 metric for this network/pass) still frame its
 // x-axis on the pass's own AOS→LOS span, so procedure bars land in the right
 // place instead of the chart having no time domain to scale against at all.
-export function ebn0Scales(series, procedures, fallbackRange) {
+// `width`/`height` default to CHART_W/CHART_H (every existing caller) — a
+// caller building a differently-proportioned chart (e.g. a wide full-width
+// one) passes its own, and must pass the SAME values to every other function
+// here that also takes them, so everything stays mapped through one scale.
+export function ebn0Scales(series, procedures, fallbackRange, series2, width = CHART_W, height = CHART_H) {
   let t0, t1;
   if (series?.length) {
     t0 = series[0].t;
     t1 = series[series.length - 1].t;
+  } else if (series2?.length) {
+    t0 = series2[0].t;
+    t1 = series2[series2.length - 1].t;
   } else if (fallbackRange) {
     ({ t0, t1 } = fallbackRange);
   } else {
     t0 = 0; t1 = 1;
+  }
+  if (series2?.length) {
+    t0 = Math.min(t0, series2[0].t);
+    t1 = Math.max(t1, series2[series2.length - 1].t);
   }
   if (procedures?.length) {
     for (const pr of procedures) {
@@ -113,13 +197,16 @@ export function ebn0Scales(series, procedures, fallbackRange) {
       if (pr.endMs   != null) t1 = Math.max(t1, pr.endMs);
     }
   }
-  const vals = series?.length ? series.map(s => s.v) : null;
-  const vMin = vals ? Math.min(...vals) : 0;
-  const vMax = vals ? Math.max(...vals) : 1;
-  const vPad = vals ? Math.max(0.2, (vMax - vMin) * 0.15) : 0;
+  const vals = [
+    ...(series?.length  ? series.map(s => s.v)  : []),
+    ...(series2?.length ? series2.map(s => s.v) : []),
+  ];
+  const vMin = vals.length ? Math.min(...vals) : 0;
+  const vMax = vals.length ? Math.max(...vals) : 1;
+  const vPad = vals.length ? Math.max(0.2, (vMax - vMin) * 0.15) : 0;
   const lo = vMin - vPad, hi = vMax + vPad;
-  const xScale = t => t1 === t0 ? PAD_L : PAD_L + (t - t0) / (t1 - t0) * (CHART_W - PAD_L - PAD_R);
-  const yScale = v => CHART_H - PAD_B - (hi === lo ? 0 : (v - lo) / (hi - lo) * (CHART_H - PAD_T - PAD_B));
+  const xScale = t => t1 === t0 ? PAD_L : PAD_L + (t - t0) / (t1 - t0) * (width - PAD_L - PAD_R);
+  const yScale = v => height - PAD_B - (hi === lo ? 0 : (v - lo) / (hi - lo) * (height - PAD_T - PAD_B));
   return { t0, t1, lo, hi, xScale, yScale };
 }
 
@@ -154,9 +241,9 @@ function _markerDots(series, markers, xScale, yScale) {
 // SAME ebn0Scales(series, procedures) call used for the curve above, whose
 // domain already extends to cover every procedure (see ebn0Scales) — so this
 // clamp is just a safety margin, not what makes the bars visible.
-function _procedureBars(procedures, xScale, t0, t1) {
+function _procedureBars(procedures, xScale, t0, t1, height = CHART_H) {
   if (!procedures?.length) return '';
-  const y = CHART_H - PAD_B + BAR_ROW_GAP;
+  const y = height - PAD_B + BAR_ROW_GAP;
   return procedures.map((pr, i) => {
     if (pr.startMs == null || pr.endMs == null) return '';
     const s = Math.max(pr.startMs, t0), e = Math.min(pr.endMs, t1);
@@ -181,62 +268,93 @@ function _procedureBars(procedures, xScale, t0, t1) {
 // visible instead of disappearing along with the missing curve — and a faint
 // centered note in place of the data line, rather than replacing the whole
 // block with a one-line text note.
-export function buildEbn0SVG(series, markers, procedures, fallbackRange) {
-  const hasSeries = !!series?.length;
-  if (!hasSeries && !procedures?.length && !fallbackRange) return '';
-  const { xScale, yScale, lo, hi, t0, t1 } = ebn0Scales(series, procedures, fallbackRange);
-  const pathD = hasSeries ? series.map((p, i) => `${i ? 'L' : 'M'}${xScale(p.t).toFixed(1)},${yScale(p.v).toFixed(1)}`).join('') : '';
+export function buildEbn0SVG(series, markers, procedures, fallbackRange, series2, width = CHART_W, height = CHART_H) {
+  const hasSeries  = !!series?.length;
+  const hasSeries2 = !!series2?.length;
+  if (!hasSeries && !hasSeries2 && !procedures?.length && !fallbackRange) return '';
+  const { xScale, yScale, lo, hi, t0, t1 } = ebn0Scales(series, procedures, fallbackRange, series2, width, height);
+  const pathD  = hasSeries  ? series.map( (p, i) => `${i ? 'L' : 'M'}${xScale(p.t).toFixed(1)},${yScale(p.v).toFixed(1)}`).join('') : '';
+  const pathD2 = hasSeries2 ? series2.map((p, i) => `${i ? 'L' : 'M'}${xScale(p.t).toFixed(1)},${yScale(p.v).toFixed(1)}`).join('') : '';
   const hasBars = procedures?.some(pr => pr.startMs != null && pr.endMs != null);
-  const totalH = hasBars ? (CHART_H - PAD_B + BAR_ROW_GAP + BAR_ROW_H + BAR_BOTTOM_PAD) : CHART_H;
+  const totalH  = hasBars ? (height - PAD_B + BAR_ROW_GAP + BAR_ROW_H + BAR_BOTTOM_PAD) : height;
+  const hasAny  = hasSeries || hasSeries2;
 
-  return `<svg width="100%" height="${totalH}" viewBox="0 0 ${CHART_W} ${totalH}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" class="ebn0-chart">
-    ${hasSeries ? `<text x="${PAD_L - 4}" y="${PAD_T + 3}" text-anchor="end" fill="#5a5a8a" font-size="7" font-family="monospace">${hi.toFixed(1)}</text>
-    <text x="${PAD_L - 4}" y="${CHART_H - PAD_B}" text-anchor="end" fill="#5a5a8a" font-size="7" font-family="monospace">${lo.toFixed(1)}</text>` : ''}
-    <line x1="${PAD_L}" y1="${PAD_T}" x2="${PAD_L}" y2="${CHART_H - PAD_B}" stroke="#2a2a44" stroke-width="0.7"/>
-    <line x1="${PAD_L}" y1="${CHART_H - PAD_B}" x2="${CHART_W - PAD_R}" y2="${CHART_H - PAD_B}" stroke="#2a2a44" stroke-width="0.7"/>
-    ${hasSeries ? `<path d="${pathD}" fill="none" stroke="#a78bfa" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
-    ${_markerDots(series, markers, xScale, yScale)}` : `<text x="${(PAD_L + CHART_W - PAD_R) / 2}" y="${(PAD_T + CHART_H - PAD_B) / 2}" text-anchor="middle" dominant-baseline="middle" fill="#4a4a6a" font-size="9" font-family="monospace" font-style="italic">(No Eb/N0 metric)</text>`}
-    ${hasBars ? _procedureBars(procedures, xScale, t0, t1) : ''}
-    <line class="ebn0-cursor-line" x1="0" y1="${PAD_T}" x2="0" y2="${CHART_H - PAD_B}" stroke="#ffffff" stroke-opacity="0.5" stroke-width="0.7" stroke-dasharray="2,2" visibility="hidden"/>
-    <circle class="ebn0-cursor-dot" r="${MARKER_PX_RADIUS.cursor}" fill="#fff" stroke="#a78bfa" stroke-width="0.8" visibility="hidden"/>
-    <rect class="ebn0-cursor-label-bg" width="1" height="10" rx="2" fill="#12121e" stroke="#2a2a4a" stroke-width="0.6" visibility="hidden"/>
-    <text class="ebn0-cursor-text" x="0" y="${PAD_T - 2}" font-size="6.5" font-family="monospace" fill="#ddd" text-anchor="middle" visibility="hidden"></text>
-    <rect class="ebn0-hit" x="${PAD_L}" y="${PAD_T}" width="${CHART_W - PAD_L - PAD_R}" height="${CHART_H - PAD_T - PAD_B}" fill="transparent"/>
+  return `<svg width="100%" height="${totalH}" viewBox="0 0 ${width} ${totalH}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" class="ebn0-chart">
+    ${hasAny ? `<text x="${PAD_L - 4}" y="${PAD_T + 3}" text-anchor="end" fill="#5a5a8a" font-size="7" font-family="monospace">${hi.toFixed(1)}</text>
+    <text x="${PAD_L - 4}" y="${height - PAD_B}" text-anchor="end" fill="#5a5a8a" font-size="7" font-family="monospace">${lo.toFixed(1)}</text>` : ''}
+    <line x1="${PAD_L}" y1="${PAD_T}" x2="${PAD_L}" y2="${height - PAD_B}" stroke="#2a2a44" stroke-width="0.7"/>
+    <line x1="${PAD_L}" y1="${height - PAD_B}" x2="${width - PAD_R}" y2="${height - PAD_B}" stroke="#2a2a44" stroke-width="0.7"/>
+    ${hasSeries2 ? `<path d="${pathD2}" fill="none" stroke="#4ad4ff" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.85"/>` : ''}
+    ${hasSeries  ? `<path d="${pathD}"  fill="none" stroke="#a78bfa" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+    ${_markerDots(series, markers, xScale, yScale)}` : ''}
+    ${!hasAny ? `<text x="${(PAD_L + width - PAD_R) / 2}" y="${(PAD_T + height - PAD_B) / 2}" text-anchor="middle" dominant-baseline="middle" fill="#4a4a6a" font-size="9" font-family="monospace" font-style="italic">(No Eb/N0 metric)</text>` : ''}
+    ${hasBars ? _procedureBars(procedures, xScale, t0, t1, height) : ''}
+    <line class="ebn0-cursor-line" x1="0" y1="${PAD_T}" x2="0" y2="${height - PAD_B}" stroke="#ffffff" stroke-opacity="0.5" stroke-width="0.7" stroke-dasharray="2,2" visibility="hidden"/>
+    <circle class="ebn0-cursor-dot"  r="${MARKER_PX_RADIUS.cursor}" fill="#fff" stroke="#a78bfa" stroke-width="0.8" visibility="hidden"/>
+    <circle class="ebn0-cursor-dot2" r="${MARKER_PX_RADIUS.cursor}" fill="#fff" stroke="#4ad4ff" stroke-width="0.8" visibility="hidden"/>
+    <rect  class="ebn0-cursor-label-bg"  width="1" height="9" rx="1.5" fill="#12121e" stroke="#2a2a4a" stroke-width="0.5" visibility="hidden"/>
+    <text  class="ebn0-cursor-text"  x="0" y="0" font-size="6.5" font-family="monospace" fill="#a78bfa" text-anchor="middle" visibility="hidden"></text>
+    <rect  class="ebn0-cursor-label-bg2" width="1" height="9" rx="1.5" fill="#12121e" stroke="#2a2a4a" stroke-width="0.5" visibility="hidden"/>
+    <text  class="ebn0-cursor-text2" x="0" y="0" font-size="6.5" font-family="monospace" fill="#4ad4ff" text-anchor="middle" visibility="hidden"></text>
+    <rect class="ebn0-hit" x="${PAD_L}" y="${PAD_T}" width="${width - PAD_L - PAD_R}" height="${height - PAD_T - PAD_B}" fill="transparent"/>
   </svg>`;
 }
 
 // Corrects marker/cursor dot sizes to an exact pixel match with the polar
 // plot's dots, once this chart is actually laid out (its rendered width isn't
 // known at HTML-string-build time — it stretches to fill variable flex space).
+// Reads the viewBox straight off the live element rather than assuming
+// CHART_W, since a caller may have built this chart at a custom width.
 export function syncEbn0DotSizes(ebn0El) {
   if (!ebn0El) return;
   const rect = ebn0El.getBoundingClientRect();
   if (!rect.width) return;
-  const scale = CHART_W / rect.width; // viewBox units per actual rendered px
+  const vbWidth = ebn0El.viewBox?.baseVal?.width || CHART_W;
+  const scale = vbWidth / rect.width; // viewBox units per actual rendered px
   ebn0El.querySelectorAll('.ebn0-marker-dot').forEach(el => {
     const px = el.dataset.marker === 'apogee' ? MARKER_PX_RADIUS.apogee : MARKER_PX_RADIUS.standard;
     el.setAttribute('r', (px * scale).toFixed(2));
   });
   const cursorDot = ebn0El.querySelector('.ebn0-cursor-dot');
   if (cursorDot) cursorDot.setAttribute('r', (MARKER_PX_RADIUS.cursor * scale).toFixed(2));
+  const cursorDot2 = ebn0El.querySelector('.ebn0-cursor-dot2');
+  if (cursorDot2) cursorDot2.setAttribute('r', (MARKER_PX_RADIUS.cursor * scale).toFixed(2));
 }
 
-export function ebn0HTML(series, markers, procedures, fallbackRange) {
-  if (!series?.length) {
-    const svg = buildEbn0SVG(series, markers, procedures, fallbackRange);
+export function ebn0HTML(series, markers, procedures, fallbackRange, series2, width = CHART_W, height = CHART_H) {
+  const hasAny = series?.length || series2?.length;
+  if (!hasAny) {
+    const svg = buildEbn0SVG(series, markers, procedures, fallbackRange, series2, width, height);
     return svg
       ? `<div class="ebn0-block">${svg}</div>`
       : `<div class="ebn0-block"><div class="co-tt-note">No Eb/N0 data found</div></div>`;
   }
-  const vals = series.map(s => s.v);
-  const min = Math.min(...vals).toFixed(2);
-  const max = Math.max(...vals).toFixed(2);
-  const avg = (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2);
+
+  function _stats(s) {
+    const vals = s.map(p => p.v);
+    return {
+      min: Math.min(...vals).toFixed(2),
+      max: Math.max(...vals).toFixed(2),
+      avg: (vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2),
+    };
+  }
+
+  const tmStats = series?.length  ? _stats(series)  : null;
+  const tcStats = series2?.length ? _stats(series2) : null;
+
   return `<div class="ebn0-block">
-    ${buildEbn0SVG(series, markers, procedures, fallbackRange)}
+    ${buildEbn0SVG(series, markers, procedures, fallbackRange, series2, width, height)}
     <div class="ebn0-legend">
-      <span class="ebn0-legend-swatch"></span><span class="ebn0-legend-label">TM Eb/N0</span>
-      <span class="ebn0-stats">min ${min} · mean ${avg} · max ${max} dB</span>
+      ${tmStats ? `<div class="ebn0-legend-row">
+        <span class="ebn0-legend-swatch ebn0-swatch-tm"></span>
+        <span class="ebn0-legend-label ebn0-label-tm">TM Eb/N0</span>
+        <span class="ebn0-stats">min ${tmStats.min} · avg ${tmStats.avg} · max ${tmStats.max} dB</span>
+      </div>` : ''}
+      ${tcStats ? `<div class="ebn0-legend-row">
+        <span class="ebn0-legend-swatch ebn0-swatch-tc"></span>
+        <span class="ebn0-legend-label ebn0-label-tc">TC Eb/N0</span>
+        <span class="ebn0-stats">min ${tcStats.min} · avg ${tcStats.avg} · max ${tcStats.max} dB</span>
+      </div>` : ''}
     </div>
   </div>`;
 }

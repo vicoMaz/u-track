@@ -23,9 +23,12 @@ export async function fetchSatPasses(sat) {
   const ip = satSubsystemOrigin(sat.noradId, 'sccRo');
   if (!ip) return;
 
+  // ±5 days — matches TimePlayer.js's VIEW_HALF_SEC (the gantt's max zoom-out
+  // and its eclipse/STT precompute window), so Passes/TMR never run out of
+  // data at a different horizon than the other gantt rows.
   const now   = new Date();
-  const start = new Date(now.getTime() - 7 * 24 * 3_600_000).toISOString();
-  const end   = new Date(now.getTime() + 7 * 24 * 3_600_000).toISOString();
+  const start = new Date(now.getTime() - 5 * 24 * 3_600_000).toISOString();
+  const end   = new Date(now.getTime() + 5 * 24 * 3_600_000).toISOString();
 
   _ctrl.get(sat.id)?.abort();
   const ctrl  = new AbortController();

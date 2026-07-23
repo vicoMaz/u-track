@@ -15,6 +15,12 @@ function _appVersion() {
 }
 
 export default defineConfig({
+  // Binds the dev server to all network interfaces (not just localhost) so
+  // it's reachable from other devices on the LAN/VPN at this host's own IP —
+  // `npm run dev` alone is enough, no need to remember `--host`.
+  server: {
+    host: true,
+  },
   define: {
     __APP_VERSION__: JSON.stringify(_appVersion()),
   },

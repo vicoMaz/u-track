@@ -1,7 +1,7 @@
 import { propagate, eciToCartesian3 } from '../tle.js';
 import { sunDirectionECI, isInEclipse } from '../sunVector.js';
 import { store } from '../store.js';
-import { satSunExclDeg, satEarthExclDeg, satStarTrackerConesVisible, MODEL_STAR_TRACKERS } from '../satStarTracker.js';
+import { satSunExclDeg, satEarthExclDeg, satStarTrackerConesVisible, MODEL_STAR_TRACKERS, ST_FOV_HALF_ANGLE_DEG } from '../satStarTracker.js';
 
 /* global Cesium */
 
@@ -15,7 +15,7 @@ const MODEL_BASE_SCALE = 800;
 // Settings — satStarTracker.js) aren't drawn as their own cones; instead each
 // FOV cone turns red whenever the sun or Earth (nadir direction) is currently
 // inside that satellite's configured keep-out angle around ITS boresight.
-const ST_HALF_ANGLE_DEG = 15;
+const ST_HALF_ANGLE_DEG = ST_FOV_HALF_ANGLE_DEG;
 const ST_LEN_KM = 500;
 const R_EARTH_KM = 6371;
 const ST_COLOR_OK  = Cesium.Color.DODGERBLUE;
@@ -262,6 +262,24 @@ export class SatEntity {
       });
       return st;
     });
+
+    // _computeArrowTips (called above, before this._starTrackers existed)
+    // already tried to call _updateStarTrackerCones once, but it no-op'd via
+    // its own `if (!this._starTrackers.length) return;` guard — at that point
+    // this._starTrackers was still the constructor's empty array. Left alone,
+    // every st.pos/st.orient would sit at their raw `new Cesium.Cartesian3()`/
+    // `new Cesium.Quaternion()` default — (0,0,0) and (0,0,0,1) — until the
+    // NEXT update() tick. (0,0,0) is Earth's own center: a genuinely
+    // degenerate position with no defined longitude/latitude, and Cesium's
+    // own render loop runs independently of our tick cadence, so it can (and
+    // does) try to render this cylinder with that degenerate position before
+    // any second tick ever arrives — crashing deep in its geometry-combining
+    // pipeline ("Cannot read properties of undefined (reading 'longitude')").
+    // Populate real values immediately, now that this._starTrackers actually
+    // exists, using the same origin/_scratchSun _computeArrowTips already
+    // computed for this satellite this call (nothing async has touched those
+    // module-level scratch objects since).
+    this._updateStarTrackerCones(origin, _scratchSun);
   }
 
   // Orientation quaternion.
@@ -479,9 +497,26 @@ export class SatEntity {
       // the current model scale, so the cone's start point (apex) tracks the
       // visible edge of the (scaled) model instead of sitting at its origin.
       const biasM = cfg.biasKmPerScaleUnit * store.satScale * 1000;
-      st.pos.x = origin.x + _scratchOffset.x * 1000 + _scratchDir.x * (halfLen + biasM);
-      st.pos.y = origin.y + _scratchOffset.y * 1000 + _scratchDir.y * (halfLen + biasM);
-      st.pos.z = origin.z + _scratchOffset.z * 1000 + _scratchDir.z * (halfLen + biasM);
+      const px = origin.x + _scratchOffset.x * 1000 + _scratchDir.x * (halfLen + biasM);
+      const py = origin.y + _scratchOffset.y * 1000 + _scratchDir.y * (halfLen + biasM);
+      const pz = origin.z + _scratchOffset.z * 1000 + _scratchDir.z * (halfLen + biasM);
+
+      // This cylinder's position/orientation are read live by Cesium every
+      // frame (CallbackProperty) — a NaN here (e.g. from _scratchDir ending
+      // up a zero vector before normalize, or any upstream degenerate
+      // orientation) doesn't error at the point of assignment, it crashes
+      // much later and much harder to trace, deep inside Cesium's own
+      // geometry-combining pipeline ("Cannot read properties of undefined
+      // (reading 'longitude')" — a Cartographic conversion silently
+      // returning undefined for a degenerate input). Skip committing a bad
+      // frame entirely and let the cone keep showing its last good pose
+      // instead of ever handing Cesium invalid geometry.
+      if (!Number.isFinite(px) || !Number.isFinite(py) || !Number.isFinite(pz)
+          || !Number.isFinite(_scratchDir.x) || !Number.isFinite(_scratchDir.y) || !Number.isFinite(_scratchDir.z)) {
+        return;
+      }
+
+      st.pos.x = px; st.pos.y = py; st.pos.z = pz;
       _quatFromZTo(_scratchDir, st.orient);
 
       const sunDot   = Cesium.Math.clamp(Cesium.Cartesian3.dot(_scratchDir, sunDirEcef), -1, 1);

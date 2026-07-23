@@ -4,6 +4,7 @@ import { fetchSatPasses }    from './satPasses.js';
 import { fetchSatTle }       from './satTle.js';
 import { fetchSatAntennas } from './satAntennas.js';
 import { fetchSatGnss }           from './satGnss.js';
+import { fetchSatGnssMitigation } from './satGnssMitigation.js';
 import { fetchSatEventBaseline }  from './satEventBaseline.js';
 import { fetchSatGroundEvents }   from './satGroundEvents.js';
 import { fetchSatGlobals }        from './satGlobals.js';
@@ -11,6 +12,22 @@ import { fetchSatVersions }       from './satVersions.js';
 import { satSubsystemOrigin } from './satSubsystems.js';
 
 const PING_TIMEOUT = 5_000;
+
+// Consecutive ping failures before this client treats a satellite as
+// unreachable on its own network and hides it (store.accessibleSatellites) —
+// requiring a few in a row (rather than one) avoids a satellite flickering
+// in/out of every list on a single dropped packet. At the default 20s
+// interval that's ~1 minute to react to a genuine "my VPN doesn't route
+// there" case, which is a stable condition, not a transient blip.
+const ACCESSIBLE_FAIL_THRESHOLD = 3;
+const _failCount = {}; // satId → consecutive timeout/error count
+
+// Subsystems probed (in addition to SCC RO, which the main ping above
+// already covers) purely to tell "fully reachable" apart from "read-only —
+// only SCC RO is on my VPN" for store.readOnlyVpn's sake. Same no-cors
+// reachability trick as the main ping: we don't care about the response,
+// only whether the request completes vs. times out/network-errors.
+const SUBSYSTEM_PROBE_KEYS = ['scc', 'fds', 'gnm', 'mic'];
 
 // ── Interval (user-configurable, stored in localStorage) ──────────
 
@@ -65,6 +82,10 @@ async function _ping(sat) {
   if (!ip) {
     _lastPingMs[sat.id] = Date.now();
     store.setPingStatus(sat.id, 'unconfigured');
+    // Not configured yet is a setup concern, not a VPN-reachability one —
+    // don't hide it for that.
+    _failCount[sat.id] = 0;
+    store.setSatAccessible(sat.id, true);
     return;
   }
   const ctrl  = new AbortController();
@@ -79,13 +100,39 @@ async function _ping(sat) {
     // Set timestamp BEFORE notifying so animation delay is computed correctly
     _lastPingMs[sat.id] = Date.now();
     store.setPingStatus(sat.id, 'ok');
+    _failCount[sat.id] = 0;
+    store.setSatAccessible(sat.id, true);
   } catch (e) {
     // Do NOT update _lastPingMs on failure — the elapsed counter should show
     // how long ago the satellite was last reachable, not when we last tried.
     store.setPingStatus(sat.id, e.name === 'AbortError' ? 'timeout' : 'error');
+    _failCount[sat.id] = (_failCount[sat.id] ?? 0) + 1;
+    if (_failCount[sat.id] >= ACCESSIBLE_FAIL_THRESHOLD) store.setSatAccessible(sat.id, false);
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Probes SCC/FDS/GNM/MIC reachability for one satellite — only meaningful
+// once the main SCC RO ping above has already succeeded (see
+// _pingAndReschedule's call site), so store.readOnlyVpn can tell "SCC RO
+// only" apart from "satellite is down entirely" (the latter is
+// store.satAccessible's job instead).
+async function _probeSubsystems(sat) {
+  await Promise.all(SUBSYSTEM_PROBE_KEYS.map(async key => {
+    const origin = satSubsystemOrigin(sat.noradId, key);
+    if (!origin) { store.setSubsystemReachable(sat.id, key, null); return; }
+    const ctrl  = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), PING_TIMEOUT);
+    try {
+      await fetch(`${origin}/api/v1/ping`, { method: 'GET', mode: 'no-cors', signal: ctrl.signal });
+      store.setSubsystemReachable(sat.id, key, true);
+    } catch {
+      store.setSubsystemReachable(sat.id, key, false);
+    } finally {
+      clearTimeout(timer);
+    }
+  }));
 }
 
 // ── Per-satellite chained scheduling ─────────────────────────────
@@ -110,6 +157,10 @@ const CADENCE_MS = {
   eventBaseline: 30 * 60_000, // "24h-ago" snapshot, changes ~hourly at most
   groundEvents:  60_000,      // rolling 24h aggregate
   globals:       30 * 60_000, // software versions — pre-existing cadence
+  gnssMitigation: 30 * 60_000, // rare-event counter — no benefit polling faster than the slow cycle
+  subsystemProbe: 30 * 60_000, // SCC/FDS/GNM/MIC reachability — a VPN's routing doesn't change mid-session,
+                                // first probe still fires on the very first 'ok' cycle since _due() treats
+                                // "never fetched" as due, only the REPEATS are slow-cadence
 };
 const _lastFetchMs = {}; // `${satId}:${key}` → timestamp of last completed fetch
 
@@ -139,6 +190,8 @@ async function _pingAndReschedule(sat, myGen) {
       if (_due(sat.id, 'eventBaseline')) { _markFetched(sat.id, 'eventBaseline'); fetches.push(fetchSatEventBaseline(sat)); }
       if (_due(sat.id, 'groundEvents'))  { _markFetched(sat.id, 'groundEvents');  fetches.push(fetchSatGroundEvents(sat)); }
       if (_due(sat.id, 'globals'))       { _markFetched(sat.id, 'globals');       fetches.push(fetchSatGlobals(sat), fetchSatVersions(sat)); }
+      if (_due(sat.id, 'gnssMitigation')) { _markFetched(sat.id, 'gnssMitigation'); fetches.push(fetchSatGnssMitigation(sat)); }
+      if (_due(sat.id, 'subsystemProbe')) { _markFetched(sat.id, 'subsystemProbe'); fetches.push(_probeSubsystems(sat)); }
       await Promise.all(fetches);
     }
   } catch { /* never let an error kill the cycle */ }

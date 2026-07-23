@@ -28,16 +28,40 @@
           </div>
         </div>
 
+        <!-- Custom Points Panel -->
+        <div id="points-panel" class="panel">
+          <div class="panel-header">
+            <span>Points</span>
+            <button id="points-toggle" class="panel-toggle" title="Collapse">◀</button>
+          </div>
+          <div class="panel-body">
+            <div class="pt-add-form">
+              <input id="pt-name-input" type="text" placeholder="Name" maxlength="30" />
+              <div class="pt-coord-row">
+                <input id="pt-lat-input" type="number" placeholder="Lat" step="any" min="-90" max="90" />
+                <input id="pt-lon-input" type="number" placeholder="Lon" step="any" min="-180" max="180" />
+              </div>
+              <div class="pt-coord-row">
+                <input id="pt-mask-input" type="number" placeholder="Mask ° (optional)" step="any" min="0" max="90"
+                       title="Minimum elevation angle — draws the visibility circle on the surface below which a satellite is below this elevation as seen from this point. Leave blank for no circle." />
+                <button id="pt-add-btn">Add</button>
+              </div>
+            </div>
+            <div id="pt-list"></div>
+          </div>
+        </div>
+
       </div>
 
       <!-- Tab bar -->
       <div id="tab-bar">
         <img id="app-logo" src="/logo-u-space.png" alt="chadOps" />
         <span id="app-name">chadOps</span>
+        <span id="readonly-vpn-pill" class="readonly-pill" hidden title="Only the SCC RO (.5) subnet is reachable on your current VPN — SCC/FDS/GNM/MIC are not, so ground stations, TMR gap data, GNSS status and procedure scheduling won't have data.">🔒 Read-only VPN</span>
         <div class="tab-bar-sep"></div>
         <a class="tab-btn" data-tab="fleet" href="#fleet">Fleet</a>
-        <a class="tab-btn" data-tab="schedule" href="#schedule">Weekly Schedule</a>
         <a class="tab-btn active" data-tab="tracking" href="#tracking">Visualizer</a>
+        <a class="tab-btn" data-tab="schedule" href="#schedule">Weekly Schedule</a>
         <a class="tab-btn" data-tab="settings" href="#settings">Settings</a>
         <div id="nav-clocks">
           <div class="nc-box nc-box-utc">
@@ -117,6 +141,14 @@
         <div id="co-sched-content" class="co-sched-section"></div>
       </div>
 
+      <!-- Pass Analyzer view (POC) -->
+      <div id="analyzer-view" class="view">
+        <div class="pa-section">
+          <div class="pa-page-title">🔬 Pass Analyzer</div>
+          <div id="pa-body" class="pa-body"></div>
+        </div>
+      </div>
+
       <!-- Settings view -->
       <div id="settings-view" class="view">
         <div class="st-container">
@@ -173,8 +205,12 @@
             <div class="gantt-track" id="gantt-slots"></div>
           </div>
           <div class="gantt-row">
-            <span class="gantt-label">TMR</span>
+            <span class="gantt-label" title="TM/param used to detect gaps: TM_3_25_OBSW_HK_PLT · GENE_AM_CCSDSAPID">TMR BUS</span>
             <div class="gantt-track" id="gantt-tmr"></div>
+          </div>
+          <div class="gantt-row">
+            <span class="gantt-label" title="TM/param used to detect gaps: TM_3_25_OBSW_HK_PAY_MGT · GENE_AM_CCSDSAPID">TMR PAY</span>
+            <div class="gantt-track" id="gantt-tmr-pay"></div>
           </div>
           <div class="gantt-row">
             <span class="gantt-label">Passes</span>
@@ -185,7 +221,7 @@
             <div class="gantt-track" id="gantt-eclipse"></div>
           </div>
           <div class="gantt-row" title="Fused STT availability — blinded only when ALL of the satellite's star trackers are simultaneously blinded by the sun or Earth. Click to expand per-unit detail.">
-            <span class="gantt-label"><button class="gantt-collapse-btn" id="gantt-stt-collapse" title="Toggle per-STT detail">▸</button>STT</span>
+            <span class="gantt-label"><button class="gantt-collapse-btn" id="gantt-stt-collapse" title="Toggle per-STT detail">▸</button>STT<button class="stt-pov-open-btn" id="stt-pov-open-btn" title="Show star tracker POV — Sun/Earth position relative to boresight, live"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg></button></span>
             <div class="gantt-track" id="gantt-stt"></div>
           </div>
           <div class="gantt-row gantt-stt-detail gantt-collapsed" id="gantt-stt1-row" title="STT1 windows where its own FOV would be blinded by the sun or Earth">
@@ -215,7 +251,9 @@
         <div class="tp-sep"></div>
 
         <!-- Playback controls -->
-        <button id="now-btn" title="Jump to now">NOW</button>
+        <button id="now-btn" class="tp-nav-btn" title="NOW — jump to the current UTC time. Re-centers the view on it; zoom level stays exactly as it is.">●</button>
+        <button id="home-btn" class="tp-nav-btn" title="HOME — jump to the current UTC time AND reset the view to the default ±5-day zoom.">⌂</button>
+        <button id="recenter-btn" class="tp-nav-btn" title="RECENTER — re-center the view on the current cursor position. Does not change the time or the zoom level.">◎</button>
         <button id="play-btn" title="Play / Pause">▶</button>
         <select id="speed-select" title="Simulation speed">
           <option value="1"   selected>1×</option>
@@ -227,14 +265,10 @@
 
         <div class="tp-sep"></div>
 
-        <!-- Timeline scrub with step buttons -->
-        <button class="step-btn" data-step="-86400" title="Back 1 day">−1d</button>
-        <button class="step-btn" data-step="-3600"  title="Back 1 hour">−1h</button>
+        <!-- Timeline scrub -->
         <div class="scrub-wrap">
-          <input id="time-scrub" type="range" min="-604800" max="604800" value="0" step="60" title="Drag to scrub ±7 days" />
+          <input id="time-scrub" type="range" min="-432000" max="432000" value="0" step="60" title="Drag to scrub ±5 days" />
         </div>
-        <button class="step-btn" data-step="3600"   title="Forward 1 hour">+1h</button>
-        <button class="step-btn" data-step="86400"  title="Forward 1 day">+1d</button>
 
 
       </div>

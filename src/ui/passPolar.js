@@ -331,6 +331,111 @@ export function buildPolarSVG(pass, sat, lat, lon, rxMask) {
   </svg>`;
 }
 
+// ── Cartesian (azimuth/elevation) plot — the polar plot's alternate view ───
+// Same underlying geometry (same pts/markers/rxMask, see computePolarPoints/
+// computePolarMarkers above) — just plotted as X=azimuth, Y=elevation instead
+// of radially. Opened from the polar plot's "⤢ Cartesian" button (see
+// passAzElModal.js) as a standalone, larger view — deliberately NOT wired
+// into passCursor.js's linked-cursor/Eb0 pairing; it's a simple self-
+// contained alternate read of the same pass, not a second interactive chart.
+const AZEL_W = 640, AZEL_H = 340;
+const AZEL_PAD_L = 36, AZEL_PAD_R = 14, AZEL_PAD_T = 14, AZEL_PAD_B = 56;
+const AZEL_CHART_W = AZEL_W - AZEL_PAD_L - AZEL_PAD_R;
+const AZEL_CHART_H = AZEL_H - AZEL_PAD_T - AZEL_PAD_B;
+
+/**
+ * Build the Cartesian az/el plot SVG. Same signature as buildPolarSVG.
+ * Returns an SVG string, or '' if not enough elevation points.
+ */
+export function buildAzElSVG(pass, sat, lat, lon, rxMask) {
+  const pts = computePolarPoints(pass, sat, lat, lon);
+  if (pts.length < 2) return '';
+
+  const maskVals = Array.isArray(rxMask) && rxMask.length >= 360 ? rxMask : null;
+  const maskPeak = maskVals ? Math.max(0, ...maskVals.filter(Number.isFinite)) : 0;
+  const dataMaxEl = Math.max(5, maskPeak, ...pts.map(p => p.el));
+  const yMax  = Math.min(90, Math.max(20, Math.ceil((dataMaxEl + 2) / 5) * 5));
+  const yStep = yMax <= 30 ? 5 : yMax <= 60 ? 10 : 20;
+
+  const xOf = az => +(AZEL_PAD_L + (az / 360) * AZEL_CHART_W).toFixed(1);
+  const yOf = el => +(AZEL_PAD_T + AZEL_CHART_H - (Math.max(0, Math.min(yMax, el)) / yMax) * AZEL_CHART_H).toFixed(1);
+
+  // Gridlines + axis tick labels
+  let gridSVG = '';
+  for (let az = 0; az <= 360; az += 60) {
+    const x = xOf(az);
+    gridSVG += `<line x1="${x}" y1="${AZEL_PAD_T}" x2="${x}" y2="${AZEL_PAD_T + AZEL_CHART_H}" stroke="#1e1e38" stroke-width="1"/>
+      <text x="${x}" y="${AZEL_PAD_T + AZEL_CHART_H + 16}" text-anchor="middle" fill="#5a5a8a" font-size="10" font-family="monospace">${az}°</text>`;
+  }
+  for (let el = 0; el <= yMax; el += yStep) {
+    const y = yOf(el);
+    gridSVG += `<line x1="${AZEL_PAD_L}" y1="${y}" x2="${AZEL_PAD_L + AZEL_CHART_W}" y2="${y}" stroke="#1e1e38" stroke-width="1"/>
+      <text x="${AZEL_PAD_L - 6}" y="${y + 3}" text-anchor="end" fill="#5a5a8a" font-size="10" font-family="monospace">${el}°</text>`;
+  }
+
+  // Rx mask — defined for every azimuth, so no wraparound gap to split unlike the trajectory below
+  const MASK_COLOR = '#ff6432'; // matches the polar plot's own mask shading hue — same meaning, same color
+  let maskSVG = '';
+  if (maskVals) {
+    const maskD = Array.from({ length: 360 }, (_, az) => `${az ? 'L' : 'M'}${xOf(az)},${yOf(maskVals[az] ?? 0)}`).join('');
+    maskSVG = `<path d="${maskD}" fill="none" stroke="${MASK_COLOR}" stroke-width="1.5"/>`;
+  }
+
+  // Trajectory — split into a new subpath wherever azimuth wraps around
+  // 0°/360° (a pass crossing due north), otherwise that wrap draws one long
+  // spurious line straight across the chart instead of exiting one edge and
+  // re-entering the other.
+  const TRAJ_COLOR = '#ff3060'; // matches the polar plot's own trajectory stroke
+  let trajD = '';
+  pts.forEach((p, i) => {
+    const wrapped = i > 0 && Math.abs(p.az - pts[i - 1].az) > 180;
+    trajD += `${i === 0 || wrapped ? 'M' : 'L'}${xOf(p.az)},${yOf(p.el)}`;
+  });
+  const trajSVG = `<path d="${trajD}" fill="none" stroke="${TRAJ_COLOR}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`;
+
+  const { aos, los, apogee, maskEntry, maskExit } = computePolarMarkers(pts, rxMask);
+  const dot   = (p, color, r = 3.5) => `<circle cx="${xOf(p.az)}" cy="${yOf(p.el)}" r="${r}" fill="${color}"/>`;
+  const label = (p, text, color) =>
+    `<text x="${xOf(p.az)}" y="${yOf(p.el) - 8}" text-anchor="middle" fill="${color}" font-size="9" font-family="monospace">${text}</text>`;
+
+  const markersSVG = `
+    ${dot(aos, MARKER_COLORS.aos)}${label(aos, `AOS ${aos.el.toFixed(0)}°`, MARKER_COLORS.aos)}
+    ${dot(los, MARKER_COLORS.los)}${label(los, `LOS ${los.el.toFixed(0)}°`, MARKER_COLORS.los)}
+    ${dot(apogee, MARKER_COLORS.apogee, 4)}${label(apogee, `${apogee.el.toFixed(0)}°`, MARKER_COLORS.apogee)}
+    ${maskEntry ? dot(maskEntry, MARKER_COLORS.maskEntry) + label(maskEntry, `▲${maskEntry.el.toFixed(0)}°`, MARKER_COLORS.maskEntry) : ''}
+    ${maskExit  ? dot(maskExit,  MARKER_COLORS.maskExit)  + label(maskExit,  `▼${maskExit.el.toFixed(0)}°`, MARKER_COLORS.maskExit)  : ''}`;
+
+  // Legend — only lists what's actually drawn (e.g. no "Rx Mask" swatch when this pass has none)
+  const legendItems = [
+    maskVals ? { color: MASK_COLOR, label: 'Rx Mask', line: true } : null,
+    { color: TRAJ_COLOR, label: 'Trajectory', line: true },
+    { color: MARKER_COLORS.aos, label: 'AOS' },
+    { color: MARKER_COLORS.los, label: 'LOS' },
+    maskEntry ? { color: MARKER_COLORS.maskEntry, label: 'Mask entry' } : null,
+    maskExit  ? { color: MARKER_COLORS.maskExit,  label: 'Mask exit'  } : null,
+    { color: MARKER_COLORS.apogee, label: 'Apogee' },
+  ].filter(Boolean);
+  let lx = AZEL_PAD_L;
+  const ly = AZEL_H - 16;
+  let legendSVG = '';
+  for (const item of legendItems) {
+    legendSVG += item.line
+      ? `<line x1="${lx}" y1="${ly - 3}" x2="${lx + 14}" y2="${ly - 3}" stroke="${item.color}" stroke-width="2"/>`
+      : `<circle cx="${lx + 7}" cy="${ly - 3}" r="3.5" fill="${item.color}"/>`;
+    legendSVG += `<text x="${lx + 18}" y="${ly}" fill="#9aa" font-size="10" font-family="monospace">${item.label}</text>`;
+    lx += 18 + item.label.length * 6 + 16;
+  }
+
+  return `<svg width="100%" viewBox="0 0 ${AZEL_W} ${AZEL_H}" xmlns="http://www.w3.org/2000/svg" class="pass-azel">
+    <rect x="${AZEL_PAD_L}" y="${AZEL_PAD_T}" width="${AZEL_CHART_W}" height="${AZEL_CHART_H}" fill="#0c0c1c" stroke="#2a2a44" stroke-width="1"/>
+    ${gridSVG}
+    ${maskSVG}
+    ${trajSVG}
+    ${markersSVG}
+    ${legendSVG}
+  </svg>`;
+}
+
 // Legacy sync wrapper (returns '' when no store.groundStations — use the async flow instead)
 export function buildPassPolarSVG(pass, sat, groundStations) {
   if (!sat?.satrec || !groundStations?.length) return '';

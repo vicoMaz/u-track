@@ -1,32 +1,12 @@
 import { store }                        from '../store.js';
 import { propagate }                    from '../tle.js';
 import { sunDirectionECI, isInEclipse } from '../sunVector.js';
-import { scheduleTmrFetch }             from '../tmrData.js';
-import { requestTmrGapDownload }        from '../tmrGapDownload.js';
-import { fetchPassGsCoords, buildPolarSVG, computePolarPoints, computePolarMarkers } from './passPolar.js';
-import { fetchProcedureReport, procedureReportHTML } from './procedureReport.js';
-import { fetchEbn0Series, ebn0HTML } from './ebn0.js';
-import { wireLinkedCursor } from './passCursor.js';
-import { satSubsystemHost }             from '../satSubsystems.js';
+import { scheduleTmrFetch, TMR_SOURCES } from '../tmrData.js';
+import { requestTmrGapDownload, fetchNextPassProcedures, findMatchingGapProcedure } from '../tmrGapDownload.js';
 import { satSunExclDeg, satEarthExclDeg, MODEL_STAR_TRACKERS } from '../satStarTracker.js';
 import { showActionToast }              from './actionToast.js';
-
-function _grafanaLokiUrl(grafanaHost, fromMs, toMs) {
-  return `http://${grafanaHost}:3000/a/grafana-lokiexplore-app/explore/service/-scc/logs`
-    + `?patterns=%5B%5D&from=${fromMs}&to=${toMs}`
-    + `&var-lineFormat=&var-ds=P8E80F9AEF21F6940`
-    + `&var-filters=service_name%7C%3D%7C%2Fscc`
-    + `&var-fields=&var-levels=&var-metadata=&var-jsonFields=`
-    + `&var-patterns=&var-lineFilterV2=&var-lineFilters=`
-    + `&timezone=browser&var-all-fields=&userDisplayedFields=false`
-    + `&displayedFields=%5B%5D&urlColumns=%5B%5D`
-    + `&visualizationType=%22logs%22&prettifyLogMessage=false`
-    + `&sortOrder=%22Descending%22&wrapLogMessage=false`;
-}
-
-function _grafanaHost() {
-  return satSubsystemHost(store.trackedSat?.noradId, 'sccRo') || null;
-}
+import { passSimpleTooltipContent, hydratePassGeometry } from './passTooltip.js';
+import { openPassDetail }               from './PassDetailPanel.js';
 
 
 const EPOCH = new Date();
@@ -38,6 +18,8 @@ let lastTs = null;
 
 const playBtn     = document.getElementById('play-btn');
 const nowBtn      = document.getElementById('now-btn');
+const homeBtn     = document.getElementById('home-btn');
+const recenterBtn = document.getElementById('recenter-btn');
 const speedSel    = document.getElementById('speed-select');
 const scrub       = document.getElementById('time-scrub');
 const dateInput   = document.getElementById('date-input');
@@ -53,12 +35,20 @@ const ganttStt2     = document.getElementById('gantt-stt2');
 const ganttStt1Row  = document.getElementById('gantt-stt1-row');
 const ganttStt2Row  = document.getElementById('gantt-stt2-row');
 const ganttSttCollapseBtn = document.getElementById('gantt-stt-collapse');
+const sttPovOpenBtn = document.getElementById('stt-pov-open-btn'); // click handler lives in sttPovWidget.js — referenced here only for the pan-gesture exemption below
 const ganttTmr      = document.getElementById('gantt-tmr');
+const ganttTmrPay   = document.getElementById('gantt-tmr-pay');
 const ganttSlots    = document.getElementById('gantt-slots');
 const ganttRuler    = document.getElementById('gantt-ruler');
 
 const ganttToggleBtn = document.getElementById('gantt-toggle');
 const trackingViewEl = document.getElementById('tracking-view');
+
+function _setGanttCollapsed(collapsed) {
+  document.body.classList.toggle('gantt-collapsed', collapsed);
+  if (ganttToggleBtn) ganttToggleBtn.textContent = collapsed ? '▼' : '▲';
+  // ResizeObserver handles the layout sync after the height change
+}
 
 // ── Layout sync: called after gantt expand/collapse or on resize ──────────────
 let _syncInProgress = false;
@@ -74,14 +64,24 @@ function _syncLayout() {
   _syncInProgress = false;
 }
 
-// Zoom / view state — the visible time window in seconds offset from EPOCH
-const MIN_SPAN_SEC  =      300; // 5 minutes
-const MAX_SPAN_SEC  = 60 * 86400; // 60 days
-let viewStartSec = -604800;  // initial: −7 days
-let viewEndSec   =  604800;  // initial: +7 days
+// Zoom / view state — the visible time window in seconds offset from EPOCH.
+// VIEW_HALF_SEC is the single source of truth for "how far out the gantt can
+// ever show" — it bounds the initial view, the max zoom-out, the manual
+// date-jump clamp, AND the eclipse/STT precompute window (ECLIPSE_HALF_SEC)
+// below, so every row shares the same horizon at max zoom-out instead of each
+// one running out of data at a different point (eclipse/STT were previously
+// precomputed to ±14 days while passes/TMR were only ever fetched for ±7 —
+// and the view could zoom out to ±30, exposing both mismatches at once).
+const VIEW_HALF_SEC = 5 * 86400; // ±5 days
+const MIN_SPAN_SEC  = 300;       // 5 minutes
+const MAX_SPAN_SEC  = VIEW_HALF_SEC * 2;
+let viewStartSec = -VIEW_HALF_SEC;
+let viewEndSec   =  VIEW_HALF_SEC;
 
-// Eclipse windows computed once per satellite, for a fixed ±14-day range around EPOCH
-const ECLIPSE_HALF_SEC = 14 * 86400;
+// Eclipse/STT windows computed once per satellite, for a ±VIEW_HALF_SEC range
+// around EPOCH — matches the max zoom-out so this data never runs out inside
+// the visible view (see VIEW_HALF_SEC above).
+const ECLIPSE_HALF_SEC = VIEW_HALF_SEC;
 const R_EARTH_KM = 6371;
 let _eclipseWindows = [];
 let _sttPerConeWindows = []; // [ [{start,end}...] per cone index ]
@@ -98,25 +98,109 @@ function _normalize(v) {
   const m = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
   return m > 1e-9 ? { x: v.x / m, y: v.y / m, z: v.z / m } : { x: 0, y: 0, z: 1 };
 }
+// Removes `boresight`'s component from `candidate` and renormalizes — null
+// if what's left is too small to normalize safely (candidate ≈ ±boresight).
+function _gramSchmidtUp(candidate, boresight) {
+  const d = _dot(candidate, boresight);
+  const raw = { x: candidate.x - boresight.x * d, y: candidate.y - boresight.y * d, z: candidate.z - boresight.z * d };
+  const len = Math.sqrt(raw.x ** 2 + raw.y ** 2 + raw.z ** 2);
+  return len > 1e-6 ? { x: raw.x / len, y: raw.y / len, z: raw.z / len } : null;
+}
 
-// Mirrors SatEntity.js's _computeOrientation + _updateStarTrackerCones' per-
-// cone boresight, in plain ECI vectors (angle-between/magnitude are
-// rotation-invariant, so skipping the gmst→ECEF step SatEntity.js needs for
-// on-globe rendering gives the identical result). 'anti-sun' cones always
-// point -sun; 'body' cones need the actual attitude basis (xECI=sun,
-// yECI/zECI completing the frame via Gram-Schmidt against zenith — same
-// degenerate-case fallback as SatEntity.js when sun≈zenith).
-function _sttConeBoresightEci(eciPos, sunDir, cfg) {
-  if (cfg.mode !== 'body') return { x: -sunDir.x, y: -sunDir.y, z: -sunDir.z };
+// Rotates vector `v` by quaternion `q` ({x,y,z,w}, scalar-last — the
+// convention store.attitude's posted entries use, same as Cesium.Quaternion,
+// NOT satStarTracker.js's bodyDirFromQuat's scalar-first convention, which is
+// a different fixed constant unrelated to this live table). Standard
+// optimized quaternion-vector rotation (avoids a full quaternion multiply).
+function _rotateByQuat(q, v) {
+  const t = _cross({ x: q.x, y: q.y, z: q.z }, v);
+  t.x *= 2; t.y *= 2; t.z *= 2;
+  const c = _cross({ x: q.x, y: q.y, z: q.z }, t);
+  return { x: v.x + q.w * t.x + c.x, y: v.y + q.w * t.y + c.y, z: v.z + q.w * t.z + c.z };
+}
+
+// Standard quaternion SLERP, shortest path, linear-interpolate-and-normalize
+// fallback when the two orientations are nearly identical (avoids a sin(θ)≈0
+// division). Same algorithm as Cesium.Quaternion.slerp, in plain JS.
+function _slerpQuat(a, b, t) {
+  let { x: bx, y: by, z: bz, w: bw } = b;
+  let dot = a.x * bx + a.y * by + a.z * bz + a.w * bw;
+  if (dot < 0) { bx = -bx; by = -by; bz = -bz; bw = -bw; dot = -dot; }
+  if (dot > 0.9995) {
+    const x = a.x + t * (bx - a.x), y = a.y + t * (by - a.y), z = a.z + t * (bz - a.z), w = a.w + t * (bw - a.w);
+    const len = Math.sqrt(x * x + y * y + z * z + w * w);
+    return { x: x / len, y: y / len, z: z / len, w: w / len };
+  }
+  const theta0 = Math.acos(Math.min(1, dot));
+  const theta  = theta0 * t;
+  const sin0   = Math.sin(theta0);
+  const s0 = Math.cos(theta) - dot * Math.sin(theta) / sin0;
+  const s1 = Math.sin(theta) / sin0;
+  return { x: s0 * a.x + s1 * bx, y: s0 * a.y + s1 * by, z: s0 * a.z + s1 * bz, w: s0 * a.w + s1 * bw };
+}
+
+// Binary-searches `entries` (sorted by .t, ms) for tMs and SLERPs the
+// bracketing pair — same technique as SatEntity.js's _attitudeFromTable.
+// Null if tMs falls outside the table's span (caller falls back to Default
+// Sun Pointing, same as SatEntity.js does for the globe).
+function _sampleAttitudeTable(entries, tMs) {
+  const first = entries[0], last = entries[entries.length - 1];
+  if (tMs < first.t || tMs > last.t) return null;
+  let lo = 0, hi = entries.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (entries[mid].t <= tMs) lo = mid; else hi = mid;
+  }
+  const a = entries[lo], b = entries[hi];
+  const frac = b.t > a.t ? (tMs - a.t) / (b.t - a.t) : 0;
+  return _slerpQuat(a.q, b.q, frac);
+}
+
+// The satellite's (xECI, yECI, zECI) body-axis basis at `date` — real posted
+// attitude (store.attitude, SLERPed) when the sim time falls inside its
+// table span, else the same Default Sun Pointing assumption SatEntity.js's
+// own _computeOrientation fallback uses (X=sun, Y=zenith projected
+// perpendicular to sun via Gram-Schmidt, Z completes the frame). Mirrors
+// SatEntity.js's _attitudeFromTable/_computeOrientation exactly, just in ECI
+// instead of ECEF — skips its gmst rotation entirely, since angle-between/
+// magnitude (all _isConeBlinded/computeSttGeometry actually need) are
+// rotation-invariant, so this gives identical results without needing gmst
+// here at all. Null if degenerate (no real attitude AND sun≈zenith).
+function _attitudeBasisEci(noradId, date, eciPos, sunDir) {
+  const att = store.attitude[noradId];
+  if (att?.entries?.length) {
+    const q = _sampleAttitudeTable(att.entries, date.getTime());
+    if (q) {
+      return {
+        xECI: _rotateByQuat(q, { x: 1, y: 0, z: 0 }),
+        yECI: _rotateByQuat(q, { x: 0, y: 1, z: 0 }),
+        zECI: _rotateByQuat(q, { x: 0, y: 0, z: 1 }),
+      };
+    }
+  }
   const rMag = Math.sqrt(eciPos.x ** 2 + eciPos.y ** 2 + eciPos.z ** 2);
   const zenith = { x: eciPos.x / rMag, y: eciPos.y / rMag, z: eciPos.z / rMag };
   const xECI = sunDir;
   const dot  = _dot(zenith, xECI);
   const yRaw = _sub(zenith, { x: xECI.x * dot, y: xECI.y * dot, z: xECI.z * dot });
   const yLen = Math.sqrt(yRaw.x ** 2 + yRaw.y ** 2 + yRaw.z ** 2);
-  if (yLen < 1e-6) return { x: -sunDir.x, y: -sunDir.y, z: -sunDir.z }; // degenerate: sun ≈ zenith
+  if (yLen < 1e-6) return null; // degenerate: sun ≈ zenith
   const yECI = { x: yRaw.x / yLen, y: yRaw.y / yLen, z: yRaw.z / yLen };
   const zECI = _cross(xECI, yECI);
+  return { xECI, yECI, zECI };
+}
+
+// Mirrors SatEntity.js's _computeOrientation + _updateStarTrackerCones' per-
+// cone boresight, in plain ECI vectors (see _attitudeBasisEci above for why
+// ECI, skipping SatEntity.js's gmst→ECEF step, gives identical results).
+// 'anti-sun' cones always point -sun (this mode has no attitude dependency
+// at all, real or assumed — 12U's own definition). 'body' cones need the
+// actual attitude basis (real when available, else Default Sun Pointing).
+function _sttConeBoresightEci(eciPos, sunDir, cfg, noradId, date) {
+  if (cfg.mode !== 'body') return { x: -sunDir.x, y: -sunDir.y, z: -sunDir.z };
+  const basis = _attitudeBasisEci(noradId, date, eciPos, sunDir);
+  if (!basis) return { x: -sunDir.x, y: -sunDir.y, z: -sunDir.z }; // degenerate fallback
+  const { xECI, yECI, zECI } = basis;
   // Same arrow-labeled-frame → raw-basis conversion as SatEntity.js's
   // _updateStarTrackerCones: (-dir.z,-dir.y,-dir.x) weights (xECI,yECI,zECI).
   const { dir } = cfg;
@@ -127,15 +211,91 @@ function _sttConeBoresightEci(eciPos, sunDir, cfg) {
   });
 }
 
-function _isConeBlinded(eciPos, sunDir, cfg, sunExclDeg, earthExclDeg) {
+function _angleDeg(a, b) {
+  return Math.acos(Math.max(-1, Math.min(1, _dot(a, b)))) * 180 / Math.PI;
+}
+
+function _isConeBlinded(eciPos, sunDir, cfg, sunExclDeg, earthExclDeg, noradId, date) {
   const rMag = Math.sqrt(eciPos.x ** 2 + eciPos.y ** 2 + eciPos.z ** 2);
   const nadir = { x: -eciPos.x / rMag, y: -eciPos.y / rMag, z: -eciPos.z / rMag };
-  const boresight = _sttConeBoresightEci(eciPos, sunDir, cfg);
-  const sunAngleDeg    = Math.acos(Math.max(-1, Math.min(1, _dot(boresight, sunDir)))) * 180 / Math.PI;
-  const earthAngleDeg  = Math.acos(Math.max(-1, Math.min(1, _dot(boresight, nadir))))  * 180 / Math.PI;
+  const boresight = _sttConeBoresightEci(eciPos, sunDir, cfg, noradId, date);
+  const sunAngleDeg    = _angleDeg(boresight, sunDir);
+  const earthAngleDeg  = _angleDeg(boresight, nadir);
   const earthRadiusDeg = Math.asin(Math.max(-1, Math.min(1, R_EARTH_KM / rMag))) * 180 / Math.PI;
   return sunAngleDeg < sunExclDeg || earthAngleDeg < earthRadiusDeg + earthExclDeg;
 }
+
+// Projects unit vector `v` into the local (up, right) frame around
+// `boresight` as {az, dist} degrees — dist is the angular separation from
+// boresight (the same value _isConeBlinded already computes for sun/earth),
+// az is rotation around it measured from `up` toward `right`. Degenerate at
+// dist≈180° (v opposite boresight, e.g. 12U's Sun by construction — see
+// computeSttGeometry's own comment) — az is meaningless there, but that case
+// renders off the edge of any reasonable POV circle anyway, so it doesn't matter.
+// Near dist≈0° (v≈boresight) or dist≈180° (v≈-boresight — always EXACTLY
+// 180° for 12U's Sun, by construction, see computeSttGeometry's own
+// comment), both dot(v,up) and dot(v,right) collapse toward zero together,
+// since v is then nearly (anti)parallel to boresight and up/right are both
+// perpendicular to it. atan2 of two near-zero, floating-point-noisy values
+// is essentially a random angle that changes wildly frame to frame even
+// though the real geometry barely moved — visually, the point spins rapidly
+// around the rim instead of sitting still. Same threshold/pattern as
+// _gramSchmidtUp's own degenerate check above: below it, azimuth is
+// genuinely undefined, so freeze it at a fixed reference (0°) instead of
+// rendering whatever noise atan2 happens to return.
+function _projectAroundBoresight(v, boresight, up, right) {
+  const uComp = _dot(v, up), rComp = _dot(v, right);
+  const az = (uComp * uComp + rComp * rComp) > 1e-12 ? Math.atan2(rComp, uComp) * 180 / Math.PI : 0;
+  return { az, dist: _angleDeg(boresight, v) };
+}
+
+// Star tracker POV geometry for one cone at one instant — same underlying
+// math as _isConeBlinded above (boresight/sun-angle/earth-angle), reused
+// rather than re-derived so sttPovWidget.js's circular view can never drift
+// out of sync with what the gantt's own STT row is actually showing. Adds a
+// 2D projection: a local (up, right) frame perpendicular to the boresight,
+// built from the orbit normal (cross(position, velocity)) as a stable "roll"
+// reference. 12U's anti-sun boresight has no roll of its own to borrow (by
+// construction, its boresight = -sunDir exactly, so its Sun-to-boresight
+// angle is always precisely 180° — Sun exclusion can never actually trigger
+// for that model, only Earth crossing into view does) — this gives every
+// model a consistent, non-arbitrary orientation to render against instead of
+// an undefined one. Returns null if the satellite can't currently be
+// propagated (e.g. decayed).
+export function computeSttGeometry(sat, date, cfg, sunExclDeg, earthExclDeg) {
+  const r = propagate(sat.satrec, date);
+  if (!r) return null;
+  const { eciPos, eciVel } = r;
+  const sunDir = sunDirectionECI(date);
+  const rMag = Math.sqrt(eciPos.x ** 2 + eciPos.y ** 2 + eciPos.z ** 2);
+  const nadir = { x: -eciPos.x / rMag, y: -eciPos.y / rMag, z: -eciPos.z / rMag };
+  const boresight = _sttConeBoresightEci(eciPos, sunDir, cfg, sat.noradId, date);
+
+  const sunAngleDeg    = _angleDeg(boresight, sunDir);
+  const earthAngleDeg  = _angleDeg(boresight, nadir);
+  const earthRadiusDeg = Math.asin(Math.max(-1, Math.min(1, R_EARTH_KM / rMag))) * 180 / Math.PI;
+  // Kept separate (not just their OR) so sttPov.js can highlight whichever
+  // specific threshold ring was actually crossed instead of a generic
+  // "something is blinded" indicator — either can be true independently
+  // (fused STT blinding is only "every cone blinded", but a single cone can
+  // be blinded by Sun, Earth, or both at once).
+  const sunBlinded   = sunAngleDeg < sunExclDeg;
+  const earthBlinded = earthAngleDeg < earthRadiusDeg + earthExclDeg;
+  const blinded = sunBlinded || earthBlinded;
+
+  const orbitNormal = _normalize(_cross(eciPos, eciVel));
+  const up = _gramSchmidtUp(orbitNormal, boresight)
+    ?? _gramSchmidtUp({ x: 0, y: 0, z: 1 }, boresight)
+    ?? { x: 1, y: 0, z: 0 };
+  const right = _cross(boresight, up);
+
+  return {
+    blinded, sunBlinded, earthBlinded, sunAngleDeg, earthAngleDeg, earthRadiusDeg, sunExclDeg, earthExclDeg,
+    sun:   _projectAroundBoresight(sunDir, boresight, up, right),
+    earth: _projectAroundBoresight(nadir,  boresight, up, right),
+  };
+}
+
 let _passWindows    = []; // [{ start: ms, end: ms, pass: fullPassObj }]
 
 // ── Pass tooltip ──────────────────────────────────────────────────
@@ -151,52 +311,6 @@ function _fmtDT(d) {
        + `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} UTC`;
 }
 
-function _fmtDurPass(ms) {
-  const m = Math.floor(ms / 60000);
-  const s = Math.floor((ms % 60000) / 1000);
-  return `${m}m ${String(s).padStart(2, '0')}s`;
-}
-
-const _PROC_CLS = { SUCCESS: 'co-tt-ok', FAILURE: 'co-tt-fail', CANCELLED: 'co-tt-cancelled' };
-const _PROC_CH  = { SUCCESS: '●', FAILURE: '✗', CANCELLED: '◌' };
-
-function _passTooltipHTML(pass, grafanaHost) {
-  const start = pass.start instanceof Date ? pass.start : new Date(pass.start);
-  const end   = pass.end   instanceof Date ? pass.end   : new Date(pass.end);
-  const netTag = pass.network ? `<span class="co-tt-network">${pass.network}</span>` : '';
-  const hdr   = `<div class="co-tt-header">${pass.station ?? '—'}${netTag}</div>`;
-  const details = `<div class="co-tt-section-title">Pass details</div>
-    <div class="co-tt-time-row"><span class="co-tt-time-lbl">AOS</span>${_fmtDT(start)}</div>
-    <div class="co-tt-time-row"><span class="co-tt-time-lbl">LOS</span>${_fmtDT(end)}</div>
-    <div class="co-tt-time-row"><span class="co-tt-time-lbl">DUR</span>${_fmtDurPass(end - start)}</div>
-    <div class="co-tt-details-row">
-      <div class="polar-slot"></div>
-      <div class="ebn0-slot"></div>
-    </div>`;
-  const reportSlot = '<div class="proc-report-slot"></div>';
-  if (pass.future) return hdr + details + `<div class="co-tt-future-status co-dot-future" style="margin-top:6px">○ SCHEDULED</div>`;
-  const historyTitle = `<div class="co-tt-sep"></div><div class="co-tt-section-title">Procedure history</div>`;
-  if (!pass.procedures?.length) {
-    const passLink = grafanaHost
-      ? `<a href="${_grafanaLokiUrl(grafanaHost, start.getTime() - 30000, end.getTime() + 30000)}" target="_blank" rel="noopener" class="co-tt-proc co-tt-ok co-tt-link" style="margin-top:6px">● PASS OCCURRED ↗</a>`
-      : `<div class="co-tt-proc co-tt-ok" style="margin-top:6px">● PASS OCCURRED</div>`;
-    return hdr + details + historyTitle + passLink + reportSlot;
-  }
-  const procs = pass.procedures.map((pr, i) => {
-    const cls  = _PROC_CLS[pr.status] ?? 'co-tt-ok';
-    const ch   = _PROC_CH[pr.status]  ?? '●';
-    const num  = `<span class="co-tt-num">${i + 1}</span>`;
-    const name = `<span class="co-tt-pname">${ch} ${pr.name}</span>`;
-    const pdur = pr.endMs && pr.startMs ? `<span class="co-tt-dur">${_fmtDurPass(pr.endMs - pr.startMs)}</span>` : '';
-    if (grafanaHost) {
-      const url = _grafanaLokiUrl(grafanaHost, pr.startMs - 1000, pr.endMs + 1000);
-      return `<a href="${url}" target="_blank" rel="noopener" class="co-tt-proc co-tt-link ${cls}">${num}${name}${pdur}</a>`;
-    }
-    return `<div class="co-tt-proc ${cls}">${num}${name}${pdur}</div>`;
-  }).join('');
-  return hdr + details + historyTitle + `<div class="co-tt-procs">${procs}</div>` + reportSlot;
-}
-
 function _posTooltipAt(clientX, clientY) {
   if (!_ganttTooltip) return;
   const pad = 14;
@@ -209,55 +323,18 @@ function _posTooltipAt(clientX, clientY) {
   _ganttTooltip.style.top  = `${y}px`;
 }
 
-async function _showPassTooltip(e, pass) {
+// Fast, synchronous hover preview — see passTooltip.js. Full detail (polar
+// plot, Eb/N0 chart, procedure history/report) opens in PassDetailPanel.js
+// on click instead (see _renderGanttPasses).
+function _showPassTooltip(e, pass) {
   _ttAnchorX = e.clientX;
   _ttAnchorY = e.clientY;
   clearTimeout(_ttHideTimer);
-  const grafanaHost = _grafanaHost();
-  _ganttTooltip.innerHTML     = _passTooltipHTML(pass, grafanaHost);
+  _openGapTooltip = null; // this tooltip now shows a pass, not a gap
+  _ganttTooltip.innerHTML     = passSimpleTooltipContent(pass, store.trackedSat);
   _ganttTooltip.style.display = 'block';
   _posTooltipAt(_ttAnchorX, _ttAnchorY);
-  // Async: resolve procedure-execution report, inject when ready
-  if (!pass.future && grafanaHost) {
-    const startMs = pass.start instanceof Date ? pass.start.getTime() : pass.start;
-    const endMs   = pass.end   instanceof Date ? pass.end.getTime()   : pass.end;
-    fetchProcedureReport(grafanaHost, startMs, endMs).then(report => {
-      if (_ganttTooltip.style.display === 'none') return;
-      const slot = _ganttTooltip.querySelector('.proc-report-slot');
-      if (slot) { slot.outerHTML = procedureReportHTML(report); _posTooltipAt(_ttAnchorX, _ttAnchorY); }
-    });
-  }
-  // Eb/N0 series and polar coords are fetched in parallel, but injected and
-  // cursor-linked together — the shared hover needs both charts in the DOM at
-  // once, so neither pops in independently ahead of the other.
-  const sat = store.trackedSat;
-  const pStartMs = pass.start instanceof Date ? pass.start.getTime() : pass.start;
-  const pEndMs   = pass.end   instanceof Date ? pass.end.getTime()   : pass.end;
-  const ebn0Promise = (!pass.future && sat?.noradId)
-    ? fetchEbn0Series(sat.noradId, pStartMs, pEndMs, pass.network)
-    : Promise.resolve(null);
-  const coordsPromise = sat?.satrec
-    ? fetchPassGsCoords(sat, pass, store.groundStations)
-    : Promise.resolve(null);
-
-  const [series, coords] = await Promise.all([ebn0Promise, coordsPromise]);
-  if (_ganttTooltip.style.display === 'none') return;
-
-  let polarPoints = null, markers = null;
-  const polarSlot = _ganttTooltip.querySelector('.polar-slot');
-  if (coords && polarSlot) {
-    polarSlot.outerHTML = buildPolarSVG(pass, sat, coords.lat, coords.lon, coords.rxMask);
-    polarPoints = computePolarPoints(pass, sat, coords.lat, coords.lon);
-    markers = computePolarMarkers(polarPoints, coords.rxMask);
-  }
-  const polarEl = _ganttTooltip.querySelector('.pass-polar');
-
-  const ebn0Slot = _ganttTooltip.querySelector('.ebn0-slot');
-  if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers, pass.procedures, { t0: pStartMs, t1: pEndMs });
-  const ebn0El = _ganttTooltip.querySelector('.ebn0-chart');
-
-  _posTooltipAt(_ttAnchorX, _ttAnchorY); // re-anchor: tooltip may now be taller
-  wireLinkedCursor(polarEl, polarPoints, ebn0El, series, pass.procedures);
+  hydratePassGeometry(_ganttTooltip, e, pass, store.trackedSat);
 }
 
 function _hidePassTooltipSoon() {
@@ -273,39 +350,133 @@ function _fmtGapDuration(ms) {
   return `${h}h ${String(m).padStart(2, '0')}m`;
 }
 
-function _gapTooltipHTML(gap) {
+function _passLabel(pass) {
+  if (!pass) return '—';
+  return pass.groundStationId ? `${pass.groundStationId} (${_fmtDT(pass.start)})` : _fmtDT(pass.start);
+}
+
+// The onboard TM store is a circular buffer holding ~3 days before newer
+// telemetry starts overwriting the oldest — so an ungrounded gap becomes
+// increasingly urgent to download as it approaches that limit, then (once
+// past it) is likely gone for good. Judged from real wall-clock time against
+// the gap's own end (the most recent moment still missing), not the
+// simulated/scrubbed time — the buffer ages in the real world regardless of
+// what the timeline is currently scrubbed to.
+const GAP_WARN_MS = 2 * 86_400_000; // 2 days: getting close to being overwritten
+const GAP_LOST_MS = 3 * 86_400_000; // 3 days: the buffer's approximate hold time
+
+function _gapAgeMs(gap) {
+  return Date.now() - gap.end;
+}
+
+// null (not yet urgent) | 'warn' (2-3 days) | 'lost' (past 3 days)
+function _gapUrgency(gap) {
+  const age = _gapAgeMs(gap);
+  if (age >= GAP_LOST_MS) return 'lost';
+  if (age >= GAP_WARN_MS) return 'warn';
+  return null;
+}
+
+const _GAP_URGENCY_STATUS = {
+  warn: 'Approaching the ~3-day onboard TM buffer limit — download soon or this data will be overwritten.',
+  lost: 'Past the ~3-day onboard TM buffer limit — this data has likely already been overwritten onboard.',
+};
+
+// `match` is a scheduled-procedure object from findMatchingGapProcedure (or
+// null/undefined if none matched, or the check hasn't resolved yet — either
+// way the button stays enabled; only a confirmed match greys it out). `pass`
+// is the separate {groundStationId, start} the match was found on — it's not
+// a field of `match` itself (findMatchingGapProcedure returns the raw
+// scheduled-procedure entry, which has no knowledge of which pass it's on).
+function _gapTooltipHTML(gap, match, pass) {
   const start = new Date(gap.start);
   const end   = new Date(gap.end);
   const hdr   = `<div class="co-tt-header">TMR GAP · ${_fmtGapDuration(end - start)}</div>`;
   const times = `<div class="co-tt-time-row"><span class="co-tt-time-lbl">FROM</span>${_fmtDT(start)}</div>`
               + `<div class="co-tt-time-row"><span class="co-tt-time-lbl">TO</span>${_fmtDT(end)}</div>`;
-  const btn   = `<button type="button" class="co-tt-gap-btn">Download Gap TMR</button>`;
-  return hdr + times + btn;
+  const urgency     = _gapUrgency(gap);
+  const urgencyHtml = urgency ? `<div class="co-tt-gap-status co-tt-gap-${urgency}">${_GAP_URGENCY_STATUS[urgency]}</div>` : '';
+  if (match) {
+    const status = `<div class="co-tt-gap-status">TMR was requested in pass ${_passLabel(pass)}</div>`;
+    const btn = `<button type="button" class="co-tt-gap-btn" disabled>Download Gap TMR</button>`;
+    return hdr + times + status + urgencyHtml + btn;
+  }
+  const btn = `<button type="button" class="co-tt-gap-btn">Download Gap TMR</button>`;
+  return hdr + times + urgencyHtml + btn;
+}
+
+// Gaps with a successful/already-scheduled download request — rendered
+// green/diagonal-dashed, contained to the gap's own start→end bounds (see
+// _renderGanttTmr). Once the backfill actually lands, the gap simply stops
+// appearing in gapWindows and the full green coverage bar shows through
+// underneath — no separate "success" rendering needed.
+//
+// Ground truth for "is this requested?" is SCC's own scheduled-procedures
+// list on the satellite's next pass (see tmrGapDownload.js's
+// fetchNextPassProcedures/findMatchingGapProcedure) — not a local flag — so
+// this is naturally shared across every client looking at the same
+// satellite, and survives a reload for free. Cached per satellite (all of a
+// satellite's gaps share the same "next pass", so one fetch serves every gap
+// via the pure, no-network findMatchingGapProcedure).
+const SCC_CHECK_TTL_MS = 30_000;
+const _sccPassCache = new Map(); // satId → { atMs, data: {pass, scheduled} | null }
+let _openGapTooltip = null; // { gap, sat } while a gap tooltip is visible — lets a background refresh patch it in place
+
+// Returns whatever's currently cached (possibly stale, possibly null if never
+// fetched) and, if it's stale/forced, kicks off a background refresh that
+// re-renders the TMR row and the open gap tooltip (if any) once it resolves.
+function _getSccPassCheck(sat, { forceRefresh = false } = {}) {
+  const cached = _sccPassCache.get(sat.id);
+  const stale  = !cached || (Date.now() - cached.atMs) > SCC_CHECK_TTL_MS;
+  if (forceRefresh || stale) {
+    // Stamp "in flight" now so concurrent callers within this same render
+    // pass (one per gap) don't each trigger their own redundant fetch.
+    _sccPassCache.set(sat.id, { atMs: Date.now(), data: cached?.data ?? null });
+    fetchNextPassProcedures(sat).then(data => {
+      _sccPassCache.set(sat.id, { atMs: Date.now(), data });
+      _renderGanttTmrRows();
+      if (_openGapTooltip?.sat.id === sat.id && _ganttTooltip.style.display !== 'none') {
+        _renderGapTooltip(_openGapTooltip.gap, _openGapTooltip.sat);
+        _posTooltipAt(_ttAnchorX, _ttAnchorY);
+      }
+    });
+  }
+  return cached?.data ?? null;
+}
+
+function _renderGapTooltip(gap, sat) {
+  const data  = _sccPassCache.get(sat.id)?.data ?? null;
+  const match = findMatchingGapProcedure(data?.scheduled, gap);
+  _ganttTooltip.innerHTML = _gapTooltipHTML(gap, match, data?.pass);
+  const btn = _ganttTooltip.querySelector('.co-tt-gap-btn');
+  if (btn && !btn.disabled) {
+    btn.addEventListener('click', async () => {
+      btn.disabled    = true;
+      btn.textContent = 'Requesting…';
+      try {
+        const { linkEstablished } = await requestTmrGapDownload(sat, gap);
+        _getSccPassCheck(sat, { forceRefresh: true }); // reflect the new request as soon as it lands
+        showActionToast(linkEstablished
+          ? 'TM/TC link + TMR gap download scheduled on the next pass.'
+          : 'TMR gap download scheduled on the next pass.');
+      } catch (err) {
+        showActionToast(`Request failed: ${err.message}`);
+        btn.disabled    = false;
+        btn.textContent = 'Download Gap TMR';
+      }
+    });
+  }
 }
 
 function _showGapTooltip(e, gap, sat) {
   _ttAnchorX = e.clientX;
   _ttAnchorY = e.clientY;
   clearTimeout(_ttHideTimer);
-  _ganttTooltip.innerHTML     = _gapTooltipHTML(gap);
+  _openGapTooltip = { gap, sat };
+  _renderGapTooltip(gap, sat);
   _ganttTooltip.style.display = 'block';
   _posTooltipAt(_ttAnchorX, _ttAnchorY);
-  const btn = _ganttTooltip.querySelector('.co-tt-gap-btn');
-  if (btn) btn.addEventListener('click', async () => {
-    btn.disabled    = true;
-    btn.textContent = 'Requesting…';
-    try {
-      const { linkEstablished } = await requestTmrGapDownload(sat, gap);
-      showActionToast(linkEstablished
-        ? 'TM/TC link + TMR gap download scheduled on the next pass.'
-        : 'TMR gap download scheduled on the next pass.');
-    } catch (err) {
-      showActionToast(`Request failed: ${err.message}`);
-    } finally {
-      btn.disabled    = false;
-      btn.textContent = 'Download Gap TMR';
-    }
-  });
+  _getSccPassCheck(sat); // uses cache if fresh; refreshes in the background otherwise
 }
 
 // Measured pixel offsets from gantt left/right edges to track start/end — set by _alignGantt()
@@ -347,6 +518,26 @@ function _scheduleApplyView() {
 function _viewSpan()    { return viewEndSec - viewStartSec; }
 function _viewStartMs() { return EPOCH.getTime() + viewStartSec * 1000; }
 function _viewRangeMs() { return _viewSpan() * 1000; }
+
+// Hard-stops pan/zoom at ±VIEW_HALF_SEC — the shared horizon every row's own
+// data is bounded to one way or another (TMR's own fetch range, eclipse/STT's
+// precompute window, passes' fetch window — each a bit different, see
+// VIEW_HALF_SEC's own comment above). Past it, a row's bars simply stop
+// rendering while others may still show something, or vice versa — dragging
+// the view out there shows a different "runs out" edge per row instead of
+// one consistent boundary. Span itself is never touched, only shifted back
+// into range, so this never fights the current zoom level.
+function _clampView() {
+  if (viewStartSec < -VIEW_HALF_SEC) {
+    const span = viewEndSec - viewStartSec;
+    viewStartSec = -VIEW_HALF_SEC;
+    viewEndSec   = viewStartSec + span;
+  } else if (viewEndSec > VIEW_HALF_SEC) {
+    const span = viewEndSec - viewStartSec;
+    viewEndSec   = VIEW_HALF_SEC;
+    viewStartSec = viewEndSec - span;
+  }
+}
 
 function formatDisplay(date) {
   const p = (n, w = 2) => String(n).padStart(w, '0');
@@ -400,12 +591,6 @@ function stopPlay() {
   playBtn.textContent = '▶';
   playBtn.classList.remove('playing');
   if (lastRaf) cancelAnimationFrame(lastRaf);
-}
-
-function step(deltaSec) {
-  stopPlay();
-  scrubOffsetSec = Math.max(-MAX_SPAN_SEC / 2, Math.min(MAX_SPAN_SEC / 2, scrubOffsetSec + deltaSec));
-  applyTime();
 }
 
 // ── Gantt helpers ────────────────────────────────────────────────────────────
@@ -471,17 +656,11 @@ function _renderGanttPasses() {
     if (pass) {
       bar.addEventListener('mouseenter', e => _showPassTooltip(e, pass));
       bar.addEventListener('mouseleave', _hidePassTooltipSoon);
-      if (!pass.future) {
-        const gh = _grafanaHost();
-        if (gh) {
-          const start = pass.start instanceof Date ? pass.start : new Date(pass.start);
-          const end   = pass.end   instanceof Date ? pass.end   : new Date(pass.end);
-          bar.style.cursor = 'pointer';
-          bar.addEventListener('click', () => {
-            window.open(_grafanaLokiUrl(gh, start.getTime() - 30000, end.getTime() + 30000), '_blank', 'noopener');
-          });
-        }
-      }
+      bar.style.cursor = 'pointer';
+      bar.addEventListener('click', () => {
+        _ganttTooltip.style.display = 'none';
+        openPassDetail(pass, store.trackedSat, store.groundStations);
+      });
     }
     ganttPasses.appendChild(bar);
   }
@@ -510,12 +689,20 @@ function _refreshSttRowVisibility() {
   ganttStt2Row?.classList.toggle('gantt-collapsed', !showStt2);
 }
 
-function _renderGanttTmr() {
-  if (!ganttTmr) return;
-  ganttTmr.innerHTML = '';
-  ganttTmr.style.background = '';  // reset
+// One TMR row per source (see tmrData.js's TMR_SOURCES) — BUS and PAY are
+// independent onboard packet stores with independent gap coverage, so each
+// gets its own track/container and is rendered separately.
+function _renderGanttTmrRows() {
+  _renderGanttTmr(ganttTmr,    'bus');
+  _renderGanttTmr(ganttTmrPay, 'pay');
+}
+
+function _renderGanttTmr(container, source) {
+  if (!container) return;
+  container.innerHTML = '';
+  container.style.background = '';  // reset
   const sat = store.trackedSat;
-  const tmr = sat ? store.satTmr[sat.id] : null;
+  const tmr = sat ? store.satTmr[sat.id]?.[source] : null;
   if (!tmr) return;
 
   const { rangeStart, rangeEnd, gapWindows } = tmr;
@@ -534,24 +721,42 @@ function _renderGanttTmr() {
     cov.style.width      = `${(rcCov - lcCov).toFixed(3)}%`;
     cov.style.background = '#00cc66';
     cov.style.boxShadow  = '0 0 6px #00cc6666';
-    ganttTmr.appendChild(cov);
+    container.appendChild(cov);
   }
 
-  // Dark overlay bars for gap periods — appended directly, never clears the green bar
+  // Dark overlay bars for gap periods — appended directly, never clears the green bar.
+  // A gap already requested (a matching PUS-15 downlink scheduled on SCC's
+  // next pass — see _getSccPassCheck/findMatchingGapProcedure) renders
+  // green/diagonal-dashed, contained to the gap's own bounds (no extension).
+  // Once the backfill actually lands, the gap simply stops appearing in
+  // gapWindows and the full green coverage bar shows through automatically —
+  // nothing extra to draw for that case.
+  //
+  // Priority when a gap is BOTH requested AND past the buffer limit: red wins
+  // — the data being probably-already-gone is the more urgent, irreversible
+  // fact, more important to see at a glance than "a request is in flight".
+  const sccData = sat ? _getSccPassCheck(sat) : null;
   for (const { start, end } of gapWindows) {
+    const isPending = !!findMatchingGapProcedure(sccData?.scheduled, { start, end });
+    const urgency   = _gapUrgency({ start, end });
+
     const l  = (start - tMin) / rangeMs * 100;
     const r  = (end   - tMin) / rangeMs * 100;
     const lc = Math.max(0, l);
     const rc = Math.min(100, r);
     if (rc - lc < 0.01) continue;
     const bar = document.createElement('div');
-    bar.className        = 'gantt-bar gantt-bar-gap';
-    bar.style.left       = `${lc.toFixed(3)}%`;
-    bar.style.width      = `${(rc - lc).toFixed(3)}%`;
-    bar.style.background = '#12121e';
+    const cls = urgency === 'lost' ? 'gantt-bar-gap-lost'
+              : isPending          ? 'gantt-bar-gap-pending'
+              : urgency === 'warn' ? 'gantt-bar-gap-warn'
+              : 'gantt-bar-gap';
+    bar.className = `gantt-bar ${cls}`;
+    bar.style.left  = `${lc.toFixed(3)}%`;
+    bar.style.width = `${(rc - lc).toFixed(3)}%`;
+    if (cls === 'gantt-bar-gap') bar.style.background = '#12121e';
     bar.addEventListener('mouseenter', e => _showGapTooltip(e, { start, end }, sat));
     bar.addEventListener('mouseleave', _hidePassTooltipSoon);
-    ganttTmr.appendChild(bar);
+    container.appendChild(bar);
   }
 }
 
@@ -652,7 +857,7 @@ function* _eclipseSttWork(sat) {
       if (ecl && !inEcl)      { wStart = t; inEcl = true; }
       else if (!ecl && inEcl) { windows.push({ start: wStart, end: t }); inEcl = false; }
 
-      const blindedFlags = cones.map(cfg => _isConeBlinded(r.eciPos, sunDir, cfg, sunExclDeg, earthExclDeg));
+      const blindedFlags = cones.map(cfg => _isConeBlinded(r.eciPos, sunDir, cfg, sunExclDeg, earthExclDeg, sat.noradId, d));
       blindedFlags.forEach((blinded, i) => {
         const cs = coneStates[i];
         if (blinded && !cs.in)      { cs.start = t; cs.in = true; }
@@ -705,9 +910,10 @@ function _updateGanttEclipse() {
 
 // Re-render all gantt layers and update scrubber range for the current view
 function _applyView() {
+  _clampView();
   scrub.min = viewStartSec;
   scrub.max = viewEndSec;
-  _renderGanttTmr();
+  _renderGanttTmrRows();
   _renderGanttPasses();
   _renderGanttEclipse();
   _renderGanttStt();
@@ -738,16 +944,43 @@ export function initTimePlayer() {
 
   playBtn.addEventListener('click', () => playing ? stopPlay() : startPlay());
 
+  // NOW — jumps the cursor to the current UTC time and re-centers the view on
+  // it, but leaves the current zoom (view span) exactly as the user left it.
   nowBtn.addEventListener('click', () => {
     EPOCH.setTime(Date.now());
     _eclipseJobSat = null;
     scrubOffsetSec = 0;
-    viewStartSec = -604800;
-    viewEndSec   =  604800;
+    const span = _viewSpan(); // preserve current zoom
+    viewStartSec = -span / 2;
+    viewEndSec   =  span / 2;
     applyTime();
     _applyView();
     _updateGanttEclipse();
     if (!playing) startPlay();
+  });
+
+  // HOME — NOW's old behavior: jump to the current UTC time AND reset the
+  // zoom back to the default ±VIEW_HALF_SEC window.
+  homeBtn.addEventListener('click', () => {
+    EPOCH.setTime(Date.now());
+    _eclipseJobSat = null;
+    scrubOffsetSec = 0;
+    viewStartSec = -VIEW_HALF_SEC;
+    viewEndSec   =  VIEW_HALF_SEC;
+    applyTime();
+    _applyView();
+    _updateGanttEclipse();
+    if (!playing) startPlay();
+  });
+
+  // RECENTER — pure view operation: re-centers the (unchanged) zoom span on
+  // wherever the cursor currently sits, without touching time or playback.
+  // Undoes drifting the view away from the cursor via pan/wheel-zoom.
+  recenterBtn.addEventListener('click', () => {
+    const span = _viewSpan();
+    viewStartSec = scrubOffsetSec - span / 2;
+    viewEndSec   = scrubOffsetSec + span / 2;
+    _applyView();
   });
 
   speedSel.addEventListener('change', () => { speed = Number(speedSel.value); });
@@ -758,18 +991,13 @@ export function initTimePlayer() {
     applyTime();
   });
 
-  // Step buttons (−1d, −1h, +1h, +1d)
-  document.querySelectorAll('.step-btn').forEach(btn => {
-    btn.addEventListener('click', () => step(Number(btn.dataset.step)));
-  });
-
   // Manual date jump — parse DD-MM-YYYY HH:MM:SS on Enter or blur
   const commitDateInput = () => {
     const parsed = parseDisplay(dateInput.value);
     if (!parsed) { dateInput.value = formatDisplay(new Date(EPOCH.getTime() + scrubOffsetSec * 1000)); return; }
     stopPlay();
     scrubOffsetSec = (parsed.getTime() - EPOCH.getTime()) / 1000;
-    scrubOffsetSec = Math.max(-604800, Math.min(604800, scrubOffsetSec));
+    scrubOffsetSec = Math.max(-VIEW_HALF_SEC, Math.min(VIEW_HALF_SEC, scrubOffsetSec));
     applyTime();
   };
   dateInput.addEventListener('blur',    commitDateInput);
@@ -793,29 +1021,35 @@ export function initTimePlayer() {
       _triggerTmr();
     }
     if (key === 'trackedSatId') {
-      if (ganttTmr)  ganttTmr.innerHTML  = '';
+      if (ganttTmr)    ganttTmr.innerHTML    = '';
+      if (ganttTmrPay) ganttTmrPay.innerHTML = '';
       if (ganttStt)  ganttStt.innerHTML  = '';
       if (ganttStt1) ganttStt1.innerHTML = '';
       if (ganttStt2) ganttStt2.innerHTML = '';
       _eclipseJobSat = null;
       _refreshSttRowVisibility();
       _updateGanttEclipse();
+      _setGanttCollapsed(!store.trackedSat);
       // ResizeObserver handles _syncLayout when gantt visibility/height changes
     }
     if (key === 'tmrData') {
-      _renderGanttTmr();
+      _renderGanttTmrRows();
     }
   });
   _updateGanttPasses();
   _updateGanttEclipse();
 
-  // TMR fetch helper — debounced so rapid satPasses updates don't abort each other
+  // TMR fetch helper — debounced so rapid satPasses updates don't abort each other.
+  // Fetches every source (BUS/PAY — see tmrData.js's TMR_SOURCES) independently,
+  // each landing in its own gantt row via store.setTmrWindows(satId, source, ...).
   const _triggerTmr = () => {
     const sat = store.trackedSat;
     if (!sat) return;
     const past = (store.satPasses[sat.id] ?? []).filter(p => !p.future);
     if (!past.length) return;
-    scheduleTmrFetch(sat, past, windows => store.setTmrWindows(sat.id, windows));
+    for (const source of Object.keys(TMR_SOURCES)) {
+      scheduleTmrFetch(sat, past, source, windows => store.setTmrWindows(sat.id, source, windows));
+    }
   };
   _triggerTmr(); // also run on init in case passes are already loaded
 
@@ -823,10 +1057,26 @@ export function initTimePlayer() {
   scrub.addEventListener('wheel',   _onWheel, { passive: false });
   ganttEl?.addEventListener('wheel', _onWheel, { passive: false });
 
-  // Drag-to-pan on gantt (skip the collapse toggle buttons)
+  // Drag-to-pan on gantt (skip the collapse toggle buttons — preventDefault +
+  // setPointerCapture below hijacks click delivery for anything inside the
+  // gantt that isn't exempted here, so any future clickable control added
+  // inside #timeline-gantt needs to be added to this check too, same as the
+  // STT POV button was. The STT POV panel itself (sttPovWidget.js) is
+  // exempted wholesale via .closest() rather than listing its close button
+  // individually — it's appended as a child of #timeline-gantt (so its own
+  // clicks bubble to this same handler) but is built lazily, well after this
+  // listener is wired, so there's no element reference to compare against
+  // the way the three static buttons below have.
   ganttEl?.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
-    if (e.target === ganttToggleBtn || e.target === ganttSttCollapseBtn) return;
+    // sttPovOpenBtn specifically needs .contains(), not === — it has an SVG
+    // icon inside it (path/circle children), so a real click's e.target is
+    // almost always one of those descendants, never the <button> itself.
+    // The other two are plain text-content buttons, where a text node click
+    // still reports the button element as e.target, so === already worked —
+    // left as-is rather than changed speculatively.
+    if (e.target === ganttToggleBtn || e.target === ganttSttCollapseBtn || sttPovOpenBtn?.contains(e.target)
+      || e.target.closest?.('.stt-pov-panel')) return;
     e.preventDefault();
     ganttEl.setPointerCapture(e.pointerId);
     ganttEl.style.cursor = 'grabbing';
@@ -860,10 +1110,14 @@ export function initTimePlayer() {
 
   // Gantt collapse toggle
   ganttToggleBtn?.addEventListener('click', () => {
-    const collapsed = document.body.classList.toggle('gantt-collapsed');
-    if (ganttToggleBtn) ganttToggleBtn.textContent = collapsed ? '▼' : '▲';
-    // ResizeObserver handles the layout sync after height changes
+    _setGanttCollapsed(!document.body.classList.contains('gantt-collapsed'));
   });
+
+  // Auto-collapsed with nothing tracked (there's nothing to show yet), auto-
+  // opens the moment a satellite is selected — overrides whatever the manual
+  // toggle above last left it at, since the trigger here is "is there
+  // anything to look at", not a user preference to remember.
+  _setGanttCollapsed(!store.trackedSat);
 
   // ResizeObserver fires whenever the gantt's actual rendered height changes
   // (initial layout, collapse/expand, content updates) — no rAF race condition

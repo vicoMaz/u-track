@@ -41,7 +41,7 @@ function _parisMinutes(date) {
 function _collectWeekPasses(weekStart) {
   const weekEnd = new Date(weekStart.getTime() + 7 * 86400000);
   const passes  = [];
-  for (const sat of store.satellites) {
+  for (const sat of store.accessibleSatellites) {
     for (const p of store.satPasses[sat.id] ?? []) {
       const start = p.start instanceof Date ? p.start : new Date(p.start);
       const end   = p.end   instanceof Date ? p.end   : new Date(p.end);
@@ -174,7 +174,7 @@ function _buildGrid(weekStart, passes) {
 }
 
 function _buildLegend() {
-  const sats = store.satellites.map(sat =>
+  const sats = store.accessibleSatellites.map(sat =>
     `<span class="co-sched-legend-item"><span class="co-sched-legend-dot" style="background:${sat.color}"></span>${sat.name}</span>`
   ).join('');
   return `<div class="co-sched-legend">
@@ -312,5 +312,5 @@ export function initWeeklySchedule() {
     });
   });
 
-  store.subscribe(key => { if ((key === 'satellites' || key === 'satPasses') && _active) _scheduleRender(); });
+  store.subscribe(key => { if ((key === 'satellites' || key === 'satAccessible' || key === 'satPasses') && _active) _scheduleRender(); });
 }

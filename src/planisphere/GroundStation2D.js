@@ -2,8 +2,14 @@ import L from 'leaflet';
 
 const R_EARTH = 6371; // km
 
-function capRho(orbitAlt) {
-  return Math.acos(Math.min(1, R_EARTH / (R_EARTH + orbitAlt)));
+// `maskDeg` (optional) is a minimum elevation angle: the classic
+// ground-coverage-angle formula λ = acos((Re/(Re+h))·cosε) − ε, which
+// reduces to the plain horizon formula when ε = 0 (the default for every
+// ground station that doesn't set one).
+function capRho(orbitAlt, maskDeg = 0) {
+  const eps = maskDeg * Math.PI / 180;
+  const ratio = Math.min(1, (R_EARTH / (R_EARTH + orbitAlt)) * Math.cos(eps));
+  return Math.max(0, Math.acos(ratio) - eps);
 }
 
 // ── Non-polar cap: azimuth sweep ──────────────────────────────────────────────
@@ -170,7 +176,7 @@ export class GroundStation2D {
     this._footprints = [];
     if (!show) return;
 
-    const rho     = capRho(orbitAlt);
+    const rho     = capRho(orbitAlt, this._gs.mask ?? 0);
     const rhoDeg  = rho * 180 / Math.PI;
     const isPolar = Math.abs(this._gs.lat) + rhoDeg >= 90;
 

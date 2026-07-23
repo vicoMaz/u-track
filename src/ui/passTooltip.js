@@ -8,6 +8,8 @@
 // just the pass-geometry numbers (apogee, antenna-mask AOS/LOS) once the
 // ground-station lookup resolves — real information, not a chart.
 import { store } from '../store.js';
+import { propagate } from '../tle.js';
+import { sunDirectionECI, isInEclipse } from '../sunVector.js';
 import { fetchPassGsCoords, computePolarPoints, computePolarMarkers, MARKER_COLORS } from './passPolar.js';
 import { fetchScheduledProcedures, scheduledProceduresHTML } from './scheduledProcedures.js';
 import { satSubsystemHost } from '../satSubsystems.js';
@@ -114,16 +116,84 @@ function _procedureListHTML(pass, grafanaHost, sat) {
   return `<div class="co-tt-procs">${rows}</div>`;
 }
 
+// Shadow/sun split over the pass duration — moved here from PassDetailPanel.js
+// (still used there too) since it's pure, synchronous SGP4 propagation + a
+// sun-vector check every 30s across the pass, no network round trip, so it
+// fits this tooltip's own "stays synchronous-feeling" rule just as well as
+// the slide-in's.
+export function passEclipseBarHTML(satrec, start, end) {
+  if (!satrec || !start || !end) return '';
+  const STEP = 30_000; // 30s samples
+  let shadow = 0, sun = 0;
+  for (let t = start.getTime(); t <= end.getTime(); t += STEP) {
+    const d = new Date(t);
+    const r = propagate(satrec, d);
+    if (!r?.eciPos) continue;
+    if (isInEclipse(r.eciPos, sunDirectionECI(d))) shadow++; else sun++;
+  }
+  const total = shadow + sun;
+  if (!total) return '';
+  const eclPct = Math.round((shadow / total) * 100);
+  const sunPct = 100 - eclPct;
+  const fmtMin = m => `${m}m`;
+  const durMin = Math.round((end - start) / 60_000);
+  const eclMin = Math.round(shadow / total * durMin);
+  const sunMin = durMin - eclMin;
+  return `
+    <div class="co-tt-ecl-bar">
+      <div class="oi-eclipse-bar">
+        <div class="oi-eclipse-seg oi-seg-shadow" style="width:${eclPct}%">${eclPct > 15 ? fmtMin(eclMin) : ''}</div>
+        <div class="oi-eclipse-seg oi-seg-sun"    style="width:${sunPct}%">${sunPct > 15 ? fmtMin(sunMin) : ''}</div>
+      </div>
+      <div class="oi-eclipse-legend">
+        <span class="oi-ecl-shadow">● ${eclPct}% shadow</span>
+        <span class="oi-ecl-sun">☀ ${sunPct}% sun</span>
+      </div>
+    </div>`;
+}
+
 export function passSimpleTooltipContent(pass, sat) {
   const grafanaHost = sat ? (satSubsystemHost(sat.noradId, 'sccRo') || null) : null;
   const satName = sat ? `<span class="co-tt-sat-name" style="color:${sat.color}">${sat.name}</span> ` : '';
   const netTag = pass.network ? `<span class="co-tt-network">${pass.network}</span>` : '';
-  const hdr = `<div class="co-tt-header">${satName}${pass.station ?? '—'}${netTag}</div>`;
+  // Same entry point into Pass Analyzer as PassDetailPanel.js's microscope
+  // button — hidden for a future pass (nothing for the Analyzer to show yet,
+  // same gating PassDetailPanel.js uses there) and when there's no real
+  // satellite (Analyzer needs one). data-pda-* carries just enough to
+  // re-find the sat/pass in the store at click time (see the delegated
+  // listener below) rather than trying to serialize the actual objects.
+  const microscope = (sat && !pass.future)
+    ? `<span class="co-tt-microscope" data-pda-microscope data-pda-sat-id="${sat.id}" data-pda-pass-start="${pass.start.getTime()}" title="Open in Pass Analyzer">🔬</span>`
+    : '';
+  const hdr = `<div class="co-tt-header">${satName}${pass.station ?? '—'}${netTag}${microscope}</div>`;
+  const eclBar = passEclipseBarHTML(sat?.satrec, pass.start, pass.end);
   const details = `<div class="co-tt-time-row"><span class="co-tt-time-lbl">DATE</span>${fmtDateTimeShort(pass.start)}</div>
     <div class="co-tt-time-row"><span class="co-tt-time-lbl">DUR</span>${fmtDuration(pass.end - pass.start)}</div>
+    ${eclBar}
     <div class="pass-geometry-slot"></div>`;
   return hdr + details + _procedureListHTML(pass, grafanaHost, sat);
 }
+
+// Global delegated handler (not wired per-caller), registered once as a
+// side effect of importing this module — same rationale grafanaModal.js's
+// own document-level listener uses: this tooltip's HTML is rebuilt fresh on
+// every hover across several independent callers (ChadOps.js,
+// WeeklySchedule.js, TimePlayer.js), so a single listener here is simpler
+// than wiring one at each call site. Looks the sat/pass back up from the
+// store rather than trying to serialize the actual objects into the DOM.
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-pda-microscope]');
+  if (!el) return;
+  const sat = store.satellites.find(s => s.id === el.dataset.pdaSatId);
+  const startMs = Number(el.dataset.pdaPassStart);
+  const pass = sat ? (store.satPasses[sat.id] ?? []).find(p => p.start.getTime() === startMs) : null;
+  if (!sat || !pass) return;
+  // The hover tooltip itself has no reason to stay open once we've
+  // navigated away to a different tab entirely.
+  const tooltip = el.closest('.co-tooltip');
+  if (tooltip) tooltip.style.display = 'none';
+  document.dispatchEvent(new CustomEvent('pda:open-pass', { detail: { sat, pass } }));
+});
 
 // Per-element generation counters (not a single module-level counter) — each
 // caller's tooltip DOM element is independent (ChadOps.js/TimePlayer.js each

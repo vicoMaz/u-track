@@ -81,16 +81,20 @@ export function initGlobe() {
 
   store.subscribe((key) => {
     if (key === 'currentTime')    updatePositions();
-    if (key === 'satellites')     syncEntities();
+    if (key === 'satellites' || key === 'satAccessible') syncEntities();
     if (key === 'trackedSatId')   applyTracking();
     if (key === 'groundStations') syncGSEntities();
   });
 }
 
 function syncEntities() {
-  const currentIds = new Set(store.satellites.map(s => s.id));
+  // Only satellites THIS client can reach — see store.accessibleSatellites.
+  // A satellite that goes unreachable simply disappears from the globe
+  // instead of sitting there frozen at its last known position.
+  const sats = store.accessibleSatellites;
+  const currentIds = new Set(sats.map(s => s.id));
 
-  for (const sat of store.satellites) {
+  for (const sat of sats) {
     if (!entities.has(sat.id)) {
       entities.set(sat.id, new SatEntity(viewer, sat));
     } else {
@@ -110,15 +114,16 @@ function syncEntities() {
   }
 
   // Apply user visibility
-  for (const sat of store.satellites) {
+  for (const sat of sats) {
     entities.get(sat.id)?.setVisible(sat.visible !== false);
   }
 
-  // Auto-track: if the tracked sat was deleted, pick the first remaining one.
-  // Deliberately does NOT auto-track on initial load — no satellite should be
-  // tracked by default, since tracking drives extra background requests (TMR gap
-  // scan) that shouldn't fire until the user actually picks a satellite.
-  const ids = store.satellites.map(s => s.id);
+  // Auto-track: if the tracked sat was deleted (or became unreachable), pick
+  // the first remaining one. Deliberately does NOT auto-track on initial
+  // load — no satellite should be tracked by default, since tracking drives
+  // extra background requests (TMR gap scan) that shouldn't fire until the
+  // user actually picks a satellite.
+  const ids = sats.map(s => s.id);
   let keepTracked = store.trackedSatId;
   if (keepTracked !== null && !ids.includes(keepTracked)) {
     // Tracked satellite was removed — auto-pick the first remaining
