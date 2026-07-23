@@ -110,19 +110,23 @@ async function _pooledMap(items, worker, concurrency) {
   return results;
 }
 
-// Merge overlapping/adjacent pass intervals (e.g. two ground stations catching the same
-// pass) so the gap search below never straddles a pass's own known-covered window.
-function _mergePassIntervals(pastPasses, toMs) {
-  const intervals = pastPasses
-    .map(p => ({ start: toMs(p.start), end: toMs(p.end) }))
-    .sort((a, b) => a.start - b.start);
+// Merge overlapping/adjacent {start,end} (ms) intervals — e.g. two ground
+// stations catching the same pass, or two overlapping download commands —
+// so the gap search below never straddles a window that's already covered
+// from more than one source.
+function _mergeIntervals(intervals) {
+  const sorted = intervals.slice().sort((a, b) => a.start - b.start);
   const merged = [];
-  for (const iv of intervals) {
+  for (const iv of sorted) {
     const last = merged[merged.length - 1];
     if (last && iv.start <= last.end) last.end = Math.max(last.end, iv.end);
     else merged.push({ ...iv });
   }
   return merged;
+}
+
+function _mergePassIntervals(pastPasses, toMs) {
+  return _mergeIntervals(pastPasses.map(p => ({ start: toMs(p.start), end: toMs(p.end) })));
 }
 
 // The strict void between one pass ending and the next starting — passes themselves are
@@ -195,6 +199,83 @@ async function _walkCandidate(sccOrigin, start, end, filter, param, signal) {
     // about" bias the rest of this file uses.
   }
   return gaps.reverse();
+}
+
+// ── PAY: download-coverage gap detection ─────────────────────────────────
+// Confirmed live against the real ground segment: unlike BUS, PAY packets
+// aren't streamed continuously — they only exist on the ground once a
+// specific store-and-forward command has pulled them down, so checking
+// sample DENSITY the way _walkCandidate does flags every stretch where the
+// payload was simply idle as a false "gap", even though nothing was ever
+// missing — it just hadn't been requested yet (entirely normal). The real
+// signal is whether a download command's OWN requested time range has ever
+// covered a given stretch, regardless of whether the resulting TM has
+// streamed back yet.
+//
+// That command is TC_15_9_OBSW_PAY_DLNK_BETWEEN (PUS-15,9 "downlink packets
+// between two times", the PAY-store variant — TC_15_9_OBSW_DLNK_BETWEEN,
+// no "_PAY_", is the separate BUS-store one). Its decoded arguments carry
+// the exact requested range as OBSW_AR_S15_T1 (lower bound) / OBSW_AR_S15_T2
+// (upper bound). This deliberately does NOT touch TC_15_10_..._DEL_PKT_STORE_...
+// (the separate delete-contents command) — only the plain download, which
+// has no delete side effect of its own.
+const PAY_DLNK_PACKET_NAME = 'TC_15_9_OBSW_PAY_DLNK_BETWEEN';
+// The endpoint has no server-side name/filter param (confirmed live — name,
+// filter, packetName, spacePacketName are all silently ignored), so every
+// packet in a queried window comes back at full weight (each echoes its
+// whole field/container schema, not just this one's few KB of interest) —
+// paginating in day-sized chunks bounds how much of that gets pulled at
+// once for a potentially multi-day analysis range.
+const PAY_DLNK_CHUNK_MS = 24 * 3_600_000;
+const PAY_DLNK_MAX_LIMIT = 2000; // headroom over the observed ~1000 packets/22h density
+
+function _extractT1T2(rootContainer) {
+  let t1 = null, t2 = null;
+  (function walk(node) {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node.subContainers) && node.subContainers.length) {
+      for (const c of node.subContainers) walk(c);
+      return;
+    }
+    if (node.name === 'OBSW_AR_S15_T1') t1 = node.physicalValue?.value ?? node.rawValue?.value ?? null;
+    if (node.name === 'OBSW_AR_S15_T2') t2 = node.physicalValue?.value ?? node.rawValue?.value ?? null;
+  })(rootContainer);
+  if (!t1 || !t2) return null;
+  const start = new Date(t1).getTime(), end = new Date(t2).getTime();
+  return Number.isFinite(start) && Number.isFinite(end) ? { start, end } : null;
+}
+
+// Every PAY_DLNK_BETWEEN command's requested [T1,T2] range, chunk-fetched
+// across [rangeStart, rangeEnd]. Best-effort per chunk — a failed chunk just
+// leaves that stretch unconfirmed (falls through to "gap") rather than the
+// whole scan aborting, same conservative bias the rest of this file uses.
+async function _fetchPayDownloadRanges(sat, rangeStart, rangeEnd, signal) {
+  const origin = satSubsystemOrigin(sat.noradId, 'sccRo');
+  if (!origin) return [];
+  const ranges = [];
+  for (let chunkStart = rangeStart; chunkStart < rangeEnd; chunkStart += PAY_DLNK_CHUNK_MS) {
+    const chunkEnd = Math.min(chunkStart + PAY_DLNK_CHUNK_MS, rangeEnd);
+    const params = new URLSearchParams({
+      start: new Date(chunkStart).toISOString(),
+      end:   new Date(chunkEnd).toISOString(),
+      maxLimit: String(PAY_DLNK_MAX_LIMIT),
+    });
+    let data;
+    try {
+      const res = await fetch(`${origin}/api/v1/tc-packets?${params}`, { signal });
+      if (!res.ok) continue;
+      data = await res.json();
+    } catch (e) {
+      if (signal.aborted) throw e;
+      continue;
+    }
+    for (const p of data) {
+      if (p.spacePacket?.name !== PAY_DLNK_PACKET_NAME) continue;
+      const range = _extractT1T2(p.spacePacket.rootContainer);
+      if (range) ranges.push(range);
+    }
+  }
+  return ranges;
 }
 
 // `source` selects one of TMR_SOURCES (e.g. 'bus' | 'pay') — each fetched and

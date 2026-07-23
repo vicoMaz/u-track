@@ -747,6 +747,20 @@ body.gantt-collapsed .gantt-rows { display: none; }
   ), #12121e;
   border: 1px solid #ff446688;
 }
+/* Time past tmrData.js's rangeEnd (real "now" as of the last fetch) — not a
+   gap, just not checked yet since it hasn't happened, or a still-open
+   trailing gap no later pass has closed yet (see TimePlayer.js's
+   greyStart). Grey, not a severity color, so it doesn't read as a problem
+   the way the red/amber/green gap variants above do. */
+.gantt-bar-future {
+  cursor: help;
+  background: repeating-linear-gradient(
+    45deg,
+    #666677 0, #666677 3px,
+    transparent 3px, transparent 7px
+  ), #12121e;
+  border: 1px solid #66667755;
+}
 #gantt-cursor {
   position: absolute;
   top: 0; bottom: 0;

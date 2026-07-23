@@ -436,7 +436,7 @@ function _getSccPassCheck(sat, { forceRefresh = false } = {}) {
       _sccPassCache.set(sat.id, { atMs: Date.now(), data });
       _renderGanttTmrRows();
       if (_openGapTooltip?.sat.id === sat.id && _ganttTooltip.style.display !== 'none') {
-        _renderGapTooltip(_openGapTooltip.gap, _openGapTooltip.sat);
+        _renderGapTooltip(_openGapTooltip.gap, _openGapTooltip.sat, _openGapTooltip.source);
         _posTooltipAt(_ttAnchorX, _ttAnchorY);
       }
     });
@@ -444,9 +444,9 @@ function _getSccPassCheck(sat, { forceRefresh = false } = {}) {
   return cached?.data ?? null;
 }
 
-function _renderGapTooltip(gap, sat) {
+function _renderGapTooltip(gap, sat, source) {
   const data  = _sccPassCache.get(sat.id)?.data ?? null;
-  const match = findMatchingGapProcedure(data?.scheduled, gap);
+  const match = findMatchingGapProcedure(data?.scheduled, gap, source);
   _ganttTooltip.innerHTML = _gapTooltipHTML(gap, match, data?.pass);
   const btn = _ganttTooltip.querySelector('.co-tt-gap-btn');
   if (btn && !btn.disabled) {
@@ -454,7 +454,7 @@ function _renderGapTooltip(gap, sat) {
       btn.disabled    = true;
       btn.textContent = 'Requesting…';
       try {
-        const { linkEstablished } = await requestTmrGapDownload(sat, gap);
+        const { linkEstablished } = await requestTmrGapDownload(sat, gap, source);
         _getSccPassCheck(sat, { forceRefresh: true }); // reflect the new request as soon as it lands
         showActionToast(linkEstablished
           ? 'TM/TC link + TMR gap download scheduled on the next pass.'
@@ -468,12 +468,12 @@ function _renderGapTooltip(gap, sat) {
   }
 }
 
-function _showGapTooltip(e, gap, sat) {
+function _showGapTooltip(e, gap, sat, source) {
   _ttAnchorX = e.clientX;
   _ttAnchorY = e.clientY;
   clearTimeout(_ttHideTimer);
-  _openGapTooltip = { gap, sat };
-  _renderGapTooltip(gap, sat);
+  _openGapTooltip = { gap, sat, source };
+  _renderGapTooltip(gap, sat, source);
   _ganttTooltip.style.display = 'block';
   _posTooltipAt(_ttAnchorX, _ttAnchorY);
   _getSccPassCheck(sat); // uses cache if fresh; refreshes in the background otherwise
@@ -735,9 +735,18 @@ function _renderGanttTmr(container, source) {
   // Priority when a gap is BOTH requested AND past the buffer limit: red wins
   // — the data being probably-already-gone is the more urgent, irreversible
   // fact, more important to see at a glance than "a request is in flight".
+  //
+  // A gap whose end lands (essentially) exactly on rangeEnd is still OPEN —
+  // nothing has closed it yet, because no pass has happened since it started
+  // to actually bring that data down. That's not the same kind of fact as a
+  // gap fully bounded between two passes that have BOTH already happened (a
+  // confirmed anomaly) — it's handled below the loop instead, folded into
+  // the grey "not available yet" treatment rather than a severity color.
   const sccData = sat ? _getSccPassCheck(sat) : null;
+  let greyStart = rangeEnd;
   for (const { start, end } of gapWindows) {
-    const isPending = !!findMatchingGapProcedure(sccData?.scheduled, { start, end });
+    if (end >= rangeEnd - 1000) { greyStart = Math.min(greyStart, start); continue; }
+    const isPending = !!findMatchingGapProcedure(sccData?.scheduled, { start, end }, source);
     const urgency   = _gapUrgency({ start, end });
 
     const l  = (start - tMin) / rangeMs * 100;
@@ -754,9 +763,30 @@ function _renderGanttTmr(container, source) {
     bar.style.left  = `${lc.toFixed(3)}%`;
     bar.style.width = `${(rc - lc).toFixed(3)}%`;
     if (cls === 'gantt-bar-gap') bar.style.background = '#12121e';
-    bar.addEventListener('mouseenter', e => _showGapTooltip(e, { start, end }, sat));
+    bar.addEventListener('mouseenter', e => _showGapTooltip(e, { start, end }, sat, source));
     bar.addEventListener('mouseleave', _hidePassTooltipSoon);
     container.appendChild(bar);
+  }
+
+  // Grey "not available yet" bar — covers both real future time (the
+  // visible view can extend up to +5 days ahead of "now") AND, per
+  // greyStart above, any still-open trailing gap that's happened but
+  // couldn't have been downlinked yet either. Neither is a confirmed
+  // anomaly the way a fully-bounded historical gap is — without this,
+  // both would render with the exact same plain dark background as a
+  // genuine .gantt-bar-gap, misleadingly implying lost data.
+  const viewEndMs = tMin + rangeMs;
+  if (viewEndMs > greyStart) {
+    const lFut  = (Math.max(greyStart, tMin) - tMin) / rangeMs * 100;
+    const lcFut = Math.max(0, lFut);
+    if (100 - lcFut > 0.01) {
+      const bar = document.createElement('div');
+      bar.className = 'gantt-bar gantt-bar-future';
+      bar.style.left  = `${lcFut.toFixed(3)}%`;
+      bar.style.width = `${(100 - lcFut).toFixed(3)}%`;
+      bar.title = 'Not available yet';
+      container.appendChild(bar);
+    }
   }
 }
 

@@ -4,24 +4,34 @@
 // (not FDS's 15500) for both the pass-events lookup and the procedure POST.
 import { satSubsystemOrigin } from './satSubsystems.js';
 
-// Template supplied by ops. scheduleTime / downlinkStartTime / downlinkEndTime
-// are always overwritten per-request; packetToDownlinkFrom is now also
-// overwritten — see PACKET_STORES below — everything else (doSchedule: false,
-// etc.) is left exactly as given.
-const PROCEDURE_TEMPLATE = {
-  procedureName: 'procedures.elem.U_SPACE_FSW_CONTROL.PUS_15_TM_STORAGE_AND_RETRIEVAL.ELEM_FSW_DOWNLINK_BETWEEN_INSTANTS_VIA_PUS_15',
-  procedureDescription: '',
-  scheduled: false,
-  activityId: '',
-  procedureParameters: [
-    { name: 'doSchedule', type: 'java.lang.Boolean', subType: null, valueType: 'Boolean', subValueType: null, value: false, enumValues: null, elementParameter: null },
-    { name: 'scheduleTime', type: 'java.time.Instant', subType: null, valueType: 'AbsoluteTime', subValueType: null, value: null, enumValues: null, elementParameter: null },
-    { name: 'subscheduleId', type: 'java.lang.Long', subType: null, valueType: 'Long', subValueType: null, value: 0, enumValues: null, elementParameter: null },
-    { name: 'packetToDownlinkFrom', type: 'fr.cnes.scc.procedure.generator.internalclasses.enumerated.OBSW_AR_S15_STORE_ID_Enum', subType: null, valueType: 'Enum', subValueType: null, value: 'HKTM', enumValues: ['CRIT_EVT', 'EVT', 'HKTM', 'DIAG', 'ASYNC', 'FDTM'], elementParameter: null },
-    { name: 'downlinkStartTime', type: 'java.time.Instant', subType: null, valueType: 'AbsoluteTime', subValueType: null, value: null, enumValues: null, elementParameter: null },
-    { name: 'downlinkEndTime', type: 'java.time.Instant', subType: null, valueType: 'AbsoluteTime', subValueType: null, value: null, enumValues: null, elementParameter: null },
-  ],
+// BUS and PAY each get ONE call to their own dedicated "download this packet
+// store" procedure — not one call per individual packet store (that's the
+// older ELEM_FSW_DOWNLINK_BETWEEN_INSTANTS_VIA_PUS_15 approach this replaces
+// for BUS, which needed 4 separate calls via its packetToDownlinkFrom enum).
+// Confirmed live against a real scheduled instance on SCC (procedure-
+// scheduler's GET, which echoes back exactly what was submitted): both
+// SUBSYS_FSW_*_DOWNLOAD_PACKET_STORE procedures share the identical 3-param
+// shape below, differing only in which packet store they act on.
+const DOWNLOAD_PROCEDURE_NAME = {
+  bus: 'procedures.subsys.FSW.SUBSYS_FSW_ROUTINE_DOWNLOAD_PACKET_STORE',
+  pay: 'procedures.subsys.FSW.SUBSYS_FSW_PAYLOAD_DOWNLOAD_PACKET_STORE',
 };
+
+function _downloadPacketStorePayload(procedureName, gapStart, gapEnd) {
+  return {
+    procedureName,
+    procedureDescription: '',
+    scheduled: false,
+    activityId: '',
+    procedureParameters: [
+      { name: 'tMinDumpTmR_obt', type: 'java.time.Instant', subType: null, valueType: 'AbsoluteTime', subValueType: null, value: _isoNanos(gapStart), enumValues: null, elementParameter: null },
+      { name: 'tMaxDumpTmR_obt', type: 'java.time.Instant', subType: null, valueType: 'AbsoluteTime', subValueType: null, value: _isoNanos(gapEnd),   enumValues: null, elementParameter: null },
+      // false: only pull the data down, never clear the onboard store — a
+      // separate, deliberate operator action, not implied by a plain download.
+      { name: 'clearAfterDownload', type: 'java.lang.Boolean', subType: null, valueType: 'Boolean', subValueType: null, value: false, enumValues: null, elementParameter: null },
+    ],
+  };
+}
 
 // Prerequisite: if a pass has zero procedures scheduled on it yet, the TM/TC link
 // itself hasn't been set up — schedule this first, unmodified, before the actual
@@ -40,24 +50,6 @@ const TMTC_LINK_TEMPLATE = {
 // the procedure payload's java.time.Instant fields want 9-digit nanosecond ISO.
 const _isoMillis = date => date.toISOString();
 const _isoNanos  = date => date.toISOString().replace('Z', '000000Z');
-
-// Requested for every TMR gap download — HKTM was originally the only store
-// requested; ops asked for ASYNC/EVT/CRIT_EVT downlinked too, so one gap
-// download now schedules FOUR separate downlink-between-instants requests
-// (same gap window each time, one per store). DIAG and FDTM — also valid
-// per the template's own packetToDownlinkFrom enumValues — are deliberately
-// NOT requested here.
-const PACKET_STORES = ['HKTM', 'ASYNC', 'EVT', 'CRIT_EVT'];
-
-function _buildPayload(gapStart, gapEnd, requestedAt, packetStore) {
-  const payload = JSON.parse(JSON.stringify(PROCEDURE_TEMPLATE));
-  const set = (name, value) => { payload.procedureParameters.find(p => p.name === name).value = value; };
-  set('scheduleTime', _isoNanos(requestedAt));
-  set('downlinkStartTime', _isoNanos(gapStart));
-  set('downlinkEndTime', _isoNanos(gapEnd));
-  set('packetToDownlinkFrom', packetStore);
-  return payload;
-}
 
 // Finds the soonest upcoming SATELLITE_PASS event from SCC's own /api/v1/events —
 // deliberately NOT the FDS-sourced store.satPasses list, since procedure-scheduler
@@ -106,17 +98,14 @@ async function _scheduleProcedure(origin, eventId, payload, signal) {
   }
 }
 
-// Requests a TMR gap downlink for every store in PACKET_STORES, scheduled on
-// the next pass. If that pass has no procedures scheduled on it yet, the
-// TM/TC link procedure is scheduled first (a pass with nothing on it hasn't
-// had its link established). Sequential, not parallel — same style as the
-// link-establish step before it, and avoids firing 4 near-simultaneous
-// writes at the procedure-scheduler endpoint. Throws on the first failure
-// (with which store failed in the message) rather than trying the rest —
-// callers should catch and surface the message (no swallowed/silent
-// failures here, since this is a real operational request, not a
-// background poll).
-export async function requestTmrGapDownload(sat, gap) {
+// Requests a TMR gap downlink, scheduled on the next pass. If that pass has no
+// procedures scheduled on it yet, the TM/TC link procedure is scheduled first
+// (a pass with nothing on it hasn't had its link established). One call to
+// the source's own DOWNLOAD_PROCEDURE_NAME — covers every packet store that
+// source has in one shot, no per-store looping. Throws on failure — callers
+// should catch and surface the message (no swallowed/silent failures here,
+// since this is a real operational request, not a background poll).
+export async function requestTmrGapDownload(sat, gap, source = 'bus') {
   const origin = satSubsystemOrigin(sat.noradId, 'scc');
   if (!origin) throw new Error('SCC not configured for this satellite');
 
@@ -132,20 +121,17 @@ export async function requestTmrGapDownload(sat, gap) {
       linkEstablished = true;
     }
 
-    const gapStart    = gap.start instanceof Date ? gap.start : new Date(gap.start);
-    const gapEnd      = gap.end   instanceof Date ? gap.end   : new Date(gap.end);
-    const requestedAt = new Date();
+    const gapStart = gap.start instanceof Date ? gap.start : new Date(gap.start);
+    const gapEnd   = gap.end   instanceof Date ? gap.end   : new Date(gap.end);
+    const procedureName = DOWNLOAD_PROCEDURE_NAME[source] ?? DOWNLOAD_PROCEDURE_NAME.bus;
 
-    for (const store of PACKET_STORES) {
-      const payload = _buildPayload(gapStart, gapEnd, requestedAt, store);
-      try {
-        await _scheduleProcedure(origin, pass.id, payload, ctrl.signal);
-      } catch (err) {
-        throw new Error(`${store} downlink request failed: ${err.message}`);
-      }
+    try {
+      await _scheduleProcedure(origin, pass.id, _downloadPacketStorePayload(procedureName, gapStart, gapEnd), ctrl.signal);
+    } catch (err) {
+      throw new Error(`${source.toUpperCase()} downlink request failed: ${err.message}`);
     }
 
-    return { eventId: pass.id, linkEstablished, pass, stores: PACKET_STORES };
+    return { eventId: pass.id, linkEstablished, pass };
   } finally {
     clearTimeout(timer);
   }
@@ -161,24 +147,26 @@ function _paramValue(parameters, name) {
   return parameters?.find(p => p.name === name)?.value ?? null;
 }
 
-// Pure — no network. Finds a scheduled PUS-15 downlink procedure (from
-// `scheduled`, as returned by fetchNextPassProcedures below) whose
-// downlinkStartTime/downlinkEndTime both fall within ±15 min of this gap's own
-// bounds. Returns the matching procedure entry, or null.
+// Pure — no network. Finds a scheduled downlink procedure (from `scheduled`,
+// as returned by fetchNextPassProcedures below) matching this gap's source —
+// its DOWNLOAD_PROCEDURE_NAME, with tMinDumpTmR_obt/tMaxDumpTmR_obt both
+// falling within ±15 min of this gap's own bounds. Returns the matching
+// procedure entry, or null.
 //
 // NOTE: GET /api/v1/procedure-scheduler's response shape does NOT mirror the
 // POST payload's field names — confirmed live against a real scheduled
 // request: the procedure name comes back as `.name` (not `.procedureName`)
 // and its parameter list as `.parameters` (not `.procedureParameters`). Only
 // each individual parameter entry's own shape ({name, value, ...}) matches.
-export function findMatchingGapProcedure(scheduled, gap) {
+export function findMatchingGapProcedure(scheduled, gap, source = 'bus') {
   if (!scheduled?.length) return null;
   const gapStart = (gap.start instanceof Date ? gap.start : new Date(gap.start)).getTime();
   const gapEnd   = (gap.end   instanceof Date ? gap.end   : new Date(gap.end)).getTime();
+  const procName = DOWNLOAD_PROCEDURE_NAME[source] ?? DOWNLOAD_PROCEDURE_NAME.bus;
   return scheduled.find(proc => {
-    if (proc.name !== PROCEDURE_TEMPLATE.procedureName) return false;
-    const dlStart = Date.parse(_paramValue(proc.parameters, 'downlinkStartTime'));
-    const dlEnd   = Date.parse(_paramValue(proc.parameters, 'downlinkEndTime'));
+    if (proc.name !== procName) return false;
+    const dlStart = Date.parse(_paramValue(proc.parameters, 'tMinDumpTmR_obt'));
+    const dlEnd   = Date.parse(_paramValue(proc.parameters, 'tMaxDumpTmR_obt'));
     if (!Number.isFinite(dlStart) || !Number.isFinite(dlEnd)) return false;
     return Math.abs(dlStart - gapStart) <= MATCH_TOLERANCE_MS
         && Math.abs(dlEnd   - gapEnd)   <= MATCH_TOLERANCE_MS;
