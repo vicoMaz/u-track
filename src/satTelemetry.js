@@ -111,10 +111,19 @@ function _extract(param) {
   return { value, status, monitoring };
 }
 
-async function _fetchPacket(fdsOrigin, packetName, signal) {
-  const end   = new Date(Date.now() + 10_000).toISOString();
-  const start = new Date(Date.now() - 24 * 3_600_000).toISOString();
-  const url   = `${fdsOrigin}/api/v1/tm-packets`
+// Shared with satTelemetryReal.js — extracts a named param's {value,status}
+// straight out of a raw tm-packets API response object.
+export function extractTmParam(pkt, paramName) {
+  if (!pkt) return null;
+  const root = pkt.spacePacket?.rootContainer?.subContainers ?? [];
+  return _extract(_findParam(root, paramName));
+}
+
+// Shared with satTelemetryReal.js, which queries a historical {start,end}
+// window anchored to a sim-time instant instead of "now" — the query itself
+// (latest packet in range) is identical either way.
+export async function fetchTmPacket(fdsOrigin, packetName, { start, end }, signal) {
+  const url = `${fdsOrigin}/api/v1/tm-packets`
     + `?start=${encodeURIComponent(start)}`
     + `&end=${encodeURIComponent(end)}`
     + `&orderBy=OnBoardTime&sortDir=DESC`
@@ -158,14 +167,15 @@ export async function fetchSatTelemetry(sat) {
     // Fetch all unique packets in parallel
     const extracted = {}; // field → {value, status} | null
     let receptionTime = null;
+    const end   = new Date(Date.now() + 10_000).toISOString();
+    const start = new Date(Date.now() - 24 * 3_600_000).toISOString();
 
     await Promise.all([...byPacket.entries()].map(async ([packetName, fields]) => {
-      const pkt = await _fetchPacket(ip, packetName, ctrl.signal);
+      const pkt = await fetchTmPacket(ip, packetName, { start, end }, ctrl.signal);
       if (!pkt) return;
       if (!receptionTime) receptionTime = pkt.receptionTime ?? null;
-      const root = pkt.spacePacket?.rootContainer?.subContainers ?? [];
       for (const { field, param } of fields) {
-        extracted[field] = _extract(_findParam(root, param));
+        extracted[field] = extractTmParam(pkt, param);
       }
     }));
 

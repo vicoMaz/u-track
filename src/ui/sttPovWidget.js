@@ -58,6 +58,13 @@ function _render() {
   const cones        = MODEL_STAR_TRACKERS[sat.model] ?? MODEL_STAR_TRACKERS['12U'];
   const sunExclDeg    = satSunExclDeg(sat.noradId);
   const earthExclDeg  = satEarthExclDeg(sat.noradId);
+  // .stt-pov-panel's default max-width is sized for two 196px circles side by
+  // side (FF's STT1+STT2) — without this, a single-STT satellite's panel is
+  // still stretched that wide by the header's legend text alone, leaving one
+  // circle looking small in a lot of empty space. This narrows the cap to fit
+  // just the one circle, so the legend truncates (it already can, via its
+  // existing ellipsis overflow) instead of forcing the whole panel wide.
+  _panelEl.classList.toggle('stt-pov-single', cones.length === 1);
   // Same exact per-satellite values the rings inside each circle are drawn
   // at (see sttPov.js) — spelled out once here instead of per-circle, since
   // both cones of a given satellite always share the same Sun/Earth
@@ -75,6 +82,6 @@ function _render() {
 export function initSttPovWidget() {
   document.getElementById('stt-pov-open-btn')?.addEventListener('click', openSttPov);
   store.subscribe((key) => {
-    if (_open && (key === 'currentTime' || key === 'trackedSatId' || key === 'satellites')) _render();
+    if (_open && (key === 'currentTime' || key === 'trackedSatId' || key === 'satellites' || key === 'realAttitude' || key === 'playbackSpeed')) _render();
   });
 }

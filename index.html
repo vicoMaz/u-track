@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>chadOps</title>
     <script>
       window.CESIUM_BASE_URL = 'https://unpkg.com/cesium@1.114.0/Build/Cesium/';
@@ -28,35 +29,13 @@
           </div>
         </div>
 
-        <!-- Custom Points Panel -->
-        <div id="points-panel" class="panel">
-          <div class="panel-header">
-            <span>Custom Points</span>
-            <button id="points-toggle" class="panel-toggle" title="Collapse">◀</button>
-          </div>
-          <div class="panel-body">
-            <div class="pt-add-form">
-              <input id="pt-name-input" type="text" placeholder="Name" maxlength="30" />
-              <div class="pt-coord-row">
-                <input id="pt-lat-input" type="number" placeholder="Lat" step="any" min="-90" max="90" />
-                <input id="pt-lon-input" type="number" placeholder="Lon" step="any" min="-180" max="180" />
-              </div>
-              <div class="pt-coord-row">
-                <input id="pt-mask-input" type="number" placeholder="Mask ° (optional)" step="any" min="0" max="90"
-                       title="Minimum elevation angle — draws the visibility circle on the surface below which a satellite is below this elevation as seen from this point. Leave blank for no circle." />
-                <button id="pt-add-btn">Add</button>
-              </div>
-            </div>
-            <div id="pt-list"></div>
-          </div>
-        </div>
-
       </div>
 
       <!-- Tab bar -->
       <div id="tab-bar">
-        <img id="app-logo" src="/logo-u-space.png" alt="chadOps" />
+        <img id="app-bolt" src="/favicon.svg" alt="" />
         <span id="app-name">chadOps</span>
+        <span id="app-version" title="chadOps build version"></span>
         <span id="readonly-vpn-pill" class="readonly-pill" hidden title="Only the SCC RO (.5) subnet is reachable on your current VPN — SCC/FDS/GNM/MIC are not, so ground stations, TMR gap data, GNSS status and procedure scheduling won't have data.">🔒 Read-only VPN</span>
         <div class="tab-bar-sep"></div>
         <a class="tab-btn" data-tab="fleet" href="#fleet">Fleet</a>
@@ -84,8 +63,8 @@
           </div>
         </div>
         <div class="api-docs-wrap">
+          <img id="app-logo" src="/logo-u-space.png" alt="U-Space" />
           <a href="/api-docs.html" target="_blank" class="tab-btn api-docs-btn">API Docs ↗</a>
-          <span id="app-version" title="chadOps build version"></span>
         </div>
       </div>
 
@@ -194,11 +173,12 @@
         <div class="gantt-rows">
           <div id="gantt-sat-info" class="hidden">
             <div id="gsi-name"></div>
-            <div class="gsi-row"><span class="gsi-key">Lat</span><span id="gsi-lat"></span></div>
-            <div class="gsi-row"><span class="gsi-key">Lon</span><span id="gsi-lon"></span></div>
-            <div class="gsi-row"><span class="gsi-key">Alt</span><span id="gsi-alt"></span></div>
-            <div class="gsi-row"><span class="gsi-key">Vel</span><span id="gsi-vel"></span></div>
-            <div class="gsi-row"><span class="gsi-key">Next</span><span id="gsi-next"></span></div>
+            <div class="gsi-row"><span class="gsi-key">Pos</span><span id="gsi-pos"></span></div>
+            <div class="gsi-row"><span class="gsi-key">Mode</span><span id="gsi-mode"></span></div>
+            <div class="gsi-row"><span class="gsi-key">GNC</span><span id="gsi-gnc"></span></div>
+            <div class="gsi-row"><span class="gsi-key">Batt</span><span id="gsi-batt"></span></div>
+            <div class="gsi-row"><span class="gsi-key">Attitude</span><span id="gsi-attitude"></span><button id="gsi-attitude-toggle" class="gsi-att-toggle" title=""><span class="gsi-att-knob"></span></button></div>
+            <div class="gsi-row"><span class="gsi-key">Next pass</span><span id="gsi-next"></span></div>
           </div>
           <div class="gantt-row">
             <span class="gantt-label">Plans</span>
@@ -221,7 +201,7 @@
             <div class="gantt-track" id="gantt-eclipse"></div>
           </div>
           <div class="gantt-row" title="Fused STT availability — blinded only when ALL of the satellite's star trackers are simultaneously blinded by the sun or Earth. Click to expand per-unit detail.">
-            <span class="gantt-label"><button class="gantt-collapse-btn" id="gantt-stt-collapse" title="Toggle per-STT detail">▸</button>STT<button class="stt-pov-open-btn" id="stt-pov-open-btn" title="Show star tracker POV — Sun/Earth position relative to boresight, live"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg></button></span>
+            <span class="gantt-label"><button class="gantt-collapse-btn" id="gantt-stt-collapse" title="Toggle per-STT detail">▸</button>STT<button class="stt-pov-open-btn" id="stt-pov-open-btn" title="Show star tracker POV — Sun/Earth position relative to boresight, live"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><line x1="12" y1="1" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="23"/><line x1="1" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="23" y2="12"/></svg></button></span>
             <div class="gantt-track" id="gantt-stt"></div>
           </div>
           <div class="gantt-row gantt-stt-detail gantt-collapsed" id="gantt-stt1-row" title="STT1 windows where its own FOV would be blinded by the sun or Earth">

@@ -45,7 +45,7 @@ describe('fetchEbn0Series — network → metric name mapping', () => {
 
   it('does not call fetch at all for a network with no known metric name', async () => {
     const fetchMock = mockFetchOnce(200, []);
-    const result = await fetchEbn0Series('99999', 5000, 6000, 'skynopy');
+    const result = await fetchEbn0Series('99999', 5000, 6000, 'ksat');
     expect(result).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });

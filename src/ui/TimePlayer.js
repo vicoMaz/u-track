@@ -2,11 +2,15 @@ import { store }                        from '../store.js';
 import { propagate }                    from '../tle.js';
 import { sunDirectionECI, isInEclipse } from '../sunVector.js';
 import { scheduleTmrFetch, TMR_SOURCES } from '../tmrData.js';
+import { schedulePlanFetch }            from '../planData.js';
 import { requestTmrGapDownload, fetchNextPassProcedures, findMatchingGapProcedure } from '../tmrGapDownload.js';
 import { satSunExclDeg, satEarthExclDeg, MODEL_STAR_TRACKERS } from '../satStarTracker.js';
+import { sampleAttitudeTable, DEFAULT_MAX_GAP_MS } from '../attitudeSample.js';
+import { resolveRealAttitudeEntries, scheduleAttitudeFetch, applyRealAttitudeModelCorrection } from '../satAttitudeReal.js';
 import { showActionToast }              from './actionToast.js';
 import { passSimpleTooltipContent, hydratePassGeometry } from './passTooltip.js';
 import { openPassDetail }               from './PassDetailPanel.js';
+import { escapeHtml }                   from './logView.js';
 
 
 const EPOCH = new Date();
@@ -50,6 +54,15 @@ function _setGanttCollapsed(collapsed) {
   // ResizeObserver handles the layout sync after the height change
 }
 
+// The toggle can only OPEN the gantt when a satellite is tracked — there's
+// nothing to show otherwise (every row's data is per-satellite). Native
+// `disabled` both blocks the click and gives a visual affordance (see
+// #gantt-toggle:disabled in style.css) — no separate guard needed in the
+// click handler itself.
+function _syncGanttToggleEnabled() {
+  if (ganttToggleBtn) ganttToggleBtn.disabled = !store.trackedSat;
+}
+
 // ── Layout sync: called after gantt expand/collapse or on resize ──────────────
 let _syncInProgress = false;
 function _syncLayout() {
@@ -83,6 +96,12 @@ let viewEndSec   =  VIEW_HALF_SEC;
 // the visible view (see VIEW_HALF_SEC above).
 const ECLIPSE_HALF_SEC = VIEW_HALF_SEC;
 const R_EARTH_KM = 6371;
+// Top-of-atmosphere altitude (~Kármán line) — the actual optical edge that
+// blinds a star tracker via atmospheric glow/scatter, not the solid surface.
+// Used as the geometric Earth radius for blinding purposes instead of plain
+// R_EARTH_KM; the solid radius is kept separately (earthRadiusDeg) only for
+// drawing Earth's true disk size in the STT POV widget (sttPov.js).
+const EARTH_LIMB_KM = 100;
 let _eclipseWindows = [];
 let _sttPerConeWindows = []; // [ [{start,end}...] per cone index ]
 let _sttFusedWindows   = []; // blinded only when EVERY cone is simultaneously blinded
@@ -119,57 +138,28 @@ function _rotateByQuat(q, v) {
   return { x: v.x + q.w * t.x + c.x, y: v.y + q.w * t.y + c.y, z: v.z + q.w * t.z + c.z };
 }
 
-// Standard quaternion SLERP, shortest path, linear-interpolate-and-normalize
-// fallback when the two orientations are nearly identical (avoids a sin(θ)≈0
-// division). Same algorithm as Cesium.Quaternion.slerp, in plain JS.
-function _slerpQuat(a, b, t) {
-  let { x: bx, y: by, z: bz, w: bw } = b;
-  let dot = a.x * bx + a.y * by + a.z * bz + a.w * bw;
-  if (dot < 0) { bx = -bx; by = -by; bz = -bz; bw = -bw; dot = -dot; }
-  if (dot > 0.9995) {
-    const x = a.x + t * (bx - a.x), y = a.y + t * (by - a.y), z = a.z + t * (bz - a.z), w = a.w + t * (bw - a.w);
-    const len = Math.sqrt(x * x + y * y + z * z + w * w);
-    return { x: x / len, y: y / len, z: z / len, w: w / len };
-  }
-  const theta0 = Math.acos(Math.min(1, dot));
-  const theta  = theta0 * t;
-  const sin0   = Math.sin(theta0);
-  const s0 = Math.cos(theta) - dot * Math.sin(theta) / sin0;
-  const s1 = Math.sin(theta) / sin0;
-  return { x: s0 * a.x + s1 * bx, y: s0 * a.y + s1 * by, z: s0 * a.z + s1 * bz, w: s0 * a.w + s1 * bw };
-}
-
-// Binary-searches `entries` (sorted by .t, ms) for tMs and SLERPs the
-// bracketing pair — same technique as SatEntity.js's _attitudeFromTable.
-// Null if tMs falls outside the table's span (caller falls back to Default
-// Sun Pointing, same as SatEntity.js does for the globe).
-function _sampleAttitudeTable(entries, tMs) {
-  const first = entries[0], last = entries[entries.length - 1];
-  if (tMs < first.t || tMs > last.t) return null;
-  let lo = 0, hi = entries.length - 1;
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (entries[mid].t <= tMs) lo = mid; else hi = mid;
-  }
-  const a = entries[lo], b = entries[hi];
-  const frac = b.t > a.t ? (tMs - a.t) / (b.t - a.t) : 0;
-  return _slerpQuat(a.q, b.q, frac);
-}
-
-// The satellite's (xECI, yECI, zECI) body-axis basis at `date` — real posted
-// attitude (store.attitude, SLERPed) when the sim time falls inside its
-// table span, else the same Default Sun Pointing assumption SatEntity.js's
-// own _computeOrientation fallback uses (X=sun, Y=zenith projected
-// perpendicular to sun via Gram-Schmidt, Z completes the frame). Mirrors
-// SatEntity.js's _attitudeFromTable/_computeOrientation exactly, just in ECI
-// instead of ECEF — skips its gmst rotation entirely, since angle-between/
-// magnitude (all _isConeBlinded/computeSttGeometry actually need) are
+// The satellite's (xECI, yECI, zECI) body-axis basis at `date` — real
+// attitude (MIC-fetched, then legacy posted, SLERPed via the shared
+// attitudeSample.js utility) when available for `date`, else the same
+// Default Sun Pointing assumption SatEntity.js's own _computeOrientation
+// fallback uses (X=sun, Y=zenith projected perpendicular to sun via
+// Gram-Schmidt, Z completes the frame). Mirrors SatEntity.js's
+// _attitudeFromTable/_computeOrientation exactly, just in ECI instead of
+// ECEF — skips its gmst rotation entirely, since angle-between/magnitude
+// (all _isConeBlinded/computeSttGeometry actually need) are
 // rotation-invariant, so this gives identical results without needing gmst
 // here at all. Null if degenerate (no real attitude AND sun≈zenith).
 function _attitudeBasisEci(noradId, date, eciPos, sunDir) {
-  const att = store.attitude[noradId];
-  if (att?.entries?.length) {
-    const q = _sampleAttitudeTable(att.entries, date.getTime());
+  const tMs = date.getTime();
+  const realEntries = resolveRealAttitudeEntries(noradId, tMs);
+  const att = store.attitude[noradId]; // legacy externally-posted — separate from MIC, lower-priority fallback
+  const entries = realEntries ?? (att?.entries?.length ? att.entries : null);
+  if (entries) {
+    let q = sampleAttitudeTable(entries, tMs, DEFAULT_MAX_GAP_MS);
+    if (q && realEntries) { // real (MIC) branch only, never legacy-posted
+      const model = store.satellites.find(s => s.noradId === noradId)?.model;
+      q = applyRealAttitudeModelCorrection(q, model);
+    }
     if (q) {
       return {
         xECI: _rotateByQuat(q, { x: 1, y: 0, z: 0 }),
@@ -194,8 +184,9 @@ function _attitudeBasisEci(noradId, date, eciPos, sunDir) {
 // cone boresight, in plain ECI vectors (see _attitudeBasisEci above for why
 // ECI, skipping SatEntity.js's gmst→ECEF step, gives identical results).
 // 'anti-sun' cones always point -sun (this mode has no attitude dependency
-// at all, real or assumed — 12U's own definition). 'body' cones need the
-// actual attitude basis (real when available, else Default Sun Pointing).
+// at all, real or assumed). 'body' cones (all current models, including
+// 12U — see MODEL_STAR_TRACKERS) need the actual attitude basis (real when
+// available, else Default Sun Pointing).
 function _sttConeBoresightEci(eciPos, sunDir, cfg, noradId, date) {
   if (cfg.mode !== 'body') return { x: -sunDir.x, y: -sunDir.y, z: -sunDir.z };
   const basis = _attitudeBasisEci(noradId, date, eciPos, sunDir);
@@ -221,20 +212,20 @@ function _isConeBlinded(eciPos, sunDir, cfg, sunExclDeg, earthExclDeg, noradId, 
   const boresight = _sttConeBoresightEci(eciPos, sunDir, cfg, noradId, date);
   const sunAngleDeg    = _angleDeg(boresight, sunDir);
   const earthAngleDeg  = _angleDeg(boresight, nadir);
-  const earthRadiusDeg = Math.asin(Math.max(-1, Math.min(1, R_EARTH_KM / rMag))) * 180 / Math.PI;
-  return sunAngleDeg < sunExclDeg || earthAngleDeg < earthRadiusDeg + earthExclDeg;
+  const earthLimbRadiusDeg = Math.asin(Math.max(-1, Math.min(1, (R_EARTH_KM + EARTH_LIMB_KM) / rMag))) * 180 / Math.PI;
+  return sunAngleDeg < sunExclDeg || earthAngleDeg < earthLimbRadiusDeg + earthExclDeg;
 }
 
 // Projects unit vector `v` into the local (up, right) frame around
 // `boresight` as {az, dist} degrees — dist is the angular separation from
 // boresight (the same value _isConeBlinded already computes for sun/earth),
 // az is rotation around it measured from `up` toward `right`. Degenerate at
-// dist≈180° (v opposite boresight, e.g. 12U's Sun by construction — see
-// computeSttGeometry's own comment) — az is meaningless there, but that case
-// renders off the edge of any reasonable POV circle anyway, so it doesn't matter.
-// Near dist≈0° (v≈boresight) or dist≈180° (v≈-boresight — always EXACTLY
-// 180° for 12U's Sun, by construction, see computeSttGeometry's own
-// comment), both dot(v,up) and dot(v,right) collapse toward zero together,
+// dist≈180° (v opposite boresight — a real, if momentary, case for any
+// 'body'-mode cone whose attitude currently has it facing the sun/nadir
+// dead-on) — az is meaningless there, but that case renders off the edge of
+// any reasonable POV circle anyway, so it doesn't matter.
+// Near dist≈0° (v≈boresight) or dist≈180° (v≈-boresight), both dot(v,up)
+// and dot(v,right) collapse toward zero together,
 // since v is then nearly (anti)parallel to boresight and up/right are both
 // perpendicular to it. atan2 of two near-zero, floating-point-noisy values
 // is essentially a random angle that changes wildly frame to frame even
@@ -255,13 +246,14 @@ function _projectAroundBoresight(v, boresight, up, right) {
 // out of sync with what the gantt's own STT row is actually showing. Adds a
 // 2D projection: a local (up, right) frame perpendicular to the boresight,
 // built from the orbit normal (cross(position, velocity)) as a stable "roll"
-// reference. 12U's anti-sun boresight has no roll of its own to borrow (by
-// construction, its boresight = -sunDir exactly, so its Sun-to-boresight
-// angle is always precisely 180° — Sun exclusion can never actually trigger
-// for that model, only Earth crossing into view does) — this gives every
-// model a consistent, non-arbitrary orientation to render against instead of
-// an undefined one. Returns null if the satellite can't currently be
-// propagated (e.g. decayed).
+// reference — an 'anti-sun' cone's boresight has no roll of its own to
+// borrow (by construction, its boresight = -sunDir exactly, so its
+// Sun-to-boresight angle is always precisely 180° and Sun exclusion can
+// never actually trigger for it, only Earth crossing into view does; no
+// current model uses this mode, but the geometry still has to handle it).
+// This gives every model a consistent, non-arbitrary orientation to render
+// against instead of an undefined one. Returns null if the satellite can't
+// currently be propagated (e.g. decayed).
 export function computeSttGeometry(sat, date, cfg, sunExclDeg, earthExclDeg) {
   const r = propagate(sat.satrec, date);
   if (!r) return null;
@@ -273,14 +265,19 @@ export function computeSttGeometry(sat, date, cfg, sunExclDeg, earthExclDeg) {
 
   const sunAngleDeg    = _angleDeg(boresight, sunDir);
   const earthAngleDeg  = _angleDeg(boresight, nadir);
+  // Solid-body radius — Earth's true disk size, for drawing it in sttPov.js.
   const earthRadiusDeg = Math.asin(Math.max(-1, Math.min(1, R_EARTH_KM / rMag))) * 180 / Math.PI;
+  // Top-of-atmosphere radius — the actual blinding threshold (see
+  // EARTH_LIMB_KM above), and what's drawn as the faint "Earth Limb" ring
+  // just outside the solid disk.
+  const earthLimbRadiusDeg = Math.asin(Math.max(-1, Math.min(1, (R_EARTH_KM + EARTH_LIMB_KM) / rMag))) * 180 / Math.PI;
   // Kept separate (not just their OR) so sttPov.js can highlight whichever
   // specific threshold ring was actually crossed instead of a generic
   // "something is blinded" indicator — either can be true independently
   // (fused STT blinding is only "every cone blinded", but a single cone can
   // be blinded by Sun, Earth, or both at once).
   const sunBlinded   = sunAngleDeg < sunExclDeg;
-  const earthBlinded = earthAngleDeg < earthRadiusDeg + earthExclDeg;
+  const earthBlinded = earthAngleDeg < earthLimbRadiusDeg + earthExclDeg;
   const blinded = sunBlinded || earthBlinded;
 
   const orbitNormal = _normalize(_cross(eciPos, eciVel));
@@ -290,13 +287,14 @@ export function computeSttGeometry(sat, date, cfg, sunExclDeg, earthExclDeg) {
   const right = _cross(boresight, up);
 
   return {
-    blinded, sunBlinded, earthBlinded, sunAngleDeg, earthAngleDeg, earthRadiusDeg, sunExclDeg, earthExclDeg,
+    blinded, sunBlinded, earthBlinded, sunAngleDeg, earthAngleDeg, earthRadiusDeg, earthLimbRadiusDeg, sunExclDeg, earthExclDeg,
     sun:   _projectAroundBoresight(sunDir, boresight, up, right),
     earth: _projectAroundBoresight(nadir,  boresight, up, right),
   };
 }
 
 let _passWindows    = []; // [{ start: ms, end: ms, pass: fullPassObj }]
+let _planWindows    = []; // [{ start: ms, end: ms, plan: fullPlanObj }] — see planData.js; per-satellite, same scoping as _passWindows
 
 // ── Pass tooltip ──────────────────────────────────────────────────
 let _ganttTooltip = null;
@@ -335,6 +333,46 @@ function _showPassTooltip(e, pass) {
   _ganttTooltip.style.display = 'block';
   _posTooltipAt(_ttAnchorX, _ttAnchorY);
   hydratePassGeometry(_ganttTooltip, e, pass, store.trackedSat);
+}
+
+// `comments` is a JSON-encoded string (pass-geometry metadata) — parsed into
+// readable "key: value" pairs when it's actually JSON, shown as-is otherwise
+// rather than a raw escaped blob.
+function _formatPlanComment(raw) {
+  if (!raw) return '—';
+  try {
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj === 'object') return Object.entries(obj).map(([k, v]) => `${k}: ${v}`).join(', ');
+  } catch { /* not JSON — fall through to raw text */ }
+  return raw;
+}
+
+function _planTooltipHTML(plan) {
+  // Same color the bar itself uses (_planColor, defined below) — so the
+  // pill and the bar always agree, and any status this app doesn't have a
+  // dedicated color for yet (see _PLAN_STATUS_COLOR's own comment) still
+  // reads clearly instead of silently having no status shown at all.
+  const c   = _planColor(plan.status);
+  const pill = `<span class="co-pill" style="background:${c}22; color:${c}; border:1px solid ${c}66;">${escapeHtml(plan.status ?? '—')}</span>`;
+  const hdr   = `<div class="co-tt-header">PLAN ${pill}</div>`;
+  const times = `<div class="co-tt-time-row"><span class="co-tt-time-lbl">FROM</span>${_fmtDT(new Date(plan.start))}</div>`
+              + `<div class="co-tt-time-row"><span class="co-tt-time-lbl">TO</span>${_fmtDT(new Date(plan.end))}</div>`;
+  const rows = [
+    ['REC',  plan.recipient ?? '—'],
+    ['KEY',  plan.key ?? '—'],
+    ['NOTE', _formatPlanComment(plan.comments)],
+  ].map(([lbl, val]) => `<div class="co-tt-time-row"><span class="co-tt-time-lbl">${lbl}</span>${escapeHtml(String(val))}</div>`).join('');
+  return hdr + times + rows;
+}
+
+function _showPlanTooltip(e, plan) {
+  _ttAnchorX = e.clientX;
+  _ttAnchorY = e.clientY;
+  clearTimeout(_ttHideTimer);
+  _openGapTooltip = null; // this tooltip now shows a plan, not a gap
+  _ganttTooltip.innerHTML     = _planTooltipHTML(plan);
+  _ganttTooltip.style.display = 'block';
+  _posTooltipAt(_ttAnchorX, _ttAnchorY);
 }
 
 function _hidePassTooltipSoon() {
@@ -580,6 +618,7 @@ function tick(ts) {
 
 function startPlay() {
   playing = true;
+  store.setPlaying(true); // see store.js's own comment — satAttitudeReal.js's speed cutoff needs this, not just playbackSpeed
   lastTs = null;
   playBtn.textContent = '⏸';
   playBtn.classList.add('playing');
@@ -588,6 +627,7 @@ function startPlay() {
 
 function stopPlay() {
   playing = false;
+  store.setPlaying(false);
   playBtn.textContent = '▶';
   playBtn.classList.remove('playing');
   if (lastRaf) cancelAnimationFrame(lastRaf);
@@ -663,6 +703,47 @@ function _renderGanttPasses() {
       });
     }
     ganttPasses.appendChild(bar);
+  }
+}
+
+// Status → color, shared by the gantt bar fill and the tooltip's status
+// pill (see _planTooltipHTML) — see planData.js's PlanSummaryStatus for the
+// full enum this covers.
+const _PLAN_STATUS_COLOR = {
+  DRAFT:      '#8a8a9e', // grey
+  RELEASED:   '#5ec8ff', // light blue
+  SUBMITTED:  '#1e4d8c', // dark blue
+  ACTIVATED:  '#ff9500', // orange
+  TERMINATED: '#ff4d4d', // red
+};
+const _PLAN_DEFAULT_COLOR = '#8a8a9e'; // any future/unrecognized status — grey, same as DRAFT
+function _planColor(status) {
+  return _PLAN_STATUS_COLOR[status] ?? _PLAN_DEFAULT_COLOR;
+}
+
+// Render plan bars (MIC Plan distribution — see planData.js) with a hover
+// tooltip only, no click-through detail panel (unlike passes, there's no
+// separate "plan detail" view to open).
+function _renderGanttPlans() {
+  if (!ganttSlots) return;
+  ganttSlots.innerHTML = '';
+  const tMin    = _viewStartMs();
+  const rangeMs = _viewRangeMs();
+  for (const { start, end, plan } of _planWindows) {
+    const l  = (start - tMin) / rangeMs * 100;
+    const r  = (end   - tMin) / rangeMs * 100;
+    const lc = Math.max(0, l);
+    const rc = Math.min(100, r);
+    if (rc - lc < 0.01) continue;
+    const bar = document.createElement('div');
+    bar.className         = 'gantt-bar';
+    bar.style.left        = `${lc.toFixed(3)}%`;
+    bar.style.width       = `${(rc - lc).toFixed(3)}%`;
+    bar.style.background  = _planColor(plan.status);
+    bar.style.cursor      = 'help';
+    bar.addEventListener('mouseenter', e => _showPlanTooltip(e, plan));
+    bar.addEventListener('mouseleave', _hidePassTooltipSoon);
+    ganttSlots.appendChild(bar);
   }
 }
 function _renderGanttEclipse() {
@@ -851,6 +932,20 @@ function _updateGanttPasses() {
   _renderGanttPasses();
 }
 
+// Fetch plans for the tracked satellite's gantt fixed max window (EPOCH ±
+// VIEW_HALF_SEC — same horizon every other row is bounded to, see
+// VIEW_HALF_SEC's own comment) then render. Per-satellite, same scoping as
+// TMR/attitude — see planData.js's own header comment for why (each
+// satellite's own MIC box hosts its own Plan distribution instance,
+// authenticated with that satellite's own MIC token).
+function _updateGanttPlans() {
+  const sat = store.trackedSat;
+  if (!sat) return;
+  const rangeStart = EPOCH.getTime() - VIEW_HALF_SEC * 1000;
+  const rangeEnd   = EPOCH.getTime() + VIEW_HALF_SEC * 1000;
+  schedulePlanFetch(sat, rangeStart, rangeEnd, plans => store.setPlans(sat.id, plans));
+}
+
 // Compute eclipse + STT-blinding windows for a fixed ±14-day range then render.
 // Both share the same propagate()/sunDirectionECI() per-step results — STT
 // blinding just adds a couple of dot products + one acos + one asin on top
@@ -945,6 +1040,7 @@ function _applyView() {
   scrub.max = viewEndSec;
   _renderGanttTmrRows();
   _renderGanttPasses();
+  _renderGanttPlans();
   _renderGanttEclipse();
   _renderGanttStt();
   _updateGanttRuler();
@@ -986,6 +1082,7 @@ export function initTimePlayer() {
     applyTime();
     _applyView();
     _updateGanttEclipse();
+    _updateGanttPlans(); // EPOCH moved — the fixed max window it's fetched for moved with it
     if (!playing) startPlay();
   });
 
@@ -1000,6 +1097,7 @@ export function initTimePlayer() {
     applyTime();
     _applyView();
     _updateGanttEclipse();
+    _updateGanttPlans(); // EPOCH moved — the fixed max window it's fetched for moved with it
     if (!playing) startPlay();
   });
 
@@ -1013,7 +1111,7 @@ export function initTimePlayer() {
     _applyView();
   });
 
-  speedSel.addEventListener('change', () => { speed = Number(speedSel.value); });
+  speedSel.addEventListener('change', () => { speed = Number(speedSel.value); store.setPlaybackSpeed(speed); });
 
   scrub.addEventListener('input', () => {
     stopPlay();
@@ -1056,18 +1154,49 @@ export function initTimePlayer() {
       if (ganttStt)  ganttStt.innerHTML  = '';
       if (ganttStt1) ganttStt1.innerHTML = '';
       if (ganttStt2) ganttStt2.innerHTML = '';
+      if (ganttSlots) ganttSlots.innerHTML = '';
+      _planWindows = [];
       _eclipseJobSat = null;
       _refreshSttRowVisibility();
       _updateGanttEclipse();
+      _updateGanttPlans(); // fetch for the newly-tracked satellite (own MIC token/host — see planData.js)
       _setGanttCollapsed(!store.trackedSat);
+      _syncGanttToggleEnabled();
       // ResizeObserver handles _syncLayout when gantt visibility/height changes
     }
     if (key === 'tmrData') {
       _renderGanttTmrRows();
     }
+    if (key === 'plans') {
+      const sat = store.trackedSat;
+      _planWindows = sat ? (store.satPlans[sat.id] ?? []).map(plan => ({ start: plan.start, end: plan.end, plan })) : [];
+      _renderGanttPlans();
+    }
+    // Real attitude (MIC) — only ever actively fetched for the single
+    // currently-tracked satellite, same scoping SatInfo.js/sttPovWidget.js
+    // already use. See satAttitudeReal.js's scheduleAttitudeFetch for the
+    // debounce/ceiling mechanics that keep this cheap under both scrubbing
+    // and continuous playback.
+    if (key === 'currentTime' || key === 'trackedSatId') {
+      const sat = store.trackedSat;
+      if (sat) scheduleAttitudeFetch(sat.noradId, store.currentTime.getTime());
+    }
   });
   _updateGanttPasses();
   _updateGanttEclipse();
+  if (store.trackedSat) scheduleAttitudeFetch(store.trackedSat.noradId, store.currentTime.getTime()); // also run on init
+
+  // Plans (MIC Plan distribution — see planData.js): per-satellite, same
+  // scoping as TMR/attitude (own guard against no-tracked-satellite, see
+  // _updateGanttPlans). Fetched once on init, again whenever the tracked
+  // satellite or EPOCH changes (trackedSatId subscriber above / Now/Home
+  // click handlers), and periodically on this timer to pick up status
+  // transitions (DRAFT → RELEASED → ... — see planData.js's
+  // PlanSummaryStatus) that happen without any local trigger. Same 30s scale
+  // as this file's own SCC_CHECK_TTL_MS for a similar "recheck occasionally,
+  // the API is cheap" case.
+  _updateGanttPlans();
+  setInterval(_updateGanttPlans, 30_000);
 
   // TMR fetch helper — debounced so rapid satPasses updates don't abort each other.
   // Fetches every source (BUS/PAY — see tmrData.js's TMR_SOURCES) independently,
@@ -1104,9 +1233,12 @@ export function initTimePlayer() {
     // almost always one of those descendants, never the <button> itself.
     // The other two are plain text-content buttons, where a text node click
     // still reports the button element as e.target, so === already worked —
-    // left as-is rather than changed speculatively.
+    // left as-is rather than changed speculatively. #gsi-attitude-toggle
+    // (SatInfo.js) lives inside #gantt-sat-info, itself positioned inside
+    // #timeline-gantt (same reasoning as the STT POV panel below) — exempted
+    // by selector rather than an element reference for the same reason.
     if (e.target === ganttToggleBtn || e.target === ganttSttCollapseBtn || sttPovOpenBtn?.contains(e.target)
-      || e.target.closest?.('.stt-pov-panel')) return;
+      || e.target.closest?.('.stt-pov-panel') || e.target.closest?.('#gsi-attitude-toggle')) return;
     e.preventDefault();
     ganttEl.setPointerCapture(e.pointerId);
     ganttEl.style.cursor = 'grabbing';
@@ -1138,8 +1270,11 @@ export function initTimePlayer() {
   _ganttTooltip.addEventListener('mouseleave', _hidePassTooltipSoon);
 
 
-  // Gantt collapse toggle
+  // Gantt collapse toggle — disabled (see _syncGanttToggleEnabled) when
+  // nothing is tracked, but guard here too rather than trust the DOM
+  // `disabled` attribute alone.
   ganttToggleBtn?.addEventListener('click', () => {
+    if (!store.trackedSat) return;
     _setGanttCollapsed(!document.body.classList.contains('gantt-collapsed'));
   });
 
@@ -1148,6 +1283,7 @@ export function initTimePlayer() {
   // toggle above last left it at, since the trigger here is "is there
   // anything to look at", not a user preference to remember.
   _setGanttCollapsed(!store.trackedSat);
+  _syncGanttToggleEnabled();
 
   // ResizeObserver fires whenever the gantt's actual rendered height changes
   // (initial layout, collapse/expand, content updates) — no rAF race condition
@@ -1157,6 +1293,7 @@ export function initTimePlayer() {
   window.addEventListener('resize', () => { _alignGantt(); _syncLayout(); });
 
   speed = Number(speedSel.value);
+  store.setPlaybackSpeed(speed);
   applyTime();
   startPlay();
 }

@@ -51,7 +51,7 @@ export const store = {
   currentTime: new Date(),
   satellites: [],      // { id, noradId, name, color, satrec }
   groundStations: [],  // DERIVED — rebuilt by _rebuildGroundStations(). { id, name, lat, lon, color, network, satId, showFootprint }
-  customPoints: _loadCustomPoints(), // [{ id, name, lat, lon }] — user-added markers, persisted to localStorage
+  customPoints: _loadCustomPoints(), // [{ id, name, lat, lon, mask, satId, visible }] — user-added markers, persisted to localStorage
   satAntennas: {},     // satId → raw array from GET /api/v1/data/antennas
   antennaToggles: {},  // `${satId}:${network}` → bool (visible), default true when absent
   showFootprints: false,
@@ -86,6 +86,32 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
   // falling back to Default Sun Pointing outside it or when absent entirely —
   // most satellites will simply never have an entry here.
   attitude: {},
+  // noradId → { noradId, source:'mic', entries: [{ t: ms, q: {x,y,z,w} }] } |
+  // undefined. Real attitude fetched live from MIC (see satAttitudeReal.js) —
+  // client-local ONLY, never sent to or persisted by the server. Kept
+  // deliberately separate from `attitude` above (the server-shared POST
+  // /api/attitude slot, populated independently by apiPoller.js's feed poll)
+  // so the two producers can never silently stomp each other for the same
+  // noradId. Consumers check this first, then `attitude`, then fall back to
+  // Default Sun Pointing.
+  realAttitude: {},
+  // satId → { entries: [{ t: bucketMs, sysMode, gncMode, battVoltage, battSoc }] }
+  // | undefined. sysMode/gncMode/battery % queried AT A SPECIFIC SIM TIME
+  // (see satTelemetryReal.js) — a 30s-bucket-grid cache so SatInfo.js's panel
+  // stays coherent with whatever instant TimePlayer is showing, instead of
+  // always reflecting "right now" like satTelemetry above. Client-local only,
+  // kept separate from satTelemetry (which still drives ChadOps.js's Fleet
+  // table — that view always wants live "now" regardless of the Visualizer's
+  // scrub position).
+  satTelemetryReal: {},
+  playbackSpeed: 1, // TimePlayer.js's sim-time multiplier — satAttitudeReal.js reads this to know whether real attitude can plausibly be fetched fast enough to keep up with how quickly sim time is advancing
+  // Whether TimePlayer.js is actively auto-advancing sim time right now
+  // (startPlay/stopPlay) — separate from playbackSpeed, which is just the
+  // currently-SELECTED multiplier and persists across pause/scrub. Read by
+  // satAttitudeReal.js so its high-speed real-attitude cutoff (MAX_SPEED_FOR_REAL)
+  // only applies while actually playing fast, not merely because a fast
+  // speed happens to still be selected while paused/scrubbing.
+  playing: false,
   satScale: 500,
   orbitAlt: 590,       // km — shared by night shadow + GS footprint
   trackedSatId: null,
@@ -95,6 +121,12 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
   // wholesale on every satPasses refetch) identifies the pass so ChadOps.js can
   // still match it against a freshly-fetched passes array.
   selectedPass: null,
+  // satId → [{ key, version, recipient, originator, description, comments,
+  // start, end, status, statusInfo }] — MIC's Plan distribution service (see
+  // planData.js), fills the gantt's "Plans" row. Per-satellite, same scoping
+  // as satTmr/satPasses: each satellite's own MIC box hosts its own Plan
+  // distribution instance (see satSubsystems.js's SUBSYSTEMS.planApi).
+  satPlans: {},
   _listeners: [],
 
   subscribe(fn) { this._listeners.push(fn); },
@@ -128,11 +160,14 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
       delete this.satTelemetry[sat.id];
       delete this.satPasses[sat.id];
       delete this.satTmr[sat.id];
+      delete this.satPlans[sat.id];
       delete this.satGnss[sat.id];
       delete this.satGnssMitigation[sat.id];
       delete this.satEventBaseline[sat.id];
       delete this.satAntennas[sat.id];
       delete this.attitude[sat.noradId];
+      delete this.realAttitude[sat.noradId];
+      delete this.satTelemetryReal[sat.id];
       delete this.satAccessible[sat.id];
       delete this.satSubsystemReachable[sat.id];
       for (const key of Object.keys(this.antennaToggles)) {
@@ -210,6 +245,7 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
       }
     }
     for (const p of this.customPoints) {
+      if (p.visible === false) continue; // same exclude-from-`out` pattern as a hidden antenna network above
       out.push({
         id:            p.id,
         name:          p.name,
@@ -217,7 +253,10 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
         lon:           p.lon,
         color:         CUSTOM_POINT_COLOR,
         mask:          p.mask, // elevation mask, degrees — undefined/null → no footprint
-        showFootprint: p.mask != null,
+        // Tied to the same "◎ All" button that drives ground-station
+        // footprints (this.showFootprints) — a mask circle IS a visibility
+        // region, so it follows the same global show/hide as every other one.
+        showFootprint: p.mask != null && this.showFootprints,
       });
     }
     this.groundStations = out;
@@ -228,10 +267,13 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
   // mask: optional elevation-mask angle in degrees. When set, a visibility
   // circle (ground coverage at that minimum elevation, given store.orbitAlt)
   // is drawn on the globe/map around this point; when null, no circle.
-  addCustomPoint(name, lat, lon, mask = null) {
+  // satId: which satellite's site list this point was added from (see
+  // InputPanel.js's "+ Point" row) — points are a per-satellite thing, this
+  // is how they're grouped/listed there and removed again.
+  addCustomPoint(name, lat, lon, mask = null, satId = null) {
     const point = {
       id:  `pt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
-      name, lat, lon, mask,
+      name, lat, lon, mask, satId, visible: true,
     };
     this.customPoints.push(point);
     _saveCustomPoints(this.customPoints);
@@ -243,6 +285,18 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
 
   removeCustomPoint(id) {
     this.customPoints = this.customPoints.filter(p => p.id !== id);
+    _saveCustomPoints(this.customPoints);
+    this._rebuildGroundStations();
+    this.notify('customPoints');
+    this.notify('groundStations');
+  },
+
+  // Same show/hide toggle pattern as toggleSatVisibility — hides the point
+  // (marker + footprint) entirely without deleting it.
+  setCustomPointVisible(id, visible) {
+    const p = this.customPoints.find(p => p.id === id);
+    if (!p) return;
+    p.visible = visible;
     _saveCustomPoints(this.customPoints);
     this._rebuildGroundStations();
     this.notify('customPoints');
@@ -302,6 +356,11 @@ setPingStatus(satId, status) {
     this.notify('tmrData');
   },
 
+  setPlans(satId, list) {
+    this.satPlans[satId] = list;
+    this.notify('plans');
+  },
+
   setSatGnss(satId, data) {
     this.satGnss[satId] = data;
     this.notify('satGnss');
@@ -340,6 +399,20 @@ setPingStatus(satId, status) {
     this.notify('attitude');
   },
 
+  // data = { noradId, source:'mic', entries } from satAttitudeReal.js, or
+  // null to clear. Client-local only — see the `realAttitude` field comment.
+  setRealAttitude(noradId, data) {
+    if (data) this.realAttitude[noradId] = data;
+    else delete this.realAttitude[noradId];
+    this.notify('realAttitude');
+  },
+
+  // data = { entries } from satTelemetryReal.js's bucket-grid cache.
+  setSatTelemetryReal(satId, data) {
+    this.satTelemetryReal[satId] = data;
+    this.notify('satTelemetryReal');
+  },
+
   updateSatTle(noradId, satrec) {
     const sat = this.satellites.find(s => s.noradId === noradId);
     if (sat) { sat.satrec = satrec; this.notify('satellites'); }
@@ -368,6 +441,16 @@ setPingStatus(satId, status) {
   setScale(v) {
     this.satScale = v;
     this.notify('satScale');
+  },
+
+  setPlaybackSpeed(v) {
+    this.playbackSpeed = v;
+    this.notify('playbackSpeed');
+  },
+
+  setPlaying(v) {
+    this.playing = v;
+    this.notify('playing');
   },
 
   setTrackedSat(id) {

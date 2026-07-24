@@ -2,6 +2,8 @@ import { propagate, eciToCartesian3 } from '../tle.js';
 import { sunDirectionECI, isInEclipse } from '../sunVector.js';
 import { store } from '../store.js';
 import { satSunExclDeg, satEarthExclDeg, satStarTrackerConesVisible, MODEL_STAR_TRACKERS, ST_FOV_HALF_ANGLE_DEG } from '../satStarTracker.js';
+import { sampleAttitudeTable, DEFAULT_MAX_GAP_MS } from '../attitudeSample.js';
+import { resolveRealAttitudeEntries, applyRealAttitudeModelCorrection } from '../satAttitudeReal.js';
 
 /* global Cesium */
 
@@ -18,6 +20,10 @@ const MODEL_BASE_SCALE = 800;
 const ST_HALF_ANGLE_DEG = ST_FOV_HALF_ANGLE_DEG;
 const ST_LEN_KM = 500;
 const R_EARTH_KM = 6371;
+// Top-of-atmosphere altitude (~Kármán line) — matches TimePlayer.js's
+// EARTH_LIMB_KM, kept in sync so the 3D globe's cone coloring and the STT
+// POV widget always agree on blinded/clear for the same satellite.
+const EARTH_LIMB_KM = 100;
 const ST_COLOR_OK  = Cesium.Color.DODGERBLUE;
 const ST_COLOR_BAD = Cesium.Color.RED;
 
@@ -67,8 +73,6 @@ const _scratchZECI   = { x: 0, y: 0, z: 0 };
 const _scratchXEcef  = new Cesium.Cartesian3();
 const _scratchYEcef  = new Cesium.Cartesian3();
 const _scratchZEcef  = new Cesium.Cartesian3();
-const _scratchQA     = new Cesium.Quaternion();
-const _scratchQB     = new Cesium.Quaternion();
 const _scratchQGmst  = new Cesium.Quaternion();
 const _scratchQBody  = new Cesium.Quaternion();
 
@@ -283,8 +287,8 @@ export class SatEntity {
   }
 
   // Orientation quaternion.
-  // If current sim time falls inside the posted attitude table → SLERP.
-  // Outside the table span → fall back to Default Sun Pointing.
+  // Priority: real (MIC, live-fetched — satAttitudeReal.js) → legacy posted
+  // (store.attitude, POST /api/attitude) → Default Sun Pointing.
   //
   // This SLERP path is what makes the star tracker's Sun-exclusion check
   // meaningful at all: under Default Sun Pointing alone, col-0 (body +X) is
@@ -294,13 +298,22 @@ export class SatEntity {
   // dot(dir_ECI, sun) = dx·dot(col0,sun) + dy·dot(col1,sun) + dz·dot(col2,sun)
   // = dx·1 + dy·0 + dz·0 = dx, always — col1/col2 are orthogonal to col0=sun
   // by construction). Only a real, independently-sourced attitude can make
-  // that angle actually vary, which is exactly what this table provides.
+  // that angle actually vary, which is exactly what these tables provide.
   _computeOrientation(r, date) {
     const { eciPos, gmst } = r;
+    const tMs = date.getTime();
 
+    const realEntries = resolveRealAttitudeEntries(this.sat.noradId, tMs);
+    if (realEntries) {
+      const q = this._attitudeFromTable(realEntries, tMs, gmst, true);
+      if (q) return q;
+    }
+
+    // Legacy externally-posted attitude — unrelated to MIC, kept as a
+    // lower-priority fallback for whatever else might still POST /api/attitude.
     const att = store.attitude[this.sat.noradId];
     if (att?.entries?.length) {
-      const tableQ = this._attitudeFromTable(att.entries, date.getTime(), gmst);
+      const tableQ = this._attitudeFromTable(att.entries, tMs, gmst);
       if (tableQ) return tableQ;
     }
 
@@ -342,38 +355,36 @@ export class SatEntity {
     return Cesium.Quaternion.fromRotationMatrix(_scratchM3);
   }
 
-  // SLERPs the posted attitude table (see POST /api/attitude, store.setAttitude)
-  // to `tMs`, returning an ECEF quaternion directly comparable to
-  // _computeOrientation's fallback — or null if tMs falls outside the table's
-  // span, so the caller falls back to Default Sun Pointing.
+  // SLERPs an attitude table (real from MIC, or legacy posted via POST
+  // /api/attitude — same shape either way) to `tMs`, returning an ECEF
+  // quaternion directly comparable to _computeOrientation's fallback — or
+  // null if tMs falls outside the table's span, or the bracketing samples are
+  // too far apart to trust (see attitudeSample.js's sampleAttitudeTable), so
+  // the caller falls back further down the chain.
   //
-  // ASSUMPTION (undocumented upstream, no live ground system exercised this
-  // yet): each posted quaternion is body→ECI, the same convention
+  // Convention: each table entry is body→ECI, the same one
   // _computeOrientation's fallback builds (xECI/yECI/zECI) before its own
   // ECI→ECEF gmst rotation — NOT the separate scalar-first body-frame-offset
-  // convention satStarTracker.js's bodyDirFromQuat uses for STT mounting. If a
-  // real feed's convention turns out different, this is the one place to fix.
-  _attitudeFromTable(entries, tMs, gmst) {
-    const first = entries[0], last = entries[entries.length - 1];
-    if (tMs < first.t || tMs > last.t) return null;
+  // convention satStarTracker.js's bodyDirFromQuat uses for STT mounting.
+  // Confirmed against MIC's real feed (satAttitudeReal.js's parseApm) by live
+  // A/B comparison — MIC's raw (Q1,Q2,Q3,QC), plus a separate live-calibrated
+  // body-frame correction (both applied in parseApm itself), already matches
+  // this convention.
+  // `isReal`: true only when `entries` came from resolveRealAttitudeEntries
+  // — gates applyRealAttitudeModelCorrection to the real (MIC) branch,
+  // never the legacy-posted one.
+  _attitudeFromTable(entries, tMs, gmst, isReal = false) {
+    let plainQ = sampleAttitudeTable(entries, tMs, DEFAULT_MAX_GAP_MS);
+    if (!plainQ) return null;
+    if (isReal) plainQ = applyRealAttitudeModelCorrection(plainQ, this.sat.model);
 
-    let lo = 0, hi = entries.length - 1;
-    while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1;
-      if (entries[mid].t <= tMs) lo = mid; else hi = mid;
-    }
-    const a = entries[lo], b = entries[hi];
-    const frac = b.t > a.t ? (tMs - a.t) / (b.t - a.t) : 0;
-
-    _scratchQA.x = a.q.x; _scratchQA.y = a.q.y; _scratchQA.z = a.q.z; _scratchQA.w = a.q.w;
-    _scratchQB.x = b.q.x; _scratchQB.y = b.q.y; _scratchQB.z = b.q.z; _scratchQB.w = b.q.w;
-    const qBody = Cesium.Quaternion.slerp(_scratchQA, _scratchQB, frac, _scratchQBody);
-    Cesium.Quaternion.normalize(qBody, qBody);
+    _scratchQBody.x = plainQ.x; _scratchQBody.y = plainQ.y; _scratchQBody.z = plainQ.z; _scratchQBody.w = plainQ.w;
+    Cesium.Quaternion.normalize(_scratchQBody, _scratchQBody);
 
     // Same ECI→ECEF rotation as toEcef() above, expressed as a quaternion
     // (rotation by -gmst about Z) instead of a per-column matrix transform.
     const qGmst = Cesium.Quaternion.fromAxisAngle(Cesium.Cartesian3.UNIT_Z, -gmst, _scratchQGmst);
-    return Cesium.Quaternion.multiply(qGmst, qBody, new Cesium.Quaternion());
+    return Cesium.Quaternion.multiply(qGmst, _scratchQBody, new Cesium.Quaternion());
   }
 
   // Body-frame bias applied only to the rendered model, not to the reference
@@ -464,7 +475,8 @@ export class SatEntity {
     // boresight points within satEarthExclDeg of Earth's *center*, which
     // barely ever happens (it's a ~22°-wide cone vs. Earth's ~66°-wide disc).
     const rMag = Cesium.Cartesian3.magnitude(origin);
-    const earthRadiusDeg = Cesium.Math.toDegrees(Math.asin(Cesium.Math.clamp((R_EARTH_KM * 1000) / rMag, -1, 1)));
+    // Top-of-atmosphere radius, not the solid surface — see EARTH_LIMB_KM.
+    const earthLimbRadiusDeg = Cesium.Math.toDegrees(Math.asin(Cesium.Math.clamp(((R_EARTH_KM + EARTH_LIMB_KM) * 1000) / rMag, -1, 1)));
     const sunExclDeg   = satSunExclDeg(this.sat.noradId);
     const earthExclDeg = satEarthExclDeg(this.sat.noradId);
 
@@ -525,7 +537,7 @@ export class SatEntity {
       const earthAngleDeg = Cesium.Math.toDegrees(Math.acos(earthDot));
 
       st.violated = sunAngleDeg   < sunExclDeg
-                 || earthAngleDeg < earthRadiusDeg + earthExclDeg;
+                 || earthAngleDeg < earthLimbRadiusDeg + earthExclDeg;
     });
   }
 

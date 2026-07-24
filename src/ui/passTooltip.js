@@ -103,9 +103,15 @@ function _procedureListHTML(pass, grafanaHost, sat) {
   const procs = pass.procedures;
   if (!procs?.length) return `<div class="co-tt-proc co-tt-ok">● PASS OCCURRED</div>`;
   const rows = procs.map((pr, i) => {
-    const cls  = _PROC_CLS[pr.status] ?? 'co-tt-ok';
     const num  = `<span class="co-tt-num">${i + 1}</span>`;
     const name = `<span class="co-tt-pname">${pr.name}</span>`;
+    if (pr.notStarted) {
+      // Scheduled but the pass ended before it ever started (satPasses.js) —
+      // no real dates to show, nothing to link to Grafana for, and already
+      // sorted last. Reuses the muted "not a real outcome" treatment.
+      return `<div class="co-tt-proc co-tt-scheduled" title="${pr.name}">${num}${name}</div>`;
+    }
+    const cls  = _PROC_CLS[pr.status] ?? 'co-tt-ok';
     if (grafanaHost && pr.startMs && pr.endMs) {
       const fromMs = pr.startMs - LOKI_PROC_PAD_MS, toMs = pr.endMs + LOKI_PROC_PAD_MS;
       const url = grafanaLokiUrl(grafanaHost, fromMs, toMs);

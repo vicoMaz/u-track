@@ -80,7 +80,7 @@ export function initGlobe() {
   }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
   store.subscribe((key) => {
-    if (key === 'currentTime')    updatePositions();
+    if (key === 'currentTime' || key === 'realAttitude' || key === 'playbackSpeed') updatePositions();
     if (key === 'satellites' || key === 'satAccessible') syncEntities();
     if (key === 'trackedSatId')   applyTracking();
     if (key === 'groundStations') syncGSEntities();

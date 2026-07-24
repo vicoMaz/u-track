@@ -297,9 +297,15 @@ const _PROC_CLS = { SUCCESS: 'co-tt-ok', FAILURE: 'co-tt-fail', CANCELLED: 'co-t
 function _procHistoryHTML(pass, grafanaHost, sat) {
   if (!pass.procedures?.length) return `<div class="co-tt-proc co-tt-ok">● PASS OCCURRED</div>`;
   const rows = pass.procedures.map((pr, i) => {
-    const cls  = _PROC_CLS[pr.status] ?? 'co-tt-ok';
     const num  = `<span class="co-tt-num">${i + 1}</span>`;
     const name = `<span class="co-tt-pname">${pr.name}</span>`;
+    if (pr.notStarted) {
+      // Scheduled but the pass ended before it ever started (satPasses.js) —
+      // no real dates to show, nothing to link to Grafana for, and already
+      // sorted last. Reuses the muted "not a real outcome" treatment.
+      return `<div class="co-tt-proc co-tt-scheduled" title="${pr.name}">${num}${name}<span class="co-tt-dur">not started</span></div>`;
+    }
+    const cls  = _PROC_CLS[pr.status] ?? 'co-tt-ok';
     const dur  = pr.endMs && pr.startMs ? `<span class="co-tt-dur">${fmtDuration(pr.endMs - pr.startMs)}</span>` : '';
     if (grafanaHost && pr.startMs && pr.endMs) {
       const fromMs = pr.startMs - LOKI_PROC_PAD_MS, toMs = pr.endMs + LOKI_PROC_PAD_MS;

@@ -57,16 +57,23 @@ export async function fetchSatPasses(sat) {
     // Map each raw procedure to { name, status, startMs, endMs }
     const allProcs = (procsData ?? []).map(p => {
       const comp = p.completed;
+      // `started: null` means exactly that — scheduled, but the pass ended
+      // before it ever got a chance to start (never "cancelled" mid-run).
+      // No real dates exist for it, so startMs/endMs stay null rather than
+      // falling back to generationTime/a fake +60s duration — that would
+      // otherwise make it look like it briefly ran when it never did.
+      const notStarted = p.started == null;
       let status;
       if (!comp)                         status = 'CANCELLED';
       else if (comp.ack === 'SUCCESS')   status = 'SUCCESS';
       else if (comp.ack === 'FAILURE')   status = 'FAILURE';
       else                               status = 'CANCELLED';
-      const startMs = new Date(p.started?.time ?? p.generationTime).getTime();
-      const endMs   = comp?.time ? new Date(comp.time).getTime() : startMs + 60_000;
+      const startMs = notStarted ? null : new Date(p.started?.time ?? p.generationTime).getTime();
+      const endMs   = notStarted ? null : (comp?.time ? new Date(comp.time).getTime() : startMs + 60_000);
       return {
         name: p.name.split('.').pop(),
         status,
+        notStarted,
         time: new Date(p.generationTime).getTime(),
         startMs,
         endMs,
@@ -81,9 +88,15 @@ export async function fetchSatPasses(sat) {
         const passEnd   = new Date(e.pass?.los0 ?? e.end);
         const isFuture  = passStart > now;
 
+        // Never-started procedures (no startMs) always sort last, regardless
+        // of their generationTime — they never actually ran, so they don't
+        // belong interleaved with ones that did.
         const procs = isFuture ? [] : allProcs
           .filter(p => p.time >= passStart.getTime() && p.time <= passEnd.getTime())
-          .sort((a, b) => a.startMs - b.startMs);
+          .sort((a, b) => {
+            if (a.notStarted !== b.notStarted) return a.notStarted ? 1 : -1;
+            return (a.startMs ?? a.time) - (b.startMs ?? b.time);
+          });
 
         const rawP = e.pass ?? {};
         return {

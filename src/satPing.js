@@ -9,7 +9,7 @@ import { fetchSatEventBaseline }  from './satEventBaseline.js';
 import { fetchSatGroundEvents }   from './satGroundEvents.js';
 import { fetchSatGlobals }        from './satGlobals.js';
 import { fetchSatVersions }       from './satVersions.js';
-import { satSubsystemOrigin } from './satSubsystems.js';
+import { satSubsystemOrigin, satSubsystemPingOrigin, SUBSYSTEMS } from './satSubsystems.js';
 
 const PING_TIMEOUT = 5_000;
 
@@ -120,12 +120,12 @@ async function _ping(sat) {
 // store.satAccessible's job instead).
 async function _probeSubsystems(sat) {
   await Promise.all(SUBSYSTEM_PROBE_KEYS.map(async key => {
-    const origin = satSubsystemOrigin(sat.noradId, key);
+    const origin = satSubsystemPingOrigin(sat.noradId, key);
     if (!origin) { store.setSubsystemReachable(sat.id, key, null); return; }
     const ctrl  = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), PING_TIMEOUT);
     try {
-      await fetch(`${origin}/api/v1/ping`, { method: 'GET', mode: 'no-cors', signal: ctrl.signal });
+      await fetch(`${origin}${SUBSYSTEMS[key].pingPath}`, { method: 'GET', mode: 'no-cors', signal: ctrl.signal });
       store.setSubsystemReachable(sat.id, key, true);
     } catch {
       store.setSubsystemReachable(sat.id, key, false);

@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "check:gnm": "node scripts/check-gnm-api.mjs"
+    "check:gnm": "node scripts/check-gnm-api.mjs",
+    "check:mic": "node scripts/check-mic-api.mjs"
   },
   "devDependencies": {
     "vite": "^8.0.12",

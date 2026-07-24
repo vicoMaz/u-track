@@ -106,11 +106,13 @@ async function _fetchMetric(noradId, name, startMs, endMs, limit) {
 // different metric name — confirmed via /api/v1/data/metrics/filters, which
 // lists per-origin metric names. "leaf" (e.g. IS01-xx) uses "ebn0"; "minimum"
 // (PAM/STC/HBX/KRX/KUX) uses "eb_n0_ratio" and doesn't have the rest of leaf's
-// RF-chain metrics at all. ksat/skynopy have no equivalent metric recorded for
-// this satellite yet (empty in /filters) — nothing to query for those.
+// RF-chain metrics at all; "skynopy" uses "downlink_modem_baseband_eb_n0".
+// ksat has no equivalent metric recorded for this satellite yet (empty in
+// /filters) — nothing to query for that one.
 const EBN0_METRIC_BY_NETWORK = {
   leaf: 'ebn0',
   minimum: 'eb_n0_ratio',
+  skynopy: 'downlink_modem_baseband_eb_n0',
 };
 
 const _cache = new Map(); // `${noradId}|${startMs}|${endMs}|${network}` → [{t,v}] | null

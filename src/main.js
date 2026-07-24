@@ -1,6 +1,5 @@
 import { initTimePlayer } from './ui/TimePlayer.js';
 import { initInputPanel } from './ui/InputPanel.js';
-import { initPointsPanel } from './ui/PointsPanel.js';
 import { initSttPovWidget } from './ui/sttPovWidget.js';
 import { initGlobe, setGlobeVisible } from './globe/GlobeView.js';
 import { initMap, invalidateMapSize, setMapVisible } from './planisphere/MapView.js';
@@ -14,6 +13,7 @@ import { initSatPing }          from './satPing.js';
 import { initVpnGuard }         from './ui/vpnGuard.js';
 import { initReadOnlyBadge }    from './ui/readOnlyBadge.js';
 import { closePassDetail }      from './ui/PassDetailPanel.js';
+import { closeAddPointPanel }   from './ui/AddPointPanel.js';
 
 // eslint-disable-next-line no-undef -- injected by vite.config.js's `define`
 document.getElementById('app-version').textContent = __APP_VERSION__;
@@ -44,7 +44,8 @@ function _applyTrackingVisibility(isTracking) {
 function switchTab(target) {
   const hideSide    = target === 'fleet' || target === 'schedule' || target === 'settings' || target === 'analyzer';
   const isTracking  = target === 'tracking';
-  closePassDetail(); // slide-in shouldn't persist across a tab change — it's tied to whatever view opened it
+  closePassDetail();   // slide-in shouldn't persist across a tab change — it's tied to whatever view opened it
+  closeAddPointPanel(); // same — tied to the sat panel, which just hid
   tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === target));
   views.forEach(v   => v.classList.toggle('active', v.id === `${target}-view`));
   sidePanel.style.display = hideSide ? 'none' : '';
@@ -83,7 +84,6 @@ trackSubtabBtns.forEach(btn => {
 // Init all modules
 initTimePlayer();
 initInputPanel();
-initPointsPanel();
 initSttPovWidget();
 initGlobe();
 initMap();

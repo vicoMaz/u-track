@@ -80,14 +80,17 @@ export function bodyDirFromQuat(w, x, y, z) {
 // (precomputes blinding-window timelines for the gantt). Two boresight
 // modes:
 //   'anti-sun' — boresight = -sun direction, recomputed every frame directly
-//     from the sun vector (the original/only behavior, kept as 12U's mode).
-//     Robust to the orientation's degenerate case (sun ≈ zenith), where a
-//     body-frame vector rotated by the attitude quaternion would jump
-//     discontinuously — this mode never depends on attitude at all.
+//     from the sun vector (the original/only behavior, before any model had
+//     real attitude data at all — no model currently uses this mode, but it
+//     stays supported in case a future design genuinely has a fixed,
+//     sun-relative rather than body-relative mount). Robust to the
+//     orientation's degenerate case (sun ≈ zenith), where a body-frame
+//     vector rotated by the attitude quaternion would jump discontinuously
+//     — this mode never depends on attitude at all.
 //   'body' — boresight is a fixed body-frame unit vector {x,y,z} (same frame
 //     as the X/Y/Z reference arrows), rotated into ECEF/ECI by the
-//     satellite's current attitude — for trackers mounted on a face other
-//     than 12U's anti-sun face.
+//     satellite's current attitude (real when available, else Default Sun
+//     Pointing) — the physically-accurate mode, used by every model.
 // `offsetKmPerScaleUnit` (km per unit of store.satScale, body frame, rotated
 // the same way as `dir`) shifts the cone's start point sideways/along the
 // body before the boresight bias push-out — for trackers not centered on the
@@ -100,8 +103,19 @@ export function bodyDirFromQuat(w, x, y, z) {
 // 12U (140km at scale=500); a different model's mesh is a different
 // scale/shape and needs its own value, not 12U's borrowed one.
 export const MODEL_STAR_TRACKERS = {
+  // 'body', not 'anti-sun': the STT's boresight should be wherever it's
+  // physically mounted, rotated by whatever the satellite's actual current
+  // attitude is (real when available, else Default Sun Pointing) — not
+  // hardwired to always exactly equal -sun regardless of real attitude data
+  // (that was the ORIGINAL simplification, back when no real attitude
+  // existed at all — see 'anti-sun' mode's own doc comment above). dir =
+  // {0,0,1} (the "Z arrow" direction) is chosen specifically so this
+  // reproduces today's exact behavior under Default Sun Pointing (Z arrow
+  // = -col0 = -sun under that assumption, by construction — see
+  // _computeOrientation's fallback) while correctly diverging from it once
+  // real attitude shows the satellite isn't perfectly sun-pointing.
   '12U': [
-    { mode: 'anti-sun', offsetKmPerScaleUnit: { x: 0, y: 0, z: 0 }, biasKmPerScaleUnit: 140 / 500 },
+    { mode: 'body', dir: { x: 0, y: 0, z: 1 }, offsetKmPerScaleUnit: { x: 0, y: 0, z: 0 }, biasKmPerScaleUnit: 140 / 500 },
   ],
   // Two physical units, oriented per QRot_RAL_Rs STT1/STT2:
   //   STT1: [0.0, 0.70710678, -0.5, -0.5]

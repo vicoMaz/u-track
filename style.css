@@ -105,9 +105,9 @@ body.tracking-active #side-panel { top: 100px; }
 
 .api-docs-wrap {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  gap: 1px;
+  gap: 8px;
 }
 .api-docs-btn {
   text-decoration: none;
@@ -118,11 +118,14 @@ body.tracking-active #side-panel { top: 100px; }
 .api-docs-btn:hover { color: #00d4ff; border-color: #00d4ff44; }
 
 #app-version {
-  color: #444;
-  font-size: 9px;
+  color: #767686;
+  font-size: 10px;
   font-family: 'Courier New', monospace;
   letter-spacing: 0.03em;
   white-space: nowrap;
+  margin-left: 6px;
+  align-self: center;
+  padding-top: 2px; /* nudges baseline down slightly to sit with chadOps's lowercase x-height instead of its cap-height */
 }
 
 /* ── Nav Clocks ─────────────────────────────────────── */
@@ -202,6 +205,13 @@ body.tracking-active #side-panel { top: 100px; }
   display: block;
   flex-shrink: 0;
 }
+#app-bolt {
+  height: 20px;
+  width: auto;
+  display: block;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
 #app-name {
   font-size: 13px;
   font-weight: 700;
@@ -266,7 +276,10 @@ body.tracking-active #side-panel { top: 100px; }
   transition: width 0.2s;
 }
 
-.panel.collapsed { width: fit-content; overflow: hidden; }
+/* No width change on collapse — Satellites and Custom Points must stay the
+   same width as each other; shrinking to fit-content made them diverge since
+   their header content (title + button count) differs in length. */
+.panel.collapsed { overflow: hidden; }
 .panel.collapsed .panel-body { display: none; }
 .panel.collapsed .panel-toggle { transform: rotate(180deg); }
 
@@ -415,7 +428,43 @@ body.tracking-active #side-panel { top: 100px; }
 .gs-net-name { flex: 1; font-size: 11px; color: #aaa; }
 .gs-net-count { font-size: 10px; color: #666; white-space: nowrap; }
 
-/* ── Custom Points panel ────────────────────────────── */
+/* ── Custom points — fused under each satellite, same as ground stations ── */
+.gs-pt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0 2px 16px;
+  cursor: pointer;
+}
+.gs-pt-toggle { cursor: pointer; accent-color: #ffd60a; }
+.gs-pt-name {
+  flex: 1; font-size: 11px; color: #aaa;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.gs-pt-coords { font-size: 10px; color: #666; white-space: nowrap; }
+.gs-pt-remove {
+  background: none; border: none; color: #555; cursor: pointer; font-size: 13px;
+  line-height: 1; flex-shrink: 0; padding: 0 2px;
+}
+.gs-pt-remove:hover { color: #ff3860; }
+
+.gs-pt-add-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: #667;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 3px 0 2px 16px;
+}
+.gs-pt-add-btn:hover { color: #ffd60a; }
+
+/* ── Add-point slide-in (AddPointPanel.js — reuses .pdp-panel chrome) ──── */
+.pt-panel .pt-panel-sat { font-weight: 700; }
+.pt-panel .pt-add-form { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
 .pt-add-form {
   display: flex;
   flex-direction: column;
@@ -458,41 +507,6 @@ body.tracking-active #side-panel { top: 100px; }
   transition: background 0.15s;
 }
 #pt-add-btn:hover { background: #ffd60a33; }
-
-#pt-list { display: flex; flex-direction: column; gap: 4px; }
-
-.pt-item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 5px 6px;
-  background: #1a1a28;
-  border-radius: 4px;
-  border-left: 3px solid #ffd60a;
-}
-.pt-item-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.pt-dot {
-  width: 7px; height: 7px; flex-shrink: 0;
-  border-radius: 50%;
-  background: #ffd60a;
-}
-.pt-name {
-  flex: 1; font-size: 11px; color: #ccc;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.pt-coords {
-  font-size: 10px; color: #666; white-space: nowrap;
-  padding-left: 13px; /* align under name, past dot + gap */
-}
-.pt-item .remove-btn {
-  background: none; border: none; color: #555; cursor: pointer; font-size: 14px;
-  line-height: 1; flex-shrink: 0;
-}
-.pt-item .remove-btn:hover { color: #ff3860; }
 
 /* ── Time Player ────────────────────────────────────── */
 #time-player {
@@ -636,6 +650,10 @@ body.tracking-active #timeline-gantt { display: block; }
   z-index: 1;
 }
 #gantt-toggle:hover { background: #28283e; color: #aaaacc; }
+/* No tracked satellite → nothing for any row to show — see
+   TimePlayer.js's _syncGanttToggleEnabled. */
+#gantt-toggle:disabled { cursor: default; color: #45455a; }
+#gantt-toggle:disabled:hover { background: #1e1e32; color: #45455a; }
 
 .gantt-rows { padding-top: 2px; }
 body.gantt-collapsed .gantt-rows { display: none; }
@@ -679,19 +697,24 @@ body.gantt-collapsed .gantt-rows { display: none; }
    swallows plain clicks on anything not explicitly exempted (see its own
    comment in TimePlayer.js). */
 .stt-pov-open-btn {
-  background: none;
-  border: none;
-  color: #ccc;
+  background: #1a1a28;
+  border: 1px solid #2a2a3a;
+  border-radius: 4px;
+  color: #9999b3;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   cursor: pointer;
-  padding: 0 4px;
-  margin-left: 2px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin-left: 4px;
   line-height: 1;
   flex-shrink: 0;
-  transition: color 0.1s;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
 }
-.stt-pov-open-btn:hover { color: #ffd166; }
+.stt-pov-open-btn svg { width: 12px; height: 12px; }
+.stt-pov-open-btn:hover { color: #ffd166; border-color: #ffd16688; background: #221e14; }
 .gantt-track {
   position: absolute;
   left: var(--track-ml, 68px);
@@ -862,7 +885,7 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .gsi-key {
   color: #666;
   letter-spacing: 0.05em;
-  width: 42px;
+  width: 66px; /* fits "Next pass" (the widest label here) — was 60px, sized only for Attitude */
   flex-shrink: 0;
 }
 .gsi-row span:last-child {
@@ -872,6 +895,63 @@ body.gantt-collapsed .gantt-rows { display: none; }
   text-overflow: ellipsis;
   max-width: 160px;
 }
+/* Explicit rule for the Attitude value — the row's actual last child is now
+   the toggle button (added below), so the generic :last-child rule above no
+   longer matches it. */
+#gsi-attitude {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 110px;
+}
+/* "Make very clear" whether attitude is real or constant — distinct colors,
+   not just text, so it reads at a glance (satAttitudeReal.js/SatInfo.js). */
+#gsi-attitude.att-real     { color: var(--sev-nominal); font-weight: 700; }
+#gsi-attitude.att-constant { color: var(--sev-warning); }
+/* #gantt-sat-info (the ancestor) is deliberately pointer-events:none so
+   hovering it still reaches the gantt row labels underneath — this button
+   needs the explicit override to be clickable at all. */
+.gsi-att-toggle {
+  pointer-events: auto;
+  flex-shrink: 0;
+  position: relative;
+  width: 28px;
+  height: 15px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid #444;
+  background: #333;
+  cursor: help; /* signals the hover tooltip — mouse pointer becomes a "?", not a separate icon to hover */
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.gsi-att-knob {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #999;
+  transition: transform 0.15s ease, background-color 0.15s ease;
+}
+/* "off" = sunP/constant (default Sun Pointing), "on" = auto/real — knob
+   slides right and track lights up like an iOS switch. */
+.gsi-att-toggle.mode-real     { border-color: var(--sev-nominal); background: var(--sev-nominal); }
+.gsi-att-toggle.mode-real .gsi-att-knob     { transform: translateX(13px); background: #fff; }
+.gsi-att-toggle.mode-constant { border-color: #666; background: #333; }
+.gsi-att-toggle.mode-constant .gsi-att-knob { transform: translateX(0); background: #999; }
+.gsi-att-toggle.dim        { opacity: 0.4; }
+.gsi-att-toggle.overridden { opacity: 0.5; }
+.gsi-att-toggle:disabled   { cursor: not-allowed; }
+
+/* Mode/GNC/Batt (SatInfo.js's _monCls) — same 3-tier bucketing as ChadOps.js's
+   _monPillCls, as plain text color instead of a pill badge (panel is too
+   narrow for badges). ".gsi-nil" doubles as the "(-)" fast-forward placeholder
+   and the "—" no-data placeholder — both are dim/absent-value states. */
+.gsi-mon-nominal { color: var(--sev-nominal); }
+.gsi-mon-warn    { color: var(--sev-warning); }
+.gsi-mon-crit    { color: var(--sev-critical); font-weight: 700; }
+.gsi-nil         { color: #666; }
 
 /* ── STT POV panel — docked, opened via the gantt's STT row 👁 button ──
    Live-updates with store.currentTime — see sttPovWidget.js. Positioned
@@ -895,6 +975,13 @@ body.gantt-collapsed .gantt-rows { display: none; }
      FF's STT1+STT2. */
   max-width: 480px;
 }
+/* Single-STT satellites (e.g. 12U) only ever render one 196px circle in the
+   body — without this, the panel was still stretched to fit the header's
+   legend text at the width above, leaving that one circle looking small in
+   a lot of empty space. Narrowed to just fit it; the legend already handles
+   overflow via ellipsis (see .stt-pov-legend), so it truncates gracefully
+   instead of forcing the panel wide. */
+.stt-pov-panel.stt-pov-single { max-width: 224px; }
 .stt-pov-panel.stt-pov-open { display: block; }
 .stt-pov-header {
   display: flex;
@@ -2458,7 +2545,7 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-tt-ok            { color: #00cc66; }
 .co-tt-fail          { color: #ff4455; }
 .co-tt-cancelled     { color: #ff8c00; }
-.co-tt-scheduled     { color: #556688; } /* same muted blue-grey as the ○ SCHEDULED badge — "not yet happened", not a status */
+.co-tt-scheduled     { color: #556688; } /* same muted blue-grey as the ○ SCHEDULED badge — "not yet happened", not a status. Reused as-is for a past pass's never-started procedures (satPasses.js's notStarted) — same idea, it never got a real outcome either. */
 .pass-procs-slot { margin-top: 4px; }
 .co-tt-ecl-bar { margin: 6px 0 2px; }
 .co-tt-ecl-bar .oi-eclipse-bar { height: 14px; }

@@ -24,8 +24,15 @@
 //   Sun exclusion (sunExclDeg) — same, for the Sun.
 // These are plain reference circles at the raw configured angle, not the
 // position-dependent "how close to Earth's actual edge" boundary
-// (earthRadiusDeg + earthExclDeg) _isConeBlinded actually checks — Earth's
+// (earthLimbRadiusDeg + earthExclDeg) _isConeBlinded actually checks — Earth's
 // own disk (drawn separately, at its real position) already shows that.
+//
+// Earth's disk itself is ringed by one more, faint, undashed circle: the
+// "Earth Limb", concentric with the disk rather than the boresight — the
+// top-of-atmosphere altitude (TimePlayer.js's EARTH_LIMB_KM), the real
+// optical edge that blinds the sensor via atmospheric glow/scatter, not the
+// solid surface. It's what earthLimbRadiusDeg (not earthRadiusDeg) actually
+// measures against for blinding.
 
 import { ST_FOV_HALF_ANGLE_DEG } from '../satStarTracker.js';
 
@@ -108,11 +115,16 @@ export function buildSttPovSVG(geom, label) {
   if (!geom) {
     return `<div class="stt-pov-cone"><div class="stt-pov-empty">No data</div><div class="stt-pov-caption">${label}</div></div>`;
   }
-  const { blinded, sunBlinded, earthBlinded, sun, earth, earthRadiusDeg, sunExclDeg, earthExclDeg, sunAngleDeg } = geom;
+  const { blinded, sunBlinded, earthBlinded, sun, earth, earthRadiusDeg, earthLimbRadiusDeg, sunExclDeg, earthExclDeg, sunAngleDeg } = geom;
 
   const [sx, sy] = _toXY(sun.az, sun.dist);
   const [ex, ey] = _toXYUnclamped(earth.az, earth.dist);
   const earthPxR = Math.max(1.5, _degToPxUnclamped(earthRadiusDeg));
+  // Top-of-atmosphere ring, concentric with Earth's own disk (not the
+  // boresight-centered reference rings below) — the real optical edge that
+  // blinds the sensor (see TimePlayer.js's EARTH_LIMB_KM), drawn faint since
+  // it's a thin sliver just outside the solid disk, not a hard boundary.
+  const earthLimbPxR = Math.max(earthPxR, _degToPxUnclamped(earthLimbRadiusDeg));
 
   // Dashed reference ring + degree label, both centered on the boresight —
   // see this file's header comment for what the three calls below mean.
@@ -189,6 +201,7 @@ export function buildSttPovSVG(geom, label) {
     ${ring(sunExclDeg, '#e8c860', sunBlinded)}
     <line x1="${CX - 4}" y1="${CY}" x2="${CX + 4}" y2="${CY}" stroke="#556" stroke-width="0.8"/>
     <line x1="${CX}" y1="${CY - 4}" x2="${CX}" y2="${CY + 4}" stroke="#556" stroke-width="0.8"/>
+    <circle cx="${ex}" cy="${ey}" r="${earthLimbPxR.toFixed(1)}" fill="none" stroke="#ffffff" stroke-opacity="0.3" stroke-width="0.9"/>
     <circle cx="${ex}" cy="${ey}" r="${earthPxR}" fill="#3a6ea5cc" stroke="#7aa8d8" stroke-width="0.6"/>
   </svg>`;
 

@@ -8,6 +8,7 @@ import {
   satSunExclDeg, setSatSunExclDeg, satEarthExclDeg, setSatEarthExclDeg,
   satStarTrackerConesVisible, setSatStarTrackerConesVisible,
 } from '../satStarTracker.js';
+import { openAddPointPanel } from './AddPointPanel.js';
 
 // ─── Icons ────────────────────────────────────────────────────────────────
 
@@ -42,28 +43,43 @@ function renderSatList() {
     const hidden     = sat.visible === false;
     const stHidden   = !satStarTrackerConesVisible(sat.noradId);
     const networks   = store.getSatNetworks(sat.id);
+    const satPoints  = store.customPoints.filter(p => p.satId === sat.id);
     const group = document.createElement('div');
     group.className = 'sat-group';
     group.dataset.itemId = sat.id;
     group.style.setProperty('--sat-color', sat.color);
     const collapsed = _stationsCollapsed.has(sat.id);
+    const hasRows = networks.length > 0 || satPoints.length > 0;
     group.innerHTML = `
       <div class="sat-item${sat.id === store.trackedSatId ? ' tracking' : ''}">
         <span class="sat-dot" style="background:${sat.color}"></span>
         <span class="sat-name" data-id="${sat.id}" title="Centre view">${sat.name}</span>
-        ${networks.length ? `<button class="gs-collapse-btn" data-id="${sat.id}" title="Toggle stations">${collapsed ? '▸' : '▾'}</button>` : ''}
+        ${hasRows ? `<button class="gs-collapse-btn" data-id="${sat.id}" title="Toggle stations">${collapsed ? '▸' : '▾'}</button>` : ''}
         <button class="vis-btn st-vis-btn ${stHidden ? 'vis-off' : ''}" data-id="${sat.id}" title="${stHidden ? 'Show' : 'Hide'} star tracker cones">${stHidden ? SVG_EYE_STAR_OFF : SVG_EYE_STAR}</button>
         <button class="vis-btn ${hidden ? 'vis-off' : ''}" data-id="${sat.id}" title="${hidden ? 'Show' : 'Hide'}">${hidden ? SVG_EYE_OFF : SVG_EYE}</button>
       </div>
-      ${networks.length ? `<div class="gs-net-rows${collapsed ? ' gs-collapsed' : ''}">${networks.map(n => {
-        const visible = store.antennaToggles[`${sat.id}:${n.network}`] ?? true;
-        return `
-          <label class="gs-net-row">
-            <input type="checkbox" class="gs-net-toggle" data-sat="${sat.id}" data-network="${n.network}" ${visible ? 'checked' : ''}>
-            <span class="gs-net-name">${n.network}</span>
-            <span class="gs-net-count">${n.siteCount} site${n.siteCount === 1 ? '' : 's'}</span>
+      <div class="gs-net-rows${collapsed ? ' gs-collapsed' : ''}">
+        ${networks.map(n => {
+          const visible = store.antennaToggles[`${sat.id}:${n.network}`] ?? true;
+          return `
+            <label class="gs-net-row">
+              <input type="checkbox" class="gs-net-toggle" data-sat="${sat.id}" data-network="${n.network}" ${visible ? 'checked' : ''}>
+              <span class="gs-net-name">${n.network}</span>
+              <span class="gs-net-count">${n.siteCount} site${n.siteCount === 1 ? '' : 's'}</span>
+            </label>`;
+        }).join('')}
+        ${satPoints.map(p => {
+          const ptVisible = p.visible !== false;
+          return `
+          <label class="gs-pt-row">
+            <input type="checkbox" class="gs-pt-toggle" data-id="${p.id}" ${ptVisible ? 'checked' : ''}>
+            <span class="gs-pt-name" title="${p.name}">${p.name}</span>
+            <span class="gs-pt-coords">${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}${p.mask != null ? ` · ${p.mask}°` : ''}</span>
+            <button class="gs-pt-remove" data-id="${p.id}" title="Remove point">×</button>
           </label>`;
-      }).join('')}</div>` : ''}
+        }).join('')}
+        <button class="gs-pt-add-btn" data-sat="${sat.id}" title="Add custom point for ${sat.name}">+ Point</button>
+      </div>
     `;
     list.appendChild(group);
   }
@@ -74,13 +90,31 @@ function renderSatList() {
     });
   });
   list.querySelectorAll('.vis-btn:not(.st-vis-btn)').forEach(btn => {
-    btn.addEventListener('click', () => store.toggleSatVisibility(btn.dataset.id));
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.id;
+      const sat = store._satById.get(id);
+      // Satellite toggle drives STT in lockstep: hiding the satellite forces
+      // STT off (no cones without the satellite itself shown), and re-showing
+      // it forces STT back on — STT does not keep an independent on/off
+      // preference across a sat hide → show round-trip. Written BEFORE
+      // toggleSatVisibility (not after) — that call synchronously re-renders
+      // the list via `notify`, so writing first is what lets that single
+      // re-render already reflect the updated STT icon, instead of showing a
+      // stale one until whatever click happens to trigger the next re-render.
+      if (sat) setSatStarTrackerConesVisible(sat.noradId, sat.visible === false);
+      store.toggleSatVisibility(id);
+    });
   });
   list.querySelectorAll('.st-vis-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const id = btn.dataset.id;
       const sat = store._satById.get(id);
-      if (!sat) return;
+      // No independent STT control while the satellite itself is hidden —
+      // otherwise this could silently flip the stored preference (and this
+      // button's own icon) to "on" while the sat-visibility handler's
+      // forced-sync invariant above only re-asserts itself on the NEXT
+      // sat-visibility click, not immediately.
+      if (!sat || sat.visible === false) return;
       const nowVisible = !satStarTrackerConesVisible(sat.noradId);
       setSatStarTrackerConesVisible(sat.noradId, nowVisible);
       btn.classList.toggle('vis-off', !nowVisible);
@@ -104,6 +138,20 @@ function renderSatList() {
       const group = btn.closest('.sat-group');
       group?.querySelector('.gs-net-rows')?.classList.toggle('gs-collapsed', nowCollapsed);
     });
+  });
+  list.querySelectorAll('.gs-pt-add-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const sat = store._satById.get(btn.dataset.sat);
+      if (sat) openAddPointPanel(sat);
+    });
+  });
+  list.querySelectorAll('.gs-pt-remove').forEach(btn => {
+    // Nested inside the .gs-pt-row <label> — stop the click reaching the
+    // label's own default action (toggling the checkbox) on the way out.
+    btn.addEventListener('click', e => { e.stopPropagation(); store.removeCustomPoint(btn.dataset.id); });
+  });
+  list.querySelectorAll('.gs-pt-toggle').forEach(cb => {
+    cb.addEventListener('change', () => store.setCustomPointVisible(cb.dataset.id, cb.checked));
   });
 }
 
@@ -280,7 +328,7 @@ function _openSatEditModal(sat) {
         </div>
 
         <div class="sem-label">JWT Token</div>
-        <input class="sem-input sem-jwt" id="sem-jwt" type="password" value="${satJwt(sat.noradId)}" placeholder="Bearer token">
+        <input class="sem-input sem-jwt" id="sem-jwt" type="password" value="${satJwt(sat.noradId)}" placeholder="Raw token (no 'Bearer ' prefix)">
 
         <div class="sem-label">Star Tracker Exclusion Angles</div>
         <div class="sem-excl-row">
@@ -569,7 +617,7 @@ export function initInputPanel() {
       }
       renderSettingsSatList(); // always: catches color/model changes too
     }
-    if (key === 'satAntennas') {
+    if (key === 'satAntennas' || key === 'customPoints') {
       renderSatList();
     }
     if (key === 'antennaToggles') {
