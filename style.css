@@ -1019,6 +1019,14 @@ body.gantt-collapsed .gantt-rows { display: none; }
   transition: color .15s;
 }
 .stt-pov-close:hover { color: #ff4466; }
+.stt-pov-expand {
+  background: none; border: none; color: #556;
+  display: inline-flex; align-items: center;
+  cursor: pointer; padding: 0 2px; line-height: 1;
+  transition: color .15s;
+}
+.stt-pov-expand svg { width: 13px; height: 13px; }
+.stt-pov-expand:hover { color: #00d4ff; }
 .stt-pov-body {
   display: flex;
   flex-wrap: wrap;
@@ -1081,6 +1089,25 @@ body.gantt-collapsed .gantt-rows { display: none; }
   display: flex; align-items: center; justify-content: center;
   color: #556; font-size: 11px; text-align: center;
 }
+
+/* ×1.75 toggle (sttPovWidget.js's .stt-pov-expand button) — real pixel sizes,
+   not `transform: scale()`, so it composes cleanly with .stt-pov-panel's own
+   position:absolute + translateY(-100%) (a scale() sharing that transform
+   would need translateY's percentage re-derived against the post-scale box,
+   and transform-origin math on top of that — real sizing lets normal layout
+   handle the repositioning for free). All 196px/84.93px figures below are
+   the unscaled ones just above (sttPov.js's RENDER_PX and its clip-path
+   comment) × 1.75. */
+.stt-pov-panel.stt-pov-expanded { max-width: 840px; }
+.stt-pov-panel.stt-pov-expanded.stt-pov-single { max-width: 392px; }
+.stt-pov-panel.stt-pov-expanded .stt-pov-stack { width: 343px; height: 343px; }
+.stt-pov-panel.stt-pov-expanded .stt-pov-svg,
+.stt-pov-panel.stt-pov-expanded .stt-pov-overlay-svg { width: 343px; height: 343px; }
+.stt-pov-panel.stt-pov-expanded .stt-pov-svg { clip-path: circle(148.63px at 50% 50%); }
+.stt-pov-panel.stt-pov-expanded .stt-pov-empty { width: 343px; height: 343px; }
+.stt-pov-panel.stt-pov-expanded .stt-pov-caption { font-size: 13px; }
+.stt-pov-panel.stt-pov-expanded .stt-pov-status { font-size: 11px; padding: 2px 7px; }
+.stt-pov-panel.stt-pov-expanded .stt-pov-angles { font-size: 11px; }
 
 /* ── Leaflet overrides ──────────────────────────────── */
 .leaflet-container { background: #0d0d18 !important; }
@@ -2445,9 +2472,12 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .ebn0-swatch-tm { background: #a78bfa; }
 .ebn0-swatch-tc { background: #4ad4ff; }
+.ebn0-swatch-tc-ok   { background: #00cc66; margin-right: -3px; } /* sits flush against its paired -fail swatch right after it, reading as one two-tone key rather than two separate ones */
+.ebn0-swatch-tc-fail { background: #ff4455; }
 .ebn0-legend-label { font-size: 9.5px; font-weight: 600; }
 .ebn0-label-tm { color: #a78bfa; }
 .ebn0-label-tc { color: #4ad4ff; }
+.ebn0-label-tc-hist { color: #ccc; }
 .ebn0-stats {
   font-size: 9.5px;
   color: #8888aa;
@@ -2473,6 +2503,17 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .ebn0-proc-bar rect { cursor: default; }
 .ebn0-proc-num { font-size: 7px; font-family: 'Courier New', monospace; fill: #f0f0f8; font-weight: 700; paint-order: stroke; stroke: #12121e; stroke-width: 0.5px; pointer-events: none; }
+/* One-shot "look here" pulse when a Procedures-panel pill is clicked (see
+   _glowEbn0Bar, PassAnalyzer.js) — a plain white drop-shadow rather than
+   the bar's own status color (green/red/orange), since this is pointing at
+   WHERE a procedure is, not restating what already happened there. Applied
+   to the whole <g> (rect + number) so both glow as one unit. */
+@keyframes ebn0-proc-glow-kf {
+  0%   { filter: drop-shadow(0 0 0px rgba(255,255,255,0)); }
+  25%  { filter: drop-shadow(0 0 5px rgba(255,255,255,0.95)); }
+  100% { filter: drop-shadow(0 0 0px rgba(255,255,255,0)); }
+}
+.ebn0-proc-bar-glow { animation: ebn0-proc-glow-kf 1.1s ease-out; }
 .co-tt-header {
   font-weight: 600;
   color: #aaa;
@@ -3375,25 +3416,6 @@ a.co-link:hover {
   font-variant-numeric: tabular-nums;
   margin-left: 4px;
 }
-.pa-tc-sort {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  margin-left: 10px;
-  padding: 2px 7px;
-  background: #14141f;
-  border: 1px solid #22222e;
-  border-radius: 4px;
-  color: #889;
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  cursor: pointer;
-  transition: border-color .15s, color .15s;
-}
-.pa-tc-sort:hover { border-color: #3a3a5a; color: #ccc; }
-.pa-tc-sort-arrow { font-size: 9px; }
 .pa-details .co-tt-header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; padding-bottom: 0; border-bottom: none; padding-right: 56px; } /* reserves room so a long satellite/station/network name can't run under the < / > buttons in the corner */
 /* < / > pass step buttons, top-right corner of the card — same small
    bordered-box treatment as .co-tt-microscope/.pdp-microscope elsewhere,
@@ -3428,17 +3450,26 @@ a.co-link:hover {
 /* A 2×2 GRID again (not independent flex columns) — the point this time is
    .pa-tc-list and .pa-full-log sharing row 2 so they start at exactly the
    same Y and split its height evenly, which two independent columns can't
-   guarantee (each one's own "row 1" — pass details+procedures vs. the chart —
-   has a different natural height, so anything below it would start at a
-   different Y in each column). Row 1 sizes to whichever of {pass
-   details+procedures, chart} is taller. Column 1 is wider than the chart
-   column now (TC list needs the room) — column 2's floor came down to
-   compensate, which does mean less width for the chart too, accepted here. */
+   guarantee otherwise.
+   Row 1 is a FIXED height (not auto) — it used to size to whichever of
+   {pass details+procedures, chart} was taller, which meant a pass with a
+   long procedure list pushed row 1 (and so row 2 — TC list/full log) down,
+   eating into their height every time. A short procedure list now just
+   leaves its own panel with a little unused space at the bottom instead of
+   shrinking the row, which is the point — row 2 gets a reliable height
+   regardless of procedure count.
+   Column 1's width used to be a plain minmax() track — now a CSS var (driven
+   by .pa-col-resizer, see PassAnalyzer.js's _wireColResizer) so it can be
+   dragged, with the middle track (the resizer handle itself) carrying the
+   12px of breathing room the old `gap` used to provide. column-gap is 0
+   because that gap now lives inside the resizer track instead; row-gap is
+   unchanged since dragging only ever resizes columns. */
 .pa-main-row {
   display: grid;
-  grid-template-columns: minmax(420px, 500px) minmax(700px, 1fr);
-  grid-template-rows: auto 1fr;
-  gap: 12px;
+  grid-template-columns: var(--pa-col1-w, 612px) 12px minmax(420px, 1fr);
+  grid-template-rows: 270px 1fr;
+  column-gap: 0;
+  row-gap: 12px;
   flex: 1;
   min-height: 0;
   overflow: auto; /* controlled scroll instead of ever squeezing the chart below min-width */
@@ -3446,17 +3477,49 @@ a.co-link:hover {
 .pa-left-top {
   grid-column: 1;
   grid-row: 1;
-  align-self: start; /* shrinks to its own content instead of stretching to match row 1's height, if the chart cell next to it ends up taller */
+  /* Stretches to fill the fixed row height (the default; no align-self
+     override) — .pa-procs below is what actually absorbs the difference
+     between a short and a long procedure list, via flex:1. */
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-height: 0; /* lets the flex column's children actually shrink/scroll instead of growing the row past its fixed height */
 }
 .pa-left-top .pa-procs {
-  max-height: 280px; /* caps how tall a long procedure list can push row 1 — row 2 needs a reliable height regardless of procedure count */
+  flex: 1; /* fills whatever's left in the fixed-height column after .pa-details' own height — was max-height:280px, a cap rather than a fill, back when this column could still grow past it */
+  min-height: 0;
   overflow-y: auto;
 }
-.pa-middle {
+/* Spans both rows (not just row 2) even though dragging it only ever changes
+   the TC-list/full-log split visually mattered for — the alternative (a
+   resizer only in row 2) would leave a dead 12px gap with no handle in row 1
+   above it, misaligned with the one below. */
+.pa-col-resizer {
   grid-column: 2;
+  grid-row: 1 / 3;
+  position: relative;
+  cursor: col-resize;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.pa-col-resizer::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  transform: translateX(-50%);
+  background: #2a2a4a;
+  transition: background-color 0.15s, width 0.15s;
+}
+.pa-col-resizer:hover::before,
+.pa-col-resizer.pa-col-resizer-active::before {
+  width: 3px;
+  background: #4444aa;
+}
+.pa-middle {
+  grid-column: 3;
   grid-row: 1;
   overflow: visible; /* the polar plot's radial labels intentionally bleed slightly outside its own box */
 }
@@ -3470,7 +3533,7 @@ a.co-link:hover {
 .pa-tc-list .pa-tc-slot { flex: 1; min-height: 0; overflow-y: auto; }
 
 .pa-full-log {
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 2;
   min-height: 0;
   display: flex;
@@ -3513,6 +3576,42 @@ a.co-link:hover {
   flex-direction: column;
   gap: 3px;
 }
+/* Procedure-change break in the TC list (see _procDividerHTML,
+   PassAnalyzer.js) — same dashed-rule-with-inline-label shape as
+   .grm-log-divider's "procedure starts/ends" marker in the full-pass log,
+   so the two lists read as the same visual language. The name itself
+   reuses .co-tt-ok/.co-tt-fail/.co-tt-cancelled (set via the span's own
+   class, not this rule) rather than the divider defaulting to one fixed
+   color, since which procedure is starting matters more here than in the
+   log's version (that one never names the procedure at all). */
+.pa-tc-proc-divider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 5px 0 2px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.pa-tc-proc-divider::before,
+.pa-tc-proc-divider::after {
+  content: '';
+  flex: 1 1 12px;
+  min-width: 12px;
+  border-top: 1px dashed #2a2a3a;
+}
+.pa-tc-proc-divider-arrow { flex-shrink: 0; }
+/* min-width:0 overrides flex's default min-width:auto (which otherwise
+   refuses to shrink below the text's own content width) — without it, a
+   long procedure name pushes the whole divider wider than the panel
+   instead of eliding, taking the closing ▲/dashes off the edge with it. */
+.pa-tc-proc-divider-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .pa-tc-row {
   display: flex;
   align-items: baseline;
@@ -3530,6 +3629,63 @@ a.co-link:hover {
 .pa-tc-row-open { border-color: #446688; background: #16202c; }
 .pa-tc-time  { color: #556; flex-shrink: 0; }
 .pa-tc-label { color: #ccc; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* PUS TC verification status glyph (see _tcAckStatus, PassAnalyzer.js):
+   hollow ○ vs filled ● is open-vs-final, color is grey/green/red for
+   no-report-yet/good/bad. Positioning (pushed to the row's right edge, or
+   not, for a merged TC_11_4 row's first/envelope one) is now
+   .pa-tc-status-cluster's job, below — this only ever draws the glyph
+   itself. */
+.pa-tc-ack {
+  flex-shrink: 0;
+  font-size: 20px;
+  line-height: 1;
+  color: #445;
+  cursor: help; /* distinct from the row's own cursor:pointer — this glyph hovers into a stylized tooltip (_wireAckTooltips), not the row's click-to-expand */
+  transition: filter .15s;
+}
+.pa-tc-ack:hover { filter: brightness(1.35); }
+.pa-tc-ack-grey  { color: #445; }
+.pa-tc-ack-green { color: #00cc66; }
+.pa-tc-ack-red   { color: #ff4455; }
+
+/* Groups a badge with its own failure/warning pill into one flush unit (see
+   _tcStatusClusterHTML, PassAnalyzer.js) — the pill sits pinned immediately
+   left of ITS OWN dot instead of drifting with whatever the row's variable-
+   width label/args happens to end at. align-items:center keeps both centered
+   against each other regardless of .pa-tc-row's own baseline alignment
+   (tuned for text, not a glyph/pill of different metrics) — the CLUSTER is
+   now the thing that alignment applies to, not each child individually.
+   -end pushes the whole cluster to the row's right edge; a merged TC_11_4
+   row's first (envelope) cluster omits it, so that one sits flush next to
+   its own SSID/date instead of also racing for the row's right edge. */
+.pa-tc-status-cluster {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.pa-tc-status-cluster-end { margin-left: auto; }
+
+/* Hover tooltip for the badge above (_wireAckTooltips, PassAnalyzer.js) —
+   the same floating .co-tooltip box every other hover popover in this app
+   uses, filled with the identical .pa-tc-ver-rows markup the click-expanded
+   detail panel draws (_tcVerificationHTML) so the two never drift apart
+   visually. Slimmer min-width than .co-tooltip's own default: this only ever
+   holds 2 short stage rows, never the longer prose other tooltips carry.
+   max-width:none overrides .co-tooltip's own 300px cap, and nowrap below
+   stops a row's stage label ("Acceptance (reception by OBSW)") wrapping
+   against its value — content here is a handful of fixed short labels plus
+   a status+timestamp, never arbitrary-length text, so sizing purely to
+   content (rather than clamping and risking a line break) is safe. */
+.pa-tc-ack-tooltip { min-width: 190px; max-width: none; white-space: nowrap; }
+.pa-tc-ack-tooltip .pa-tc-ver-rows { margin-bottom: 0; }
+
+/* Divider between a TC_11_4 merged row's two badges — plain, since position
+   (adjacent to SSID/date vs. adjacent to the target name) already says
+   which badge is which; this just needs to read as a separator, not a
+   third status of its own. */
+.pa-tc-ack-sep { color: #334; align-self: center; flex-shrink: 0; }
 
 /* Expanded argument detail — inserted as a sibling right after the clicked
    row (see _toggleTcDetail in PassAnalyzer.js), not inside it, so it isn't
@@ -3550,6 +3706,74 @@ a.co-link:hover {
 .pa-tc-arg-name { color: #889; }
 .pa-tc-arg-val  { color: #ddd; font-weight: 600; text-align: right; }
 
+/* Verification section (the 4 PUS TC report stages, spelled out) — sits
+   above the decoded arguments in the same expanded detail block, spaced off
+   with its own margin since .pa-tc-args-title (reused for the "Verification"
+   heading too) has no bottom margin of its own beyond what .pa-tc-ver-rows
+   already adds. */
+.pa-tc-ver-rows { display: flex; flex-direction: column; gap: 2px; margin: 0 0 10px; }
+.pa-tc-ver-row { display: flex; justify-content: space-between; gap: 12px; color: #889; }
+.pa-tc-ver-row span { font-weight: 600; }
+.pa-tc-ver-ok span   { color: #00cc66; }
+.pa-tc-ver-fail span { color: #ff4455; }
+.pa-tc-ver-none span { color: #445; font-weight: 400; }
+
+/* Failure analysis callout (see _failureAnalysisHTML, PassAnalyzer.js) —
+   sits ABOVE Verification in the expanded detail block, since for a failed
+   TC this is the first thing worth reading. A bordered red-tinted box (not
+   just colored text like .pa-tc-ver-fail) so it reads as its own callout,
+   not just another verification row. */
+.pa-tc-fail {
+  margin: 2px 0 10px;
+  padding: 6px 8px;
+  background: #22111a;
+  border: 1px solid #5a1c26;
+  border-radius: 4px;
+}
+.pa-tc-fail-title { color: #ff4455; margin-bottom: 3px; }
+.pa-tc-fail-row { color: #ccc; font-size: 10.5px; line-height: 1.6; }
+.pa-tc-fail-row b { color: #fff; }
+.pa-tc-fail-reason { color: #ff8c99; font-weight: 700; }
+
+/* The folded-row failure summary (_failurePillHTML, PassAnalyzer.js) — same
+   red palette as .pa-tc-fail above, just compressed into a single small pill
+   that sits inline (inside .pa-tc-status-cluster, pinned flush against its
+   own dot) instead of the bordered callout the click-expanded detail gets.
+   min-width:0 + ellipsis lets it shrink instead of pushing the dot out past
+   the cluster's own gap if a long reason code lands next to a long TC name;
+   max-width caps how far it's allowed to crowd that name out first. */
+.pa-tc-fail-pill {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #3a1520;
+  border: 1px solid #5a1c26;
+  color: #ff8c99;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.pa-tc-fail-pill-loading { color: #a05a66; font-weight: 400; } /* dimmer "…" placeholder — not yet a real reason, shouldn't read with the same weight as one */
+
+/* "Acceptance failure" warning (see _failurePillHTML) — a TC that DID
+   execute successfully but never got an acceptance report at all. Yellow,
+   not red: nothing actually failed to run, so reusing .pa-tc-fail-pill's red
+   would misreport this as an execution failure — same pill shape/sizing,
+   just its own color pairing. Text color is the exact #ff8c00 .co-tt-
+   cancelled/.co-dot-cancelled already use elsewhere for "not a clean
+   success but not a failure either", so this reads as the same severity
+   level as that existing amber, not a brand new one. */
+.pa-tc-fail-pill-warn {
+  background: #3a2a10;
+  border-color: #6b4a18;
+  color: #ff8c00;
+}
+
 /* TC_11_4 (schedule-another-TC-for-later) rows, merged with the TC it's
    scheduling — see _matchScheduledTargets in PassAnalyzer.js. Purple accent
    matches the app's existing section-title color, since this is functionally
@@ -3567,6 +3791,15 @@ a.co-link:hover {
    background, so it composes cleanly on top of a plain row OR a purple
    .pa-tc-row-114 merged row without fighting either one's own styling. */
 .pa-tc-row-cursor { box-shadow: 0 0 0 1.5px #7ad4ff inset; }
+/* Landing highlight when a Procedures-panel pill click scrolls the TC list
+   to that procedure's start (see _scrollTcListToTime) — blue rather than
+   the log's red .grm-log-flash, since red here already means acceptance/
+   execution FAILURE (.pa-tc-ack-red) and this isn't reporting a problem. */
+@keyframes pa-tc-row-flash-kf {
+  0%   { background: rgba(122,212,255,0.4); }
+  100% { background: transparent; }
+}
+.pa-tc-row-flash { animation: pa-tc-row-flash-kf 1.2s ease-out; }
 .pa-tc-trunc {
   margin-top: 6px;
   font-size: 10px;

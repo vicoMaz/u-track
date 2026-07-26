@@ -8,7 +8,7 @@ import { satSunExclDeg, satEarthExclDeg, MODEL_STAR_TRACKERS } from '../satStarT
 import { sampleAttitudeTable, DEFAULT_MAX_GAP_MS } from '../attitudeSample.js';
 import { resolveRealAttitudeEntries, scheduleAttitudeFetch, applyRealAttitudeModelCorrection } from '../satAttitudeReal.js';
 import { showActionToast }              from './actionToast.js';
-import { passSimpleTooltipContent, hydratePassGeometry } from './passTooltip.js';
+import { passSimpleTooltipContent, hydratePassGeometry, hydrateScheduledProcedures } from './passTooltip.js';
 import { openPassDetail }               from './PassDetailPanel.js';
 import { escapeHtml }                   from './logView.js';
 
@@ -333,6 +333,7 @@ function _showPassTooltip(e, pass) {
   _ganttTooltip.style.display = 'block';
   _posTooltipAt(_ttAnchorX, _ttAnchorY);
   hydratePassGeometry(_ganttTooltip, e, pass, store.trackedSat);
+  hydrateScheduledProcedures(_ganttTooltip, pass, store.trackedSat);
 }
 
 // `comments` is a JSON-encoded string (pass-geometry metadata) — parsed into

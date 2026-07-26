@@ -64,24 +64,34 @@ const FETCH_TIMEOUT_MS = 8_000;
 // How far (in SIM time) ahead of the current instant we try to stay covered —
 // fetched proactively, before actually running out, so ordinary continuous
 // playback never visibly falls back to Default Sun Pointing waiting on a
-// fetch. 20s at 1x/10x gives 2-20s of real wall-clock lead time for a fetch
-// that only takes ~0.2-0.4s — comfortable. This is intentionally NOT scaled
-// by playback speed (see MAX_SPEED_FOR_REAL below for why).
-const LOOKAHEAD_MARGIN_MS = 20_000;
+// fetch. Scales with playback speed so the REAL wall-clock lead time stays
+// ~constant regardless of speed — a flat, unscaled 20s sim-time margin was
+// tried first, but that only gives 20s of real lead at 1x vs. just 2s at
+// 10x, and live testing confirmed 2s occasionally isn't enough: a fetch
+// cycle just once taking longer than the ~0.2-0.4s typical case (still well
+// under FETCH_TIMEOUT_MS, nothing actually wrong) is then enough to cause a
+// visible real → Sun Pointing → real flicker right at the bucket boundary —
+// exactly the "20s at 1x/10x gives 2-20s of real lead" case this used to
+// accept as "comfortable" when it isn't, at the tight end.
+const LOOKAHEAD_MARGIN_REAL_MS = 20_000; // target: this much real wall-clock lead, at any supported speed
+function _lookaheadMarginMs() {
+  return LOOKAHEAD_MARGIN_REAL_MS * Math.max(1, Math.abs(store.playbackSpeed));
+}
 // If we've already run PAST the last cached sample by up to this much, still
 // treat it as "just crossed a bucket boundary during continuous playback"
 // (fetch urgently) rather than "jumped/scrubbed to an unrelated time" (which
 // should respect the debounce instead, so a fast scrub doesn't spam MIC).
 const URGENT_OVERRUN_MS = 60_000;
-// Above this sim-time multiplier, MIC (one point at a time, ~0.2-0.4s/call)
-// cannot plausibly be fetched fast enough to keep a 20s lookahead margin
-// ahead of consumption — e.g. at 60x, 20s of sim-time lookahead is only
-// ~0.33s of real wall-clock lead, too tight to reliably beat network jitter,
-// which is exactly what caused the reported flicker (real → constant →
-// real, right at every 30s bucket boundary). Rather than degrade into
-// occasional flicker, don't attempt real attitude at all above this speed —
-// clean, predictable Default Sun Pointing the whole time instead (see
-// attitudeDisplayState's 'fast-forward' reason).
+// Above this sim-time multiplier, real attitude is disabled outright rather
+// than just relying on _lookaheadMarginMs()'s speed-scaling above. That
+// scaling keeps the REAL-time lead constant, so in principle it'd work at
+// any speed — but the SIM-time lookahead it implies grows with it too (e.g.
+// 200s of sim-time at 10x to hold a 20s real lead; 12,000s — 3.3h — at
+// 600x), which starts to mean maintaining an impractically large reservoir
+// of pre-fetched buckets, and MIC serving one request at a time (see file
+// header) makes catching up from a cold start at that range genuinely slow.
+// Above this speed: clean, predictable Default Sun Pointing throughout
+// instead (see attitudeDisplayState's 'fast-forward' reason).
 //
 // Only actually applies while store.playing is true (see every call site
 // below) — playbackSpeed is just the currently-SELECTED multiplier and
@@ -277,7 +287,7 @@ async function _runFetchCycle(noradId, atMs) {
   // reaches the next bucket's far edge before it's needed.
   const startBucket   = _bucketStart(atMs);
   const fromBucket    = haveThroughMs != null ? Math.max(startBucket, _bucketStart(haveThroughMs)) : startBucket;
-  const throughBucket = _bucketStart(atMs + LOOKAHEAD_MARGIN_MS) + GRID_MS;
+  const throughBucket = _bucketStart(atMs + _lookaheadMarginMs()) + GRID_MS;
 
   const buckets = [];
   for (let b = fromBucket; b <= throughBucket; b += GRID_MS) {
@@ -302,10 +312,10 @@ async function _runFetchCycle(noradId, atMs) {
   //
   // ONLY step in for that exact degenerate (<2 buckets) case — the normal
   // loop above already yields >=2 buckets on every ordinary cycle (first-
-  // ever fetch: LOOKAHEAD_MARGIN_MS's 20s span always straddles at least the
-  // current + next bucket; steady playback: fromBucket sits at or behind the
-  // existing coverage edge, and throughBucket is always >= startBucket +
-  // GRID_MS — see this comment block's own math if re-deriving), so this
+  // ever fetch: _lookaheadMarginMs() is always >= GRID_MS, so it always
+  // straddles at least the current + next bucket; steady playback:
+  // fromBucket sits at or behind the existing coverage edge, and
+  // throughBucket is always >= startBucket + GRID_MS), so this
   // never fires there. An EARLIER version added the extra bucket
   // unconditionally on every call — reasoned to be a no-op in the steady
   // case (already-cached, so _fetchAndCacheBucket's own guard returns before
@@ -336,7 +346,7 @@ async function _runFetchCycle(noradId, atMs) {
 // mean running out of buffered coverage right as a bucket boundary is
 // crossed, then waiting up to ~2.4s (ceiling + fetch latency) before the
 // next real sample lands — a visible, repeating flicker back to Default Sun
-// Pointing every 30s. The LOOKAHEAD_MARGIN_MS check below fixes this
+// Pointing every 30s. The _lookaheadMarginMs() check below fixes this
 // properly: it looks at the actual cached coverage and fetches proactively,
 // well before running out, so the fetch has time to land before it's
 // actually needed — bypassing the debounce/ceiling entirely when urgent.
@@ -351,7 +361,7 @@ export function scheduleAttitudeFetch(noradId, atMs) {
   const entries = store.realAttitude[noradId]?.entries;
   const lastCoveredMs = entries?.length ? entries[entries.length - 1].t : -Infinity;
   const gapAhead = lastCoveredMs - atMs; // positive: still have buffer ahead; negative: already ran past it
-  if (gapAhead < LOOKAHEAD_MARGIN_MS && gapAhead > -URGENT_OVERRUN_MS) {
+  if (gapAhead < _lookaheadMarginMs() && gapAhead > -URGENT_OVERRUN_MS) {
     clearTimeout(_debounceTimer.get(noradId));
     _lastAttemptMs.set(noradId, Date.now());
     _runFetchCycle(noradId, atMs);

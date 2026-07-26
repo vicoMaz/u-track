@@ -254,10 +254,61 @@ function _procedureBars(procedures, xScale, t0, t1, height = CHART_H) {
     const w  = Math.max(xScale(e) - x1, 1.5);
     const color = _PROC_BAR_COLOR[pr.status] ?? _PROC_BAR_COLOR.SUCCESS;
     const cx = x1 + w / 2;
-    return `<g class="ebn0-proc-bar">
+    // data-proc-idx matches this procedure's index in the SAME pass.procedures
+    // array the Procedures panel numbers its pills 1,2,3... from (PassAnalyzer.js's
+    // _procHistoryHTML) — lets a pill click find and glow this exact bar
+    // (see _glowEbn0Bar) without either side needing to compare names/times.
+    return `<g class="ebn0-proc-bar" data-proc-idx="${i}">
       <rect x="${x1.toFixed(1)}" y="${y}" width="${w.toFixed(1)}" height="${BAR_ROW_H}" rx="2" fill="${color}" fill-opacity="0.28" stroke="${color}" stroke-width="0.7"><title>${i + 1}. ${pr.name ?? ''}</title></rect>
       <text class="ebn0-proc-num" x="${cx.toFixed(1)}" y="${(y + BAR_ROW_H / 2 + 2.6).toFixed(1)}" text-anchor="middle">${i + 1}</text>
     </g>`;
+  }).join('');
+}
+
+// Height scale for the TC-send histogram bars below — expressed as a RATE
+// (TCs/sec) rather than a fixed count per bucket, so it stays meaningful
+// however PassAnalyzer.js's own TC_HIST_BUCKET_MS is tuned: a bucket sending
+// at TC_HIST_SCALE_RATE reaches TC_HIST_MAX_FRAC of the plot's OWN height
+// (PAD_T..height-PAD_B), deliberately capped well under 1.0 so even a busy
+// burst leaves the Eb/N0 curve above it legible instead of the overlay ever
+// filling the whole plot. 10 TCs/sec is already a very busy sustained rate
+// for this system (confirmed live: a whole 14-minute/392-packet pass
+// averages well under that), so in practice bars sit far short of the 30%
+// ceiling most of the time.
+const TC_HIST_SCALE_RATE = 10; // TCs per second
+const TC_HIST_MAX_FRAC = 0.30;
+
+// Stacked green/red bars, one per PassAnalyzer.js's _tcSendHistogram bucket —
+// green from the plot's own baseline (the x-axis line) up for the bucket's
+// non-failed sends, red stacked directly on top for the failed portion of
+// that SAME bucket. Both segments are scaled by the identical factor so the
+// red/green split stays proportional to the real failed/total ratio even
+// once a bucket's total is clamped at TC_HIST_MAX_FRAC. Drawn overlaid
+// directly on the plot area (not a separate strip like _procedureBars below
+// the axis) — clamped against [t0,t1] the same way _procedureBars is, since
+// a bucket can straddle the edge of the chart's own time domain.
+function _tcHistogramBars(histogram, xScale, t0, t1, height = CHART_H) {
+  if (!histogram?.length) return '';
+  const baseline = height - PAD_B;
+  const plotH = height - PAD_T - PAD_B;
+  return histogram.map(b => {
+    const s = Math.max(b.t, t0), e = Math.min(b.tEnd, t1);
+    if (e <= s || !b.sent) return '';
+    const x1 = xScale(s);
+    const w  = Math.max(xScale(e) - x1, 1);
+    const scaleTc = TC_HIST_SCALE_RATE * (b.tEnd - b.t) / 1000; // bucket's own duration × the target rate = the count that reaches TC_HIST_MAX_FRAC
+    let hTotal  = (b.sent   / scaleTc) * TC_HIST_MAX_FRAC * plotH;
+    let hFailed = (b.failed / scaleTc) * TC_HIST_MAX_FRAC * plotH;
+    if (hTotal > plotH) { const k = plotH / hTotal; hTotal *= k; hFailed *= k; } // keep the green/red ratio intact if a pathological burst would otherwise overflow the plot
+    const hGreen = hTotal - hFailed;
+    const title = `<title>${b.sent} TC${b.sent === 1 ? '' : 's'} sent${b.failed ? ` · ${b.failed} failed` : ''}</title>`;
+    const greenRect = hGreen > 0.05
+      ? `<rect x="${x1.toFixed(1)}" y="${(baseline - hGreen).toFixed(1)}" width="${w.toFixed(1)}" height="${hGreen.toFixed(1)}" fill="#00cc66" fill-opacity="0.55"/>`
+      : '';
+    const redRect = hFailed > 0.05
+      ? `<rect x="${x1.toFixed(1)}" y="${(baseline - hGreen - hFailed).toFixed(1)}" width="${w.toFixed(1)}" height="${hFailed.toFixed(1)}" fill="#ff4455" fill-opacity="0.7"/>`
+      : '';
+    return `<g class="ebn0-tc-hist-bar">${title}${greenRect}${redRect}</g>`;
   }).join('');
 }
 
@@ -270,7 +321,7 @@ function _procedureBars(procedures, xScale, t0, t1, height = CHART_H) {
 // visible instead of disappearing along with the missing curve — and a faint
 // centered note in place of the data line, rather than replacing the whole
 // block with a one-line text note.
-export function buildEbn0SVG(series, markers, procedures, fallbackRange, series2, width = CHART_W, height = CHART_H) {
+export function buildEbn0SVG(series, markers, procedures, fallbackRange, series2, width = CHART_W, height = CHART_H, tcHistogram) {
   const hasSeries  = !!series?.length;
   const hasSeries2 = !!series2?.length;
   if (!hasSeries && !hasSeries2 && !procedures?.length && !fallbackRange) return '';
@@ -286,6 +337,7 @@ export function buildEbn0SVG(series, markers, procedures, fallbackRange, series2
     <text x="${PAD_L - 4}" y="${height - PAD_B}" text-anchor="end" fill="#5a5a8a" font-size="7" font-family="monospace">${lo.toFixed(1)}</text>` : ''}
     <line x1="${PAD_L}" y1="${PAD_T}" x2="${PAD_L}" y2="${height - PAD_B}" stroke="#2a2a44" stroke-width="0.7"/>
     <line x1="${PAD_L}" y1="${height - PAD_B}" x2="${width - PAD_R}" y2="${height - PAD_B}" stroke="#2a2a44" stroke-width="0.7"/>
+    ${_tcHistogramBars(tcHistogram, xScale, t0, t1, height)}
     ${hasSeries2 ? `<path d="${pathD2}" fill="none" stroke="#4ad4ff" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.85"/>` : ''}
     ${hasSeries  ? `<path d="${pathD}"  fill="none" stroke="#a78bfa" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
     ${_markerDots(series, markers, xScale, yScale)}` : ''}
@@ -323,10 +375,10 @@ export function syncEbn0DotSizes(ebn0El) {
   if (cursorDot2) cursorDot2.setAttribute('r', (MARKER_PX_RADIUS.cursor * scale).toFixed(2));
 }
 
-export function ebn0HTML(series, markers, procedures, fallbackRange, series2, width = CHART_W, height = CHART_H) {
+export function ebn0HTML(series, markers, procedures, fallbackRange, series2, width = CHART_W, height = CHART_H, tcHistogram) {
   const hasAny = series?.length || series2?.length;
   if (!hasAny) {
-    const svg = buildEbn0SVG(series, markers, procedures, fallbackRange, series2, width, height);
+    const svg = buildEbn0SVG(series, markers, procedures, fallbackRange, series2, width, height, tcHistogram);
     return svg
       ? `<div class="ebn0-block">${svg}</div>`
       : `<div class="ebn0-block"><div class="co-tt-note">No Eb/N0 data found</div></div>`;
@@ -343,9 +395,18 @@ export function ebn0HTML(series, markers, procedures, fallbackRange, series2, wi
 
   const tmStats = series?.length  ? _stats(series)  : null;
   const tcStats = series2?.length ? _stats(series2) : null;
+  // Pass-wide totals for the histogram's own legend row — the bars
+  // themselves only show a per-bucket breakdown (via each bar's <title>).
+  // Bucket width is read off the data itself (tEnd - t) rather than a local
+  // constant, since PassAnalyzer.js's TC_HIST_BUCKET_MS is the one place
+  // that actually owns it.
+  const histTotals = tcHistogram?.length
+    ? tcHistogram.reduce((acc, b) => ({ sent: acc.sent + b.sent, failed: acc.failed + b.failed }), { sent: 0, failed: 0 })
+    : null;
+  const histBucketS = tcHistogram?.length ? (tcHistogram[0].tEnd - tcHistogram[0].t) / 1000 : null;
 
   return `<div class="ebn0-block">
-    ${buildEbn0SVG(series, markers, procedures, fallbackRange, series2, width, height)}
+    ${buildEbn0SVG(series, markers, procedures, fallbackRange, series2, width, height, tcHistogram)}
     <div class="ebn0-legend">
       ${tmStats ? `<div class="ebn0-legend-row">
         <span class="ebn0-legend-swatch ebn0-swatch-tm"></span>
@@ -356,6 +417,11 @@ export function ebn0HTML(series, markers, procedures, fallbackRange, series2, wi
         <span class="ebn0-legend-swatch ebn0-swatch-tc"></span>
         <span class="ebn0-legend-label ebn0-label-tc">TC Eb/N0</span>
         <span class="ebn0-stats">min ${tcStats.min} · avg ${tcStats.avg} · max ${tcStats.max} dB</span>
+      </div>` : ''}
+      ${histTotals?.sent ? `<div class="ebn0-legend-row">
+        <span class="ebn0-legend-swatch ebn0-swatch-tc-ok"></span><span class="ebn0-legend-swatch ebn0-swatch-tc-fail"></span>
+        <span class="ebn0-legend-label ebn0-label-tc-hist">TC sent (${histBucketS}s buckets)</span>
+        <span class="ebn0-stats">${histTotals.sent} sent · ${histTotals.failed} failed</span>
       </div>` : ''}
     </div>
   </div>`;

@@ -15,8 +15,15 @@ import { MODEL_STAR_TRACKERS, satSunExclDeg, satEarthExclDeg, ST_FOV_HALF_ANGLE_
 import { computeSttGeometry } from './TimePlayer.js';
 import { buildSttPovSVG } from './sttPov.js';
 
-let _panelEl = null, _bodyEl = null, _legendEl = null;
+// Diagonal-arrows icons for the expand/shrink toggle (see .stt-pov-expand) —
+// arrows pointing away from each other (expand) vs. toward each other
+// (shrink), same stroke-icon language as InputPanel.js's SVG_EYE etc.
+const SVG_EXPAND = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="20" y1="4" x2="13" y2="11"/><polyline points="20 11 20 4 13 4"/><line x1="4" y1="20" x2="11" y2="13"/><polyline points="4 13 4 20 11 20"/></svg>`;
+const SVG_SHRINK = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>`;
+
+let _panelEl = null, _bodyEl = null, _legendEl = null, _expandBtn = null;
 let _open = false;
+let _expanded = false; // ×1.75 toggle — see .stt-pov-expanded (style.css)
 
 function _ensurePanel() {
   if (_panelEl) return;
@@ -26,13 +33,21 @@ function _ensurePanel() {
     <div class="stt-pov-header">
       <span class="stt-pov-title">STT POV</span>
       <span class="stt-pov-legend"></span>
+      <button type="button" class="stt-pov-expand" title="Expand ×1.75">${SVG_EXPAND}</button>
       <button type="button" class="stt-pov-close" title="Close">×</button>
     </div>
     <div class="stt-pov-body"></div>`;
   document.getElementById('timeline-gantt')?.appendChild(_panelEl);
-  _bodyEl   = _panelEl.querySelector('.stt-pov-body');
-  _legendEl = _panelEl.querySelector('.stt-pov-legend');
+  _bodyEl    = _panelEl.querySelector('.stt-pov-body');
+  _legendEl  = _panelEl.querySelector('.stt-pov-legend');
+  _expandBtn = _panelEl.querySelector('.stt-pov-expand');
   _panelEl.querySelector('.stt-pov-close').addEventListener('click', closeSttPov);
+  _expandBtn.addEventListener('click', () => {
+    _expanded = !_expanded;
+    _panelEl.classList.toggle('stt-pov-expanded', _expanded);
+    _expandBtn.innerHTML = _expanded ? SVG_SHRINK : SVG_EXPAND;
+    _expandBtn.title     = _expanded ? 'Shrink to normal size' : 'Expand ×1.75';
+  });
 }
 
 export function closeSttPov() {
