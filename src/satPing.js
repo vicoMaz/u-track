@@ -10,6 +10,7 @@ import { fetchSatGroundEvents }   from './satGroundEvents.js';
 import { fetchSatGlobals }        from './satGlobals.js';
 import { fetchSatVersions }       from './satVersions.js';
 import { satSubsystemOrigin, satSubsystemPingOrigin, SUBSYSTEMS } from './satSubsystems.js';
+import { satIsSimulated, fetchSatTimeOffset } from './satSimu.js';
 
 const PING_TIMEOUT = 5_000;
 
@@ -161,6 +162,8 @@ const CADENCE_MS = {
   subsystemProbe: 30 * 60_000, // SCC/FDS/GNM/MIC reachability — a VPN's routing doesn't change mid-session,
                                 // first probe still fires on the very first 'ok' cycle since _due() treats
                                 // "never fetched" as due, only the REPEATS are slow-cadence
+  timeOffset:    2  * 60_000, // simulated satellites only (satSimu.js) — same cadence as passes, frequent
+                               // enough to notice a paused/reset/rebased sim within a couple minutes
 };
 const _lastFetchMs = {}; // `${satId}:${key}` → timestamp of last completed fetch
 
@@ -192,6 +195,12 @@ async function _pingAndReschedule(sat, myGen) {
       if (_due(sat.id, 'globals'))       { _markFetched(sat.id, 'globals');       fetches.push(fetchSatGlobals(sat), fetchSatVersions(sat)); }
       if (_due(sat.id, 'gnssMitigation')) { _markFetched(sat.id, 'gnssMitigation'); fetches.push(fetchSatGnssMitigation(sat)); }
       if (_due(sat.id, 'subsystemProbe')) { _markFetched(sat.id, 'subsystemProbe'); fetches.push(_probeSubsystems(sat)); }
+      // Runs alongside (not before) the others below in the same
+      // Promise.all — on this satellite's very FIRST cycle, fetchSatPasses/
+      // fetchSatTelemetry may briefly race ahead of it and use no offset
+      // yet; self-corrects on the next cycle, 2 minutes later, same as any
+      // other cadence-gated fetch here would.
+      if (satIsSimulated(sat.noradId) && _due(sat.id, 'timeOffset')) { _markFetched(sat.id, 'timeOffset'); fetches.push(fetchSatTimeOffset(sat)); }
       await Promise.all(fetches);
     }
   } catch { /* never let an error kill the cycle */ }

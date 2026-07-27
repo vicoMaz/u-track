@@ -3,7 +3,7 @@ import { propagate }                          from '../tle.js';
 import { sunDirectionECI, isInEclipse }       from '../sunVector.js';
 import { getPingIntervalSec, getPingElapsedSec, getLastPingMs, satBaseUrl, pingSatellite } from '../satPing.js';
 import { satSubsystemOrigin, satSubsystemHost } from '../satSubsystems.js';
-import { satIsSimulated } from '../satSimu.js';
+import { satIsSimulated, satEffectiveNow } from '../satSimu.js';
 import { worstSev } from './severity.js';
 import {
   passSimpleTooltipContent as _tooltipContent,
@@ -673,8 +673,7 @@ export function initChadOps() {
   }
 
   function render() {
-    const now     = Date.now();
-    const nowDate = new Date(now);
+    const nowDate = new Date();
     const sunDir  = sunDirectionECI(nowDate);
 
     // Only satellites THIS client can reach — see store.accessibleSatellites.
@@ -693,10 +692,19 @@ export function initChadOps() {
     tbody.innerHTML = sorted.map(sat => {
       let eclipse = null;
       if (sat.satrec) {
+        // Eclipse/sun geometry stays on real wall-clock time even for a
+        // simulated satellite — that's this app's own orbital-mechanics
+        // computation, not fetched data with a window to get wrong, and
+        // simulated satellites are already excluded from the Visualizer,
+        // where that geometry actually gets used for anything.
         const r = propagate(sat.satrec, nowDate);
         if (r?.eciPos) eclipse = isInEclipse(r.eciPos, sunDir);
       }
-      return _rowHTML(sat, now, eclipse);
+      // satEffectiveNow: plain Date.now() for a real satellite (see
+      // satSimu.js); for a simulated one, corrected by its own SCC-reported
+      // clock offset — contact time, next-pass, TLE age, and live-pass
+      // detection inside _rowHTML all key off this one value.
+      return _rowHTML(sat, satEffectiveNow(sat.noradId), eclipse);
     }).join('');
 
     _wireDots();
@@ -704,15 +712,18 @@ export function initChadOps() {
 
   // Lightweight tick: only patches contact-time and eclipse in-place — no DOM rebuild
   function _tick() {
-    const now     = Date.now();
-    const nowDate = new Date(now);
+    const nowDate = new Date(); // eclipse/sun geometry only — see render()'s own note on why this one stays real-time
     const sunDir  = sunDirectionECI(nowDate);
 
     for (const sat of store.accessibleSatellites) {
       const row = tbody.querySelector(`tr[data-sat-id="${sat.id}"]`);
       if (!row) { render(); return; } // satellite added (or became reachable) since last full render
 
-      const tm = store.satTelemetry[sat.id] ?? null;
+      // satEffectiveNow: plain Date.now() for a real satellite (see
+      // satSimu.js); for a simulated one, corrected by its own SCC-reported
+      // clock offset.
+      const now = satEffectiveNow(sat.noradId);
+      const tm  = store.satTelemetry[sat.id] ?? null;
 
       // Contact time (changes every tick)
       const contactEl = row.querySelector('.co-contact-stack');

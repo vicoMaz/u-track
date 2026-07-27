@@ -1,5 +1,6 @@
 import { store } from './store.js';
 import { satSubsystemOrigin } from './satSubsystems.js';
+import { satEffectiveNow } from './satSimu.js';
 
 async function _fetchJson(fdsOrigin, path, signal) {
   const res = await fetch(`${fdsOrigin}${path}`, { signal });
@@ -26,7 +27,10 @@ export async function fetchSatPasses(sat) {
   // ±5 days — matches TimePlayer.js's VIEW_HALF_SEC (the gantt's max zoom-out
   // and its eclipse/STT precompute window), so Passes/TMR never run out of
   // data at a different horizon than the other gantt rows.
-  const now   = new Date();
+  // satEffectiveNow: plain Date.now() for a real satellite (see satSimu.js);
+  // for a simulated one, corrected by its own SCC-reported clock offset, so
+  // this window actually lands where that satellite's own data lives.
+  const now   = new Date(satEffectiveNow(sat.noradId));
   const start = new Date(now.getTime() - 5 * 24 * 3_600_000).toISOString();
   const end   = new Date(now.getTime() + 5 * 24 * 3_600_000).toISOString();
 

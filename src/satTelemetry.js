@@ -1,5 +1,6 @@
 import { store } from './store.js';
 import { satSubsystemOrigin } from './satSubsystems.js';
+import { satEffectiveNow } from './satSimu.js';
 
 // ── Per-satellite TM parameter mapping ───────────────────────────
 
@@ -167,8 +168,11 @@ export async function fetchSatTelemetry(sat) {
     // Fetch all unique packets in parallel
     const extracted = {}; // field → {value, status} | null
     let receptionTime = null;
-    const end   = new Date(Date.now() + 10_000).toISOString();
-    const start = new Date(Date.now() - 24 * 3_600_000).toISOString();
+    // satEffectiveNow: plain Date.now() for a real satellite (see satSimu.js);
+    // for a simulated one, corrected by its own SCC-reported clock offset.
+    const nowMs = satEffectiveNow(sat.noradId);
+    const end   = new Date(nowMs + 10_000).toISOString();
+    const start = new Date(nowMs - 24 * 3_600_000).toISOString();
 
     await Promise.all([...byPacket.entries()].map(async ([packetName, fields]) => {
       const pkt = await fetchTmPacket(ip, packetName, { start, end }, ctrl.signal);
