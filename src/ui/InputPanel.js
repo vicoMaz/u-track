@@ -4,7 +4,7 @@ import { persistSatellite, deleteServerSatellite } from '../apiPoller.js';
 import { satBaseUrl, setSatBaseUrl, satJwt, setSatJwt, pingSatellite, getPingIntervalSec, restartPingPoller } from '../satPing.js';
 import { SUBSYSTEMS, satSubsystemIp, satSubsystemOverride, setSatSubsystemIp, derivedSubsystemIp } from '../satSubsystems.js';
 import { setNetworkVisible } from '../satAntennas.js';
-import { setSatIsSimulated } from '../satSimu.js';
+import { satIsSimulated, setSatIsSimulated } from '../satSimu.js';
 import {
   satSunExclDeg, setSatSunExclDeg, satEarthExclDeg, setSatEarthExclDeg,
   satStarTrackerConesVisible, setSatStarTrackerConesVisible,
@@ -29,7 +29,12 @@ let _satIdKey = '';
 // in this operational list. Settings' own satellite list is the exception
 // (see renderSettingsSatList below) — that one still shows everything so an
 // unreachable satellite can be found and its IP fixed.
-const _satListKey = () => store.accessibleSatellites.map(s => s.id).join('\0');
+const _satListKey = () => _satPanelSats().map(s => s.id).join('\0');
+
+// SIMU satellites have no globe/map entity (GlobeView.js/MapView.js already
+// exclude them) — a "track"/visibility/network row here would just be dead
+// UI pointing at nothing. They stay reachable in Fleet and Settings.
+const _satPanelSats = () => store.accessibleSatellites.filter(s => !satIsSimulated(s.noradId));
 
 // Which satellites have their station rows collapsed
 const _stationsCollapsed = new Set();
@@ -40,7 +45,7 @@ function renderSatList() {
   const list = document.getElementById('sat-list');
   if (!list) return;
   list.innerHTML = '';
-  for (const sat of store.accessibleSatellites) {
+  for (const sat of _satPanelSats()) {
     const hidden     = sat.visible === false;
     const stHidden   = !satStarTrackerConesVisible(sat.noradId);
     const networks   = store.getSatNetworks(sat.id);
@@ -160,7 +165,7 @@ function renderSatList() {
 function _patchSatList() {
   const list = document.getElementById('sat-list');
   if (!list) return;
-  for (const sat of store.accessibleSatellites) {
+  for (const sat of _satPanelSats()) {
     const group = list.querySelector(`[data-item-id="${sat.id}"]`);
     if (!group) { renderSatList(); return; }
     const hidden = sat.visible === false;
