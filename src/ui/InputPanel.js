@@ -1,5 +1,5 @@
 import { store, PALETTE } from '../store.js';
-import { parseTLE, propagate } from '../tle.js';
+import { parseTLE, propagate, placeholderTLE } from '../tle.js';
 import { persistSatellite, deleteServerSatellite } from '../apiPoller.js';
 import { satBaseUrl, setSatBaseUrl, satJwt, setSatJwt, pingSatellite, getPingIntervalSec, restartPingPoller } from '../satPing.js';
 import { SUBSYSTEMS, satSubsystemIp, satSubsystemOverride, setSatSubsystemIp, derivedSubsystemIp } from '../satSubsystems.js';
@@ -567,19 +567,34 @@ async function addSatellite() {
   addBtn.disabled = true; addBtn.textContent = '…';
   const statusEl = _statusEl(`Fetching TLE for ${satId}…`);
   try {
-    const host = ip.replace(/\.\d+$/, '.3');
-    const res  = await fetch(`http://${host}:15602/api/v1/data/orbit/best-tle?satellite_id=${encodeURIComponent(satId)}`);
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      const detail = body.match(/No satellite with id (.+)/)?.[0]
-                  ?? body.match(/Caused by \d+: (.+)/)?.[1]
-                  ?? `FDS returned ${res.status}`;
-      throw new Error(detail.trim());
+    let line1, line2;
+    try {
+      const host = ip.replace(/\.\d+$/, '.3');
+      const res  = await fetch(`http://${host}:15602/api/v1/data/orbit/best-tle?satellite_id=${encodeURIComponent(satId)}`);
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        const detail = body.match(/No satellite with id (.+)/)?.[0]
+                    ?? body.match(/Caused by \d+: (.+)/)?.[1]
+                    ?? `FDS returned ${res.status}`;
+        throw new Error(detail.trim());
+      }
+      const data = await res.json();
+      if (!data.first_line || !data.second_line) throw new Error('No TLE in response');
+      line1 = data.first_line;
+      line2 = data.second_line;
+    } catch (fetchErr) {
+      // A satellite tagged simulated may genuinely have no real orbital
+      // data published anywhere — it's not a real orbiting object, so
+      // GNM's lookup fails outright rather than just being unreachable.
+      // Only fall back when the toggle is actually on; a REAL satellite's
+      // failed TLE fetch should still surface as a real error, not
+      // silently substitute a meaningless orbit.
+      if (!simuActive) throw fetchErr;
+      statusEl.textContent = `No real TLE for ${satId} (${fetchErr.message}) — using a placeholder orbit since this is tagged simulated…`;
+      ({ line1, line2 } = placeholderTLE(satId));
     }
-    const data = await res.json();
-    if (!data.first_line || !data.second_line) throw new Error('No TLE in response');
 
-    const { satrec, noradId, line1, line2 } = parseTLE(`${data.first_line}\n${data.second_line}`);
+    const { satrec, noradId } = parseTLE(`${line1}\n${line2}`);
     if (store.satellites.some(s => s.noradId === noradId)) throw new Error(`${satId} is already loaded`);
 
     // Set BEFORE finaliseSatellite, not after — it calls store.addSatellite,
