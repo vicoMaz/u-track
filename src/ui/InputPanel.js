@@ -4,6 +4,7 @@ import { persistSatellite, deleteServerSatellite } from '../apiPoller.js';
 import { satBaseUrl, setSatBaseUrl, satJwt, setSatJwt, pingSatellite, getPingIntervalSec, restartPingPoller } from '../satPing.js';
 import { SUBSYSTEMS, satSubsystemIp, satSubsystemOverride, setSatSubsystemIp, derivedSubsystemIp } from '../satSubsystems.js';
 import { setNetworkVisible } from '../satAntennas.js';
+import { setSatIsSimulated } from '../satSimu.js';
 import {
   satSunExclDeg, setSatSunExclDeg, satEarthExclDeg, setSatEarthExclDeg,
   satStarTrackerConesVisible, setSatStarTrackerConesVisible,
@@ -518,6 +519,20 @@ if (modelToggle) {
   });
 }
 
+// ─── SIMU toggle ──────────────────────────────────────────────────────────
+// Same on/off-pill pattern as the model toggle above, just without a
+// textContent swap — this button's own label ("🧪 SIMU") never changes,
+// only whether it's lit up (see .sat-simu-toggle.simu-active in style.css).
+
+const simuToggleBtn = document.getElementById('sat-simu-toggle');
+let simuActive = false;
+if (simuToggleBtn) {
+  simuToggleBtn.addEventListener('click', () => {
+    simuActive = !simuActive;
+    simuToggleBtn.classList.toggle('simu-active', simuActive);
+  });
+}
+
 // ─── Add satellite ────────────────────────────────────────────────────────
 
 function nextColor() {
@@ -567,9 +582,17 @@ async function addSatellite() {
     const { satrec, noradId, line1, line2 } = parseTLE(`${data.first_line}\n${data.second_line}`);
     if (store.satellites.some(s => s.noradId === noradId)) throw new Error(`${satId} is already loaded`);
 
+    // Set BEFORE finaliseSatellite, not after — it calls store.addSatellite,
+    // which notifies 'satellites' synchronously, and GlobeView.js/MapView.js
+    // react to that immediately. Setting the flag after would leave a
+    // window where the new satellite briefly gets a globe/map entity before
+    // ever being tagged simulated.
+    setSatIsSimulated(noradId, simuActive);
     await finaliseSatellite({ satrec, noradId, satId, ip, line1, line2, statusEl });
     satIdInput.value = '';
     satIpInput.value = '';
+    simuActive = false;
+    simuToggleBtn?.classList.remove('simu-active');
   } catch (err) {
     statusEl.className = 'sat-error';
     statusEl.textContent = 'Error: ' + err.message;

@@ -1,6 +1,7 @@
 import { store } from '../store.js';
 import { SatEntity } from './SatEntity.js';
 import { GroundStation } from './GroundStation.js';
+import { satIsSimulated } from '../satSimu.js';
 
 /* global Cesium */
 
@@ -90,8 +91,11 @@ export function initGlobe() {
 function syncEntities() {
   // Only satellites THIS client can reach — see store.accessibleSatellites.
   // A satellite that goes unreachable simply disappears from the globe
-  // instead of sitting there frozen at its last known position.
-  const sats = store.accessibleSatellites;
+  // instead of sitting there frozen at its last known position. Simulated
+  // satellites (satSimu.js) are filtered out here too — "where is it right
+  // now" only means something for a satellite actually tracking real time;
+  // it still gets a normal Fleet row, just not a globe entity.
+  const sats = store.accessibleSatellites.filter(s => !satIsSimulated(s.noradId));
   const currentIds = new Set(sats.map(s => s.id));
 
   for (const sat of sats) {

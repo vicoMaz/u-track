@@ -3,6 +3,7 @@ import { propagate }                          from '../tle.js';
 import { sunDirectionECI, isInEclipse }       from '../sunVector.js';
 import { getPingIntervalSec, getPingElapsedSec, getLastPingMs, satBaseUrl, pingSatellite } from '../satPing.js';
 import { satSubsystemOrigin, satSubsystemHost } from '../satSubsystems.js';
+import { satIsSimulated } from '../satSimu.js';
 import { worstSev } from './severity.js';
 import {
   passSimpleTooltipContent as _tooltipContent,
@@ -449,8 +450,16 @@ function _rowHTML(sat, now, eclipse) {
     ? `<span class="co-pass-live-badge" style="--pass-progress:${_passProgress(currentPass, now).toFixed(3)}"><span class="co-pass-live-text">● LIVE</span></span>`
     : '';
 
+  // Set once at add-time (InputPanel.js's addSatellite), not auto-detected —
+  // see satSimu.js. Not real-time, so kept out of the Visualizer (GlobeView.js/
+  // MapView.js), but ops still cares about its telemetry/procedures, so it
+  // still gets a normal Fleet row, just clearly labeled.
+  const simuBadge = satIsSimulated(sat.noradId)
+    ? `<span class="co-simu-badge" title="Simulated satellite — not real-time, kept out of the Visualizer">🧪 SIMU</span>`
+    : '';
+
   return `<tr class="co-row${inPass ? ' co-row-live' : ''}" data-sat-id="${sat.id}"${rowStyle}>
-    <td class="co-name-cell">${sat.name}${liveBadge}</td>
+    <td class="co-name-cell">${sat.name}${simuBadge}${liveBadge}</td>
     <td class="co-ping-cell" data-field="ping-cell">${_buildPingCell(sat.id)}</td>
     <td class="co-contact-cell">${contactCell}</td>
     <td class="co-mode-cell">${modeCell}</td>

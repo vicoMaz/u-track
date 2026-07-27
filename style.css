@@ -1277,6 +1277,34 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .st-card input:focus { border-color: #5566aa; }
 .st-card input::placeholder { color: #445; }
 
+/* Add-satellite form's SIMU toggle (see index.html, InputPanel.js's
+   addSatellite/satSimu.js) — a pill button matching #model-toggle's own
+   pattern exactly (same idle/hover/active shape) rather than a native
+   checkbox, which would've been the one bare unstyled control in an
+   otherwise fully custom-styled dark form. Sits in .btn-row alongside
+   #model-toggle/#add-sat-btn instead of its own row for the same reason.
+   Violet active state deliberately matches .co-simu-badge below — this
+   button IS the control that produces that exact badge. */
+.sat-simu-toggle {
+  background: #1e1e2e;
+  border: 1px solid #2a2a3a;
+  border-radius: 4px;
+  color: #888;
+  padding: 5px 7px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+  white-space: nowrap;
+}
+.sat-simu-toggle:hover { border-color: #7a5ce855; color: #aaa; }
+.sat-simu-toggle.simu-active {
+  border-color: #7a5ce8aa;
+  color: #d4c2ff;
+  background: #7a5ce822;
+}
+
 .st-card .btn-row { display: flex; gap: 6px; }
 
 .st-card #add-sat-btn {
@@ -2174,6 +2202,30 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-pass-live-text {
   position: relative;
   z-index: 1;
+}
+
+/* Simulated-satellite tag (see satSimu.js) — a STATIC glow (plain
+   box-shadow, no animation like .co-pass-live-badge above), since this is a
+   fixed property of the satellite, not a transient in-pass status the eye
+   needs to be drawn to right now. A distinct violet rather than the
+   green/red/orange already meaning ok/fail/cancelled elsewhere, since this
+   isn't a severity signal — matches .sat-simu-toggle's active state, the
+   control that sets this tag in the first place. */
+.co-simu-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 7px;
+  padding: 1px 7px;
+  color: #e4d9ff;
+  background: linear-gradient(180deg, #2c2049, #1c1530);
+  border: 1px solid #7a5ce8;
+  border-radius: 3px;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+  box-shadow: 0 0 5px rgba(122, 92, 232, 0.35);
 }
 
 /* Whole row gets a subtle live tint + left-edge glow while a pass is in progress */

@@ -5,6 +5,7 @@ import { store } from '../store.js';
 import { SatMarker } from './SatMarker.js';
 import { GroundStation2D } from './GroundStation2D.js';
 import { sunDirectionECI } from '../sunVector.js';
+import { satIsSimulated } from '../satSimu.js';
 
 let map        = null;
 let nightCanvas = null;
@@ -282,7 +283,9 @@ function _updateGSFootprints() {
 
 function syncMarkers() {
   // Only satellites THIS client can reach — see store.accessibleSatellites.
-  const sats = store.accessibleSatellites;
+  // Simulated satellites (satSimu.js) are filtered out too — see
+  // GlobeView.js's syncEntities for the same filter and its rationale.
+  const sats = store.accessibleSatellites.filter(s => !satIsSimulated(s.noradId));
   const currentIds = new Set(sats.map(s => s.id));
   for (const sat of sats) {
     if (!markers.has(sat.id)) markers.set(sat.id, new SatMarker(map, sat));
