@@ -10,6 +10,7 @@ import {
   positionTooltip          as _positionTooltip,
   hydratePassGeometry,
   hydrateScheduledProcedures,
+  fmtDateTimeShort,
 } from './passTooltip.js';
 import { openPassDetail } from './PassDetailPanel.js';
 import { MITIGATION_WINDOW_DAYS } from '../satGnssMitigation.js';
@@ -454,12 +455,23 @@ function _rowHTML(sat, now, eclipse) {
   // see satSimu.js. Not real-time, so kept out of the Visualizer (GlobeView.js/
   // MapView.js), but ops still cares about its telemetry/procedures, so it
   // still gets a normal Fleet row, just clearly labeled.
-  const simuBadge = satIsSimulated(sat.noradId)
+  const isSimu = satIsSimulated(sat.noradId);
+  const simuBadge = isSimu
     ? `<span class="co-simu-badge" title="Simulated satellite — not real-time, kept out of the Visualizer">🧪 SIMU</span>`
+    : '';
+  // `now` here is already satEffectiveNow(sat.noradId) (see render()'s own
+  // call site) — every "ago"/"next"/TLE-age label in this row is already
+  // silently anchored to it; this just makes that anchor itself visible,
+  // since without it those labels read as if they were real-time.
+  const simuTimeLine = isSimu
+    ? `<div class="co-simu-time" title="This satellite's own current time — from its SCC's own clock (satSimu.js), not real time. Contact/next-pass/TLE-age above are all anchored to it.">🕐 ${fmtDateTimeShort(new Date(now))}</div>`
     : '';
 
   return `<tr class="co-row${inPass ? ' co-row-live' : ''}" data-sat-id="${sat.id}"${rowStyle}>
-    <td class="co-name-cell">${sat.name}${simuBadge}${liveBadge}</td>
+    <td class="co-name-cell">
+      <div class="co-name-row">${sat.name}${simuBadge}${liveBadge}</div>
+      ${simuTimeLine}
+    </td>
     <td class="co-ping-cell" data-field="ping-cell">${_buildPingCell(sat.id)}</td>
     <td class="co-contact-cell">${contactCell}</td>
     <td class="co-mode-cell">${modeCell}</td>
@@ -739,6 +751,12 @@ export function initChadOps() {
           : '<span class="co-next-contact co-nil">—</span>';
         contactEl.innerHTML = lastLine + nextLine;
       }
+
+      // Simulated satellite's own clock (changes every tick, same as
+      // contact time above — see _rowHTML's own simuTimeLine for why this
+      // needs to be visible at all, not just used internally)
+      const simuTimeEl = row.querySelector('.co-simu-time');
+      if (simuTimeEl) simuTimeEl.textContent = `🕐 ${fmtDateTimeShort(new Date(now))}`;
 
       // Eclipse status (changes ~every 45 min but cheap to re-check)
       const eclEl = row.querySelector('[data-field="ecl"]');

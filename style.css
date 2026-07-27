@@ -2150,6 +2150,19 @@ body.gantt-collapsed .gantt-rows { display: none; }
   min-width: 100px;
   white-space: nowrap;
 }
+.co-name-row { display: flex; align-items: center; }
+/* This satellite's own current time (see _rowHTML/_tick's simuTimeLine,
+   ChadOps.js) — every "ago"/"next"/TLE-age label in this same row is
+   silently anchored to it, so it needs to be visible, not just correct.
+   Plain/muted (not another colored badge) since it's contextual info about
+   the row, not a status the eye needs drawn to. */
+.co-simu-time {
+  margin-top: 2px;
+  color: #9a86d9;
+  font-size: 10px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
 
 /* Glowing LIVE badge — satellite is currently inside a pass window (aos0→los0).
    The glow itself is a static box-shadow on a ::after layer; only its OPACITY
