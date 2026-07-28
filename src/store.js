@@ -146,6 +146,21 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
     this.notify('satellites');
   },
 
+  // Reorders the underlying array itself — every view (Fleet, Settings, the
+  // Visualizer sidebar) just iterates `satellites`/`accessibleSatellites` in
+  // whatever order they're already in, so this one move is what every list
+  // reflects at once, not something each view has to separately sort by.
+  // Persisting that order across a reload is the CALLER's job (see
+  // apiPoller.js's saveSatOrder/loadInitialState) — this only touches the
+  // in-memory array.
+  moveSatellite(id, toIndex) {
+    const fromIndex = this.satellites.findIndex(s => s.id === id);
+    if (fromIndex === -1 || fromIndex === toIndex) return;
+    const [sat] = this.satellites.splice(fromIndex, 1);
+    this.satellites.splice(toIndex, 0, sat);
+    this.notify('satellites');
+  },
+
   toggleSatVisibility(id) {
     const sat = this._satById.get(id);
     if (sat) { sat.visible = !sat.visible; this.notify('satellites'); }

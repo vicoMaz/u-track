@@ -1,14 +1,12 @@
 import { store, PALETTE } from '../store.js';
 import { parseTLE, propagate, placeholderTLE } from '../tle.js';
-import { persistSatellite, deleteServerSatellite } from '../apiPoller.js';
+import { persistSatellite, deleteServerSatellite, saveSatOrder } from '../apiPoller.js';
 import { satBaseUrl, setSatBaseUrl, satJwt, setSatJwt, pingSatellite, getPingIntervalSec, restartPingPoller } from '../satPing.js';
 import { SUBSYSTEMS, satSubsystemIp, satSubsystemOverride, setSatSubsystemIp, derivedSubsystemIp } from '../satSubsystems.js';
 import { setNetworkVisible } from '../satAntennas.js';
 import { satIsSimulated, setSatIsSimulated } from '../satSimu.js';
-import {
-  satSunExclDeg, setSatSunExclDeg, satEarthExclDeg, setSatEarthExclDeg,
-  satStarTrackerConesVisible, setSatStarTrackerConesVisible,
-} from '../satStarTracker.js';
+import { satStarTrackerConesVisible, setSatStarTrackerConesVisible } from '../satStarTracker.js';
+import { fetchSatGlobals } from '../satGlobals.js';
 import { openAddPointPanel } from './AddPointPanel.js';
 
 // ─── Icons ────────────────────────────────────────────────────────────────
@@ -161,13 +159,22 @@ function renderSatList() {
   });
 }
 
-// Patch visibility + tracking state without rebuilding the list
+// Patch visibility/tracking/color state without rebuilding the list
 function _patchSatList() {
   const list = document.getElementById('sat-list');
   if (!list) return;
   for (const sat of _satPanelSats()) {
     const group = list.querySelector(`[data-item-id="${sat.id}"]`);
     if (!group) { renderSatList(); return; }
+    // Color is only ever set once (satGlobals.js, at creation) but that
+    // fetch is async and can resolve after this list's first render — this
+    // patch path (not a full renderSatList()) is what runs on that same
+    // 'satellites' notify, since the satellite's own id/count didn't change,
+    // only its color — without this, the dot would just silently keep
+    // showing whatever placeholder color it was created with.
+    group.style.setProperty('--sat-color', sat.color);
+    const dot = group.querySelector('.sat-dot');
+    if (dot) dot.style.background = sat.color;
     const hidden = sat.visible === false;
     group.querySelector('.sat-item')?.classList.toggle('tracking', sat.id === store.trackedSatId);
     const btn = group.querySelector('.vis-btn:not(.st-vis-btn)');
@@ -279,13 +286,6 @@ function _openSatLinksModal(sat) {
 
 // ─── Satellite edit modal ────────────────────────────────────────────────
 
-const EDIT_COLORS = [
-  '#00d4ff', '#00ff9d', '#7DF9FF', '#26c6da',
-  '#ff6b35', '#ff3860', '#fb5607', '#ef476f',
-  '#c77dff', '#8338ec', '#7c4dff', '#a78bfa',
-  '#ffbe0b', '#ffd166', '#ff6d00', '#06d6a0',
-];
-
 function _openSatEditModal(sat) {
   document.getElementById('sat-edit-modal')?.remove();
 
@@ -303,15 +303,6 @@ function _openSatEditModal(sat) {
 
         <div class="sem-label">Name</div>
         <input class="sem-input" id="sem-name" value="${sat.name}" placeholder="Display name" maxlength="30" autocomplete="off">
-
-        <div class="sem-label">Color</div>
-        <div class="sem-colors">
-          ${EDIT_COLORS.map(c => `<button class="sem-swatch${c === sat.color ? ' sem-swatch-sel' : ''}" data-color="${c}" style="--c:${c}" title="${c}"></button>`).join('')}
-        </div>
-        <button class="sem-scc-color-btn" id="sem-scc-color" ${store.satGlobals[sat.id]?.sccColor ? '' : 'disabled'}
-                title="${store.satGlobals[sat.id]?.sccColor ? `Match ${store.satGlobals[sat.id].sccColor}` : 'SCC color not loaded yet'}">
-          Use SCC Color
-        </button>
 
         <div class="sem-label">Type</div>
         <div class="sem-model-row">
@@ -336,44 +327,10 @@ function _openSatEditModal(sat) {
         <div class="sem-label">JWT Token</div>
         <input class="sem-input sem-jwt" id="sem-jwt" type="password" value="${satJwt(sat.noradId)}" placeholder="Raw token (no 'Bearer ' prefix)">
 
-        <div class="sem-label">Star Tracker Exclusion Angles</div>
-        <div class="sem-excl-row">
-          <label class="sem-excl-field">
-            <span>Sun</span>
-            <input class="sem-input sem-excl-input" id="sem-sun-excl" type="number" min="0" max="90" step="1"
-                   value="${satSunExclDeg(sat.noradId)}">
-            <span>°</span>
-          </label>
-          <label class="sem-excl-field">
-            <span>Earth</span>
-            <input class="sem-input sem-excl-input" id="sem-earth-excl" type="number" min="0" max="90" step="1"
-                   value="${satEarthExclDeg(sat.noradId)}">
-            <span>°</span>
-          </label>
-        </div>
-
       </div>
     </div>`;
 
   document.body.appendChild(modal);
-
-  // Color swatches — apply immediately
-  const _applyColor = c => {
-    modal.querySelectorAll('.sem-swatch').forEach(s => s.classList.toggle('sem-swatch-sel', s.dataset.color === c));
-    modal.querySelector('#sem-dot-preview').style.background = c;
-    store.setSatColor(sat.id, c);
-    localStorage.setItem(`sat-color-${sat.noradId}`, c);
-  };
-  modal.querySelectorAll('.sem-swatch').forEach(sw => {
-    sw.addEventListener('click', () => _applyColor(sw.dataset.color));
-  });
-
-  // "Use SCC Color" — matches the color the satellite itself reports (globals endpoint),
-  // not necessarily one of the fixed EDIT_COLORS swatches.
-  modal.querySelector('#sem-scc-color')?.addEventListener('click', () => {
-    const sccColor = store.satGlobals[sat.id]?.sccColor;
-    if (sccColor) _applyColor(sccColor);
-  });
 
   // Model buttons — apply immediately
   modal.querySelectorAll('.sem-model-btn').forEach(btn => {
@@ -460,16 +417,6 @@ function _openSatEditModal(sat) {
   jwtIn.addEventListener('blur', () => setSatJwt(sat.noradId, jwtIn.value.trim()));
   jwtIn.addEventListener('keydown', e => { if (e.key === 'Enter') jwtIn.blur(); });
 
-  // Star tracker exclusion angles — save on blur/enter. Cesium reads these
-  // fresh every render tick (satStarTracker.js), so the cones update live.
-  const sunExclIn = modal.querySelector('#sem-sun-excl');
-  sunExclIn.addEventListener('blur', () => setSatSunExclDeg(sat.noradId, sunExclIn.value));
-  sunExclIn.addEventListener('keydown', e => { if (e.key === 'Enter') sunExclIn.blur(); });
-
-  const earthExclIn = modal.querySelector('#sem-earth-excl');
-  earthExclIn.addEventListener('blur', () => setSatEarthExclDeg(sat.noradId, earthExclIn.value));
-  earthExclIn.addEventListener('keydown', e => { if (e.key === 'Enter') earthExclIn.blur(); });
-
   const close = () => modal.remove();
   modal.querySelector('.sem-close').addEventListener('click', close);
   modal.querySelector('.sem-backdrop').addEventListener('click', close);
@@ -478,6 +425,11 @@ function _openSatEditModal(sat) {
 }
 
 // ─── Settings view: satellite list ───────────────────────────────────────
+
+// Dragged satellite's id, while a drag from this list is in progress — kept
+// module-level (not just dataTransfer) since reading dataTransfer's own
+// payload during dragover is restricted in most browsers until drop.
+let _dragSatId = null;
 
 function renderSettingsSatList() {
   const list = document.getElementById('st-sat-list');
@@ -494,8 +446,11 @@ function renderSettingsSatList() {
     const unreachable = store.satAccessible[sat.id] === false;
     const item  = document.createElement('div');
     item.className = 'st-item st-sat-item';
+    item.draggable = true;
+    item.dataset.id = sat.id;
     item.style.setProperty('--sat-color', sat.color);
     item.innerHTML = `
+      <span class="st-drag-handle" title="Drag to reorder">⠿</span>
       <span class="st-sat-dot" style="background:${sat.color}"></span>
       <span class="st-item-name">${sat.name}</span>
       <span class="st-model-badge${model === 'FF' ? ' ff-active' : ''}">${model}</span>
@@ -508,6 +463,38 @@ function renderSettingsSatList() {
       deleteServerSatellite(sat.noradId);
       store.removeSatellite(sat.id);
     });
+
+    // Reorders store.satellites itself (store.js's moveSatellite), which
+    // every list (Fleet, Settings, the Visualizer sidebar) just inherits the
+    // order of — see saveSatOrder for how this survives a reload.
+    item.addEventListener('dragstart', e => {
+      _dragSatId = sat.id;
+      item.classList.add('st-dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', sat.id); // Firefox requires real data to permit the drag at all
+    });
+    item.addEventListener('dragend', () => {
+      _dragSatId = null;
+      item.classList.remove('st-dragging');
+      list.querySelectorAll('.st-drag-over').forEach(el => el.classList.remove('st-drag-over'));
+    });
+    item.addEventListener('dragover', e => {
+      if (!_dragSatId || _dragSatId === sat.id) return;
+      e.preventDefault(); // required for drop to fire at all
+      e.dataTransfer.dropEffect = 'move';
+      item.classList.add('st-drag-over');
+    });
+    item.addEventListener('dragleave', () => item.classList.remove('st-drag-over'));
+    item.addEventListener('drop', e => {
+      e.preventDefault();
+      item.classList.remove('st-drag-over');
+      if (!_dragSatId || _dragSatId === sat.id) return;
+      const toIndex = store.satellites.findIndex(s => s.id === sat.id);
+      if (toIndex === -1) return;
+      store.moveSatellite(_dragSatId, toIndex);
+      saveSatOrder();
+    });
+
     list.appendChild(item);
   }
 }
@@ -557,6 +544,13 @@ async function finaliseSatellite({ satrec, noradId, satId, ip, line1, line2, sta
   await persistSatellite(name, line1, line2, selectedModel, satId);
   setSatBaseUrl(noradId, ip);
   nameInput.value = '';
+  // One-off, right at creation — captures the satellite's static color
+  // immediately (see satGlobals.js) rather than waiting on the next regular
+  // ping-poller cycle to happen to pick it up. Not awaited: purely a nice-
+  // to-have for how soon the real color shows up, not something the rest of
+  // this flow depends on — the periodic poller is still there as a backstop
+  // if SCC isn't reachable yet at this exact moment.
+  fetchSatGlobals(store._satById.get(id));
 }
 
 async function addSatellite() {

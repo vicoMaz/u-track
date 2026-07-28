@@ -18,11 +18,41 @@ function parseSatEntry(item) {
     const tleName = nameLineIdx >= 0 ? lines[nameLineIdx] : '';
     const name       = item.name || tleName || `SAT-${noradId}`;
     const id         = `sat-api-${++satIdCounter}`;
+    // The color SCC reported the ONE time it was ever fetched for this
+    // satellite (satGlobals.js — captured at creation, persisted from then
+    // on) — this is what makes it survive a reload without re-fetching.
+    // Only a satellite SCC has never reported one for at all falls back to
+    // the plain PALETTE-cycle default.
     const color      = localStorage.getItem(`sat-color-${noradId}`) || PALETTE[store.satellites.length % PALETTE.length];
     const model      = item.model === 'FF' ? 'FF' : '12U';
     const satelliteId = item.satelliteId || null;
     return { id, noradId, name, color, satrec, model, satelliteId };
   } catch { return null; }
+}
+
+// The satellite settings list's drag-to-reorder (InputPanel.js) persists
+// here — noradIds in the user's own chosen order. Applied by sorting the
+// server's own /api/satellites response BEFORE adding anything to the
+// store, so every view just inherits store.satellites' insertion order
+// (see store.js's moveSatellite) rather than needing its own sort step.
+// A satellite not in this list yet (newly added since the last reorder)
+// falls to the end, in whatever order the server returned it.
+const SAT_ORDER_KEY = 'sat-order';
+
+export function saveSatOrder() {
+  localStorage.setItem(SAT_ORDER_KEY, JSON.stringify(store.satellites.map(s => s.noradId)));
+}
+
+function _applyStoredOrder(items) {
+  const raw = localStorage.getItem(SAT_ORDER_KEY);
+  if (!raw) return items;
+  let order;
+  try { order = JSON.parse(raw); } catch { return items; }
+  const rank = new Map(order.map((noradId, i) => [noradId, i]));
+  return items
+    .map((item, i) => ({ item, i }))
+    .sort((a, b) => (rank.get(a.item.noradId) ?? (order.length + a.i)) - (rank.get(b.item.noradId) ?? (order.length + b.i)))
+    .map(({ item }) => item);
 }
 
 // Load the full persistent state on page startup
@@ -33,7 +63,7 @@ export async function loadInitialState() {
       fetch('/api/attitude'),
     ]);
     if (satRes.ok) {
-      const sats = await satRes.json();
+      const sats = _applyStoredOrder(await satRes.json());
       for (const item of sats) {
         // Seed localStorage from server-persisted baseUrl (wins over stale local value)
         if (item.baseUrl) setSatBaseUrl(item.noradId, item.baseUrl);

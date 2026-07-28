@@ -15,37 +15,18 @@ export const EARTH_EXCL_DEFAULT_DEG = 22;
 // drifting copy of "15".
 export const ST_FOV_HALF_ANGLE_DEG = 15;
 
-function _numOr(raw, fallback) {
-  const n = parseFloat(raw);
-  return Number.isFinite(n) ? n : fallback;
-}
+const _visCache = new Map(); // noradId → boolean
 
-const _sunExclCache   = new Map(); // noradId → degrees
-const _earthExclCache = new Map();
-const _visCache        = new Map(); // noradId → boolean
-
+// No more per-satellite override — the edit modal's Sun/Earth angle inputs
+// were removed, so every satellite just uses the same fixed default now.
+// Still one function per angle (not a bare constant export) so every
+// existing call site (SatEntity.js, sttPovWidget.js, TimePlayer.js) needed
+// no changes at all.
 export function satSunExclDeg(noradId) {
-  if (_sunExclCache.has(noradId)) return _sunExclCache.get(noradId);
-  const v = _numOr(localStorage.getItem(`sat-sun-excl-${noradId}`), SUN_EXCL_DEFAULT_DEG);
-  _sunExclCache.set(noradId, v);
-  return v;
+  return SUN_EXCL_DEFAULT_DEG;
 }
-export function setSatSunExclDeg(noradId, deg) {
-  if (deg === '' || deg == null || !Number.isFinite(+deg)) localStorage.removeItem(`sat-sun-excl-${noradId}`);
-  else localStorage.setItem(`sat-sun-excl-${noradId}`, String(+deg));
-  _sunExclCache.delete(noradId);
-}
-
 export function satEarthExclDeg(noradId) {
-  if (_earthExclCache.has(noradId)) return _earthExclCache.get(noradId);
-  const v = _numOr(localStorage.getItem(`sat-earth-excl-${noradId}`), EARTH_EXCL_DEFAULT_DEG);
-  _earthExclCache.set(noradId, v);
-  return v;
-}
-export function setSatEarthExclDeg(noradId, deg) {
-  if (deg === '' || deg == null || !Number.isFinite(+deg)) localStorage.removeItem(`sat-earth-excl-${noradId}`);
-  else localStorage.setItem(`sat-earth-excl-${noradId}`, String(+deg));
-  _earthExclCache.delete(noradId);
+  return EARTH_EXCL_DEFAULT_DEG;
 }
 
 // Whole star-tracker visualization (FOV cone + both exclusion cones) as one group.

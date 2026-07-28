@@ -20,16 +20,19 @@ export async function fetchSatGlobals(sat) {
       sccVersion:         data.sccVersion ?? null,
       sccColor,
     });
-    // Satellites default to whatever color SCC itself reports, rather than
-    // requiring the manual "Use SCC Color" button (InputPanel.js) — but only
-    // when there's no localStorage entry yet, since that's how a manual pick
-    // (a swatch, or that same button) is recorded. Once one exists, it's a
-    // deliberate choice and this leaves it alone from then on. Also runs on
-    // every satellite already added, not just newly-added ones, since this
-    // fetch is on the same periodic cadence as the rest of satGlobals.
-    if (sccColor && !localStorage.getItem(`sat-color-${sat.noradId}`)) {
+    // Color is captured from SCC exactly once — normally right at creation
+    // (InputPanel.js's finaliseSatellite makes an immediate one-off call
+    // here for that), with this periodic poll only as a backstop for a
+    // satellite that didn't have one yet by the time this ran (e.g. SCC was
+    // briefly unreachable at creation). The VALUE itself, not just a done
+    // flag, is what's persisted — every other view (Fleet, Settings, the
+    // Visualizer sidebar, globe/map entities) reads this same static
+    // sat.color, and apiPoller.js's initial load restores it straight from
+    // here on a later page reload too, rather than needing to re-fetch.
+    const colorKey = `sat-color-${sat.noradId}`;
+    if (sccColor && !localStorage.getItem(colorKey)) {
       store.setSatColor(sat.id, sccColor);
-      localStorage.setItem(`sat-color-${sat.noradId}`, sccColor);
+      localStorage.setItem(colorKey, sccColor);
     }
   } catch { /* offline or aborted */ }
   finally { clearTimeout(timer); }
