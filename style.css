@@ -1401,6 +1401,22 @@ body.gantt-collapsed .gantt-rows { display: none; }
 /* Satellite settings card — single compact row */
 .st-sat-item { flex-direction: row; align-items: center; gap: 7px; padding: 6px 10px; }
 .st-sat-dot   { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+/* Drag-to-reorder handle — every OTHER list (Fleet, the Visualizer sidebar)
+   just inherits whatever order this one produces (store.js's moveSatellite +
+   apiPoller.js's saveSatOrder/loadInitialState), so this is the one place
+   order actually gets set. */
+.st-drag-handle {
+  cursor: grab;
+  color: #445;
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+  user-select: none;
+}
+.st-drag-handle:hover { color: #99aacc; }
+.st-sat-item.st-dragging { opacity: 0.4; }
+.st-sat-item.st-drag-over { box-shadow: inset 0 2px 0 #4ad4ff; }
 .st-model-badge {
   font-size: 9px; font-weight: 700; letter-spacing: .04em;
   color: #445566; border: 1px solid #1e2a3a; border-radius: 3px;
@@ -1637,42 +1653,6 @@ body.gantt-collapsed .gantt-rows { display: none; }
   gap: 6px;
 }
 
-.sem-colors {
-  display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  gap: 6px;
-}
-.sem-swatch {
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: var(--c);
-  border: 2px solid transparent;
-  cursor: pointer;
-  transition: transform .12s, border-color .12s;
-  outline: none;
-}
-.sem-swatch:hover { transform: scale(1.15); }
-.sem-swatch-sel  {
-  border-color: #fff;
-  box-shadow: 0 0 0 2px rgba(255,255,255,.25);
-  transform: scale(1.1);
-}
-
-.sem-scc-color-btn {
-  width: 100%;
-  margin-top: 8px;
-  padding: 6px 8px;
-  background: #1a1a2e;
-  border: 1px solid #2a2a4a;
-  border-radius: 5px;
-  color: #99aacc;
-  font-size: 11px;
-  cursor: pointer;
-  transition: background .15s, border-color .15s;
-}
-.sem-scc-color-btn:hover:not(:disabled) { background: #22223a; border-color: #3a3a6a; color: #ccddff; }
-.sem-scc-color-btn:disabled { opacity: .35; cursor: default; }
-
 .sem-model-row {
   display: flex; gap: 8px;
 }
@@ -1708,17 +1688,6 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .sem-input:hover  { border-color: #2a3a4a; }
 .sem-input:focus  { border-color: #3a5a7a; color: #ddeeff; background: #0a0a14; }
 .sem-jwt:focus    { border-color: #3a5a3a; color: #aaccaa; }
-
-.sem-excl-row { display: flex; gap: 10px; }
-.sem-excl-field {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-  color: #7a8aa0;
-}
-.sem-excl-field .sem-excl-input { width: 56px; text-align: right; }
 
 /* ── Satellite links modal ───────────────────────────── */
 #sat-links-modal {
@@ -2151,6 +2120,29 @@ body.gantt-collapsed .gantt-rows { display: none; }
   white-space: nowrap;
 }
 .co-name-row { display: flex; align-items: center; }
+/* Planet icon → track this satellite in the Visualizer, one click (see
+   .co-track-btn's click handler in ChadOps.js's _wireDots). Same small
+   bordered-box treatment (and grey-to-white hover) as .co-tt-microscope/
+   .pdp-microscope elsewhere in the app, just inline in the row's own flow
+   instead of absolutely positioned in a corner — this cell has no competing
+   corner content. currentColor on the SVG's own stroke means the button's
+   own color transition (below) is all that's needed to recolor the icon. */
+.co-track-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 7px;
+  background: transparent;
+  border: 1px solid #2a2a4a;
+  border-radius: 4px;
+  color: #889;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+}
+.co-track-btn svg { width: 13px; height: 13px; }
+.co-track-btn:hover { color: #fff; border-color: #4444aa; background: #1e1e30; }
 /* This satellite's own current time (see _rowHTML/_tick's simuTimeLine,
    ChadOps.js) — every "ago"/"next"/TLE-age label in this same row is
    silently anchored to it, so it needs to be visible, not just correct.
@@ -2481,20 +2473,41 @@ body.gantt-collapsed .gantt-rows { display: none; }
   overflow: visible;
 }
 .pass-polar .polar-hit { cursor: crosshair; }
+/* position:relative so .pv-azel-btn below can anchor to THIS box's own
+   corner — needed because the polar SVG's overflow:visible radial labels
+   (see .pa-middle) mean the wrap's actual visible content can run taller
+   than its own box, and the button used to sit in normal flow BELOW the
+   circle, past the panel's own bottom edge, getting clipped. */
 .polar-wrap {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
 }
+/* Icon-only (not "⤢ Cartesian" text) — the circle fills nearly this whole
+   box (see passPolar.js: R=54 of a 130 viewBox, i.e. ~83px of the 200px
+   render), so the ONLY genuinely empty spot to dock a corner button is the
+   small triangle outside the circle's own curve near the actual corner; a
+   wider text button's far corner still clipped into the circle there. Same
+   small bordered-box treatment as .co-tt-microscope elsewhere, sized to fit
+   that triangle with room to spare — full description lives in the title
+   tooltip instead. */
 .pv-azel-btn {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
   background: #1a1a28;
   border: 1px solid #2a2a3a;
   border-radius: 4px;
   color: #778;
-  font-size: 10px;
-  font-family: 'Courier New', monospace;
-  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 1;
   cursor: pointer;
   transition: color .15s, border-color .15s, background-color .15s;
 }
@@ -2518,20 +2531,27 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .ebn0-legend {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
+  justify-content: center;
   margin-top: 4px;
 }
 .ebn0-legend-row {
   display: flex;
   align-items: center;
-  gap: 5px;
+  flex-wrap: wrap;
+  justify-content: center;
+  column-gap: 6px;
+  row-gap: 1px;
+}
+.ebn0-legend-grp {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   white-space: nowrap;
 }
+.ebn0-legend-sep { color: #3a3a5a; font-size: 9.5px; }
 .ebn0-legend-swatch {
   display: inline-block;
-  width: 14px; height: 2px;
+  width: 10px; height: 2px;
   border-radius: 1px;
   flex-shrink: 0;
 }
@@ -2539,15 +2559,23 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .ebn0-swatch-tc { background: #4ad4ff; }
 .ebn0-swatch-tc-ok   { background: #00cc66; margin-right: -3px; } /* sits flush against its paired -fail swatch right after it, reading as one two-tone key rather than two separate ones */
 .ebn0-swatch-tc-fail { background: #ff4455; }
-.ebn0-legend-label { font-size: 9.5px; font-weight: 600; }
-.ebn0-label-tm { color: #a78bfa; }
-.ebn0-label-tc { color: #4ad4ff; }
-.ebn0-label-tc-hist { color: #ccc; }
+.ebn0-legend-tag {
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+.ebn0-tag-tm { color: #a78bfa; }
+.ebn0-tag-tc { color: #4ad4ff; }
+.ebn0-legend-arrow {
+  font-size: 13px;
+  line-height: 1;
+  color: #ccc;
+  font-weight: 700;
+}
 .ebn0-stats {
   font-size: 9.5px;
   color: #8888aa;
   font-family: 'Courier New', monospace;
-  text-align: center;
   white-space: nowrap;
 }
 .ebn0-chart { display: block; width: 100%; }
@@ -2568,6 +2596,19 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .ebn0-proc-bar rect { cursor: default; }
 .ebn0-proc-num { font-size: 7px; font-family: 'Courier New', monospace; fill: #f0f0f8; font-weight: 700; paint-order: stroke; stroke: #12121e; stroke-width: 0.5px; pointer-events: none; }
+/* Left dB axis (hi/lo) and right TC/TM quantity axis labels — both now draw
+   INSIDE the plot area (over the curve/histogram bars) instead of in a
+   dedicated side margin, so PAD_L/PAD_R (ebn0.js) only need to clear the
+   axis line itself, freeing that margin width for the chart's actual plot
+   area. A thicker stroke halo than .ebn0-proc-num's (this text can now sit
+   directly on top of a bright curve or a saturated histogram bar, not just
+   the dark chart background) keeps it legible regardless of what's under it. */
+.ebn0-axis-label { font-size: 10px; font-family: 'Courier New', monospace; font-weight: 700; fill: #ccccdd; paint-order: stroke; stroke: #12121e; stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
+/* "⋯" marking a procedure bar's clamped end (see _procedureBars, ebn0.js) —
+   own fill comes inline (matches that bar's status color), this just sets
+   the glyph itself. font-weight left at normal (unlike .ebn0-proc-num) so
+   three dots don't blob into one another at this size. */
+.ebn0-proc-bar-trunc { font-size: 8px; font-family: 'Courier New', monospace; pointer-events: none; }
 /* One-shot "look here" pulse when a Procedures-panel pill is clicked (see
    _glowEbn0Bar, PassAnalyzer.js) — a plain white drop-shadow rather than
    the bar's own status color (green/red/orange), since this is pointing at
@@ -3394,15 +3435,6 @@ a.co-link:hover {
   height: 100%;
   overflow: hidden;
 }
-.pa-page-title {
-  flex-shrink: 0;
-  padding: 8px 16px 6px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: #667;
-  text-transform: uppercase;
-}
 .pa-body {
   flex: 1;
   overflow-y: auto;
@@ -3481,12 +3513,17 @@ a.co-link:hover {
   font-variant-numeric: tabular-nums;
   margin-left: 4px;
 }
-.pa-details .co-tt-header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; padding-bottom: 0; border-bottom: none; padding-right: 56px; } /* reserves room so a long satellite/station/network name can't run under the < / > buttons in the corner */
-/* < / > pass step buttons, top-right corner of the card — same small
+.pa-details .co-tt-header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; padding-bottom: 0; border-bottom: none; padding-right: 82px; } /* reserves room so a long satellite/station/network name can't run under the copy/< / > buttons in the corner (3 buttons now, was 56px for 2) */
+/* < / > pass step buttons + copy, top-right corner of the card — same small
    bordered-box treatment as .co-tt-microscope/.pdp-microscope elsewhere,
    scaled for this context. .pa-details needs position:relative for this to
-   anchor to ITS corner specifically rather than some further ancestor. */
-.pa-details { position: relative; }
+   anchor to ITS corner specifically rather than some further ancestor.
+   padding-top reserves a strip across the top of the card for both this AND
+   .pa-analyzer-tag (opposite corner) — replaces what used to be a full-width
+   .pa-page-title row above the whole Analyzer (its own dedicated ~28px of
+   vertical space for just a label); folding it into this existing corner
+   costs nothing extra since .pa-pass-nav already needed the room. */
+.pa-details { position: relative; padding-top: 34px; }
 .pa-pass-nav {
   position: absolute;
   top: 10px;
@@ -3511,6 +3548,39 @@ a.co-link:hover {
 }
 .pa-pass-nav button:hover:not(:disabled) { color: #fff; border-color: #4444aa; background: #1e1e30; }
 .pa-pass-nav button:disabled { opacity: 0.3; cursor: default; }
+
+.pa-analyzer-tag {
+  position: absolute;
+  top: 10px;
+  left: 14px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #7ad4ff;
+}
+
+/* At-a-glance pass health dots (see _render's tmReceived/tcAcked/
+   tcSomeUnacked/tcAllUnacked, PassAnalyzer.js) — grey until proven
+   otherwise, green once the awaited fetches resolve and confirm TM was
+   actually received / a TC actually got an acknowledged-or-executed
+   outcome. Sits in its own .co-tt-time-row like DATE/DUR above it for the
+   same label+value rhythm, not a separate widget.
+   -warn (TC only, "SOME TCs never got an acceptance report") is the exact
+   #ff8c00 .pa-tc-fail-pill-warn already uses for the same underlying
+   condition on a single row, so the same color means the same thing at
+   both the per-row and whole-pass level. -crit (TC only, "NO TC got one AT
+   ALL" — strictly worse than -warn's partial case) reuses the same red
+   .pa-tc-ack-red/.pa-tc-fail-pill already use for an outright failure. */
+.pa-status-dot {
+  color: #445;
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+.pa-status-dot-ok   { color: #00cc66; }
+.pa-status-dot-warn { color: #ff8c00; }
+.pa-status-dot-crit { color: #ff4455; }
 
 /* A 2×2 GRID again (not independent flex columns) — the point this time is
    .pa-tc-list and .pa-full-log sharing row 2 so they start at exactly the
@@ -3587,7 +3657,51 @@ a.co-link:hover {
   grid-column: 3;
   grid-row: 1;
   overflow: visible; /* the polar plot's radial labels intentionally bleed slightly outside its own box */
+  display: flex;
+  flex-direction: column;
 }
+/* Only this panel's title needs to host right-aligned action buttons (the
+   Eb/N0 span toggle + Copy PNG) — every other .pa-panel-title is plain text,
+   so the flex layout is scoped here rather than on the shared class. */
+.pa-middle .pa-panel-title { display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto; }
+/* .co-tt-details-row's shared rule (used by PassDetailPanel.js's slide-in and
+   the hover tooltip too) keeps align-items:flex-start and no fixed height —
+   fine there, since neither sits in a fixed-height grid row with spare space
+   to give away. Scoped here instead of changing that shared rule: this is
+   the one context (.pa-middle, a 270px grid row — see .pa-main-row) with
+   real leftover vertical space, and PassAnalyzer.js measures THIS element's
+   resulting height to size the Eb/N0 chart to fill it exactly (see
+   chartHeight in _render) — flex:1 + stretch is what makes that height real
+   instead of just the row's own (small) content height. */
+.pa-middle .co-tt-details-row { flex: 1 1 auto; min-height: 0; align-items: stretch; }
+.pa-middle .polar-wrap { justify-content: center; } /* the polar plot itself stays a fixed 200×200 — center it in the now-taller stretched box instead of leaving it pinned to the top with blank space below */
+.pa-ebn0-actions { display: flex; align-items: center; gap: 6px; }
+.pa-ebn0-span-btn, .pa-copy-ebn0 {
+  background: #1a1a28;
+  border: 1px solid #2a2a3a;
+  border-radius: 4px;
+  color: #778;
+  font-size: 10px;
+  font-family: 'Courier New', monospace;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: color .15s, border-color .15s, background-color .15s;
+}
+.pa-ebn0-span-btn:hover, .pa-copy-ebn0:hover:not(:disabled) { color: #00d4ff; border-color: #00d4ff55; }
+.pa-copy-ebn0:disabled { opacity: 0.6; cursor: default; }
+/* Fixed-position value readout above the chart (see _updateEbn0Readout,
+   PassAnalyzer.js) — distinct from the floating per-point label the chart's
+   own SVG cursor already draws pinned to the hovered dot: this stays put and
+   just updates its text, so all four numbers (TM/TC Eb/N0 + each
+   histogram's own bucket rate) are always in the same spot at a glance
+   rather than only whichever one or two the moving label is near. flex:0 0
+   auto — .pa-middle is a flex column and this shouldn't compete with
+   .co-tt-details-row (flex:1) for the row's leftover height. */
+.pa-ebn0-readout { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; padding: 2px 2px 6px; flex: 0 0 auto; font-family: 'Courier New', monospace; }
+.pa-ebn0-readout-item { display: flex; align-items: baseline; gap: 5px; }
+.pa-ebn0-readout-label { font-weight: 700; font-size: 9.5px; }
+.pa-ebn0-readout-label-plain { color: #8888aa; } /* TM rate/TC rate have no curve color of their own to borrow (unlike the Eb/N0 pair, which reuse .ebn0-tag-tm/.ebn0-tag-tc) */
+.pa-ebn0-readout-val { color: #f0f0f8; font-weight: 700; font-size: 11px; font-variant-numeric: tabular-nums; min-width: 5.5em; }
 .pa-tc-list {
   grid-column: 1;
   grid-row: 2;

@@ -8,7 +8,7 @@
 // Hovering the Eb/N0 chart works the other way: mouse x → time → nearest
 // sample, and that timestamp drives the polar dot (nearest point by time).
 import { POLAR_VIEWBOX } from './passPolar.js';
-import { CHART_W, CHART_H, PAD_L, PAD_R, PAD_T, ebn0Scales, syncEbn0DotSizes } from './ebn0.js';
+import { CHART_W, CHART_H, PAD_L, PAD_R, ebn0Scales, syncEbn0DotSizes } from './ebn0.js';
 
 // A caller (e.g. PassAnalyzer.js) may build the Eb/N0 chart at a custom,
 // wider width/height than the CHART_W/CHART_H default — read the ACTUAL
@@ -58,14 +58,16 @@ function _hidePolarCursor(polarEl) {
   });
 }
 
-function _showEbn0Cursor(ebn0El, tmSeries, tmPoint, procedures, tcSeries, cursorT, fallbackRange) {
+// Dots + the vertical crosshair line only — no floating "TM 5.85 dB"/
+// "TC 3.87 dB" text callout anymore (that used to live here, drawn next to
+// each dot). PassAnalyzer.js's .pa-ebn0-readout now shows those same two
+// values, plus each histogram's own bucket rate, in one fixed spot instead
+// of a label that had to dodge the chart edges and drifted around with the
+// mouse — dots stay as the actual on-curve position marker.
+function _showEbn0Cursor(ebn0El, tmSeries, tmPoint, procedures, tcSeries, cursorT, fallbackRange, spanMode) {
   const line  = ebn0El.querySelector('.ebn0-cursor-line');
   const dot   = ebn0El.querySelector('.ebn0-cursor-dot');
   const dot2  = ebn0El.querySelector('.ebn0-cursor-dot2');
-  const text  = ebn0El.querySelector('.ebn0-cursor-text');
-  const bg    = ebn0El.querySelector('.ebn0-cursor-label-bg');
-  const text2 = ebn0El.querySelector('.ebn0-cursor-text2');
-  const bg2   = ebn0El.querySelector('.ebn0-cursor-label-bg2');
   if (!line) return;
 
   // The hovered time itself drives the line's position — not a nearby
@@ -77,59 +79,33 @@ function _showEbn0Cursor(ebn0El, tmSeries, tmPoint, procedures, tcSeries, cursor
   if (t == null) return;
 
   const { width, height } = _chartDims(ebn0El);
-  const { xScale, yScale } = ebn0Scales(tmSeries, procedures, fallbackRange, tcSeries, width, height);
+  const { xScale, yScale } = ebn0Scales(tmSeries, procedures, fallbackRange, tcSeries, width, height, spanMode);
   const x = xScale(t);
   line.setAttribute('x1', x); line.setAttribute('x2', x);
   line.setAttribute('visibility', 'visible');
 
-  function _placeLabel(bgEl, textEl, dotX, dotY, label) {
-    if (!bgEl || !textEl) return;
-    const labelW = label.length * 3.7;
-    const lx = Math.min(Math.max(dotX, PAD_L + labelW / 2 + 1), width - PAD_R - labelW / 2 - 1);
-    const ty = dotY > PAD_T + 12 ? dotY - 10 : dotY + 14;
-    textEl.setAttribute('x', lx);
-    textEl.setAttribute('y', ty);
-    textEl.textContent = label;
-    bgEl.setAttribute('x', lx - labelW / 2);
-    bgEl.setAttribute('y', ty - 7);
-    bgEl.setAttribute('width', labelW);
-    [bgEl, textEl].forEach(el => el.setAttribute('visibility', 'visible'));
-  }
-
-  // TM dot + label
   if (dot) {
     if (tmPoint) {
-      const dotX = xScale(tmPoint.t), dotY = yScale(tmPoint.v);
-      dot.setAttribute('cx', dotX); dot.setAttribute('cy', dotY);
+      dot.setAttribute('cx', xScale(tmPoint.t)); dot.setAttribute('cy', yScale(tmPoint.v));
       dot.setAttribute('visibility', 'visible');
-      _placeLabel(bg, text, dotX, dotY, `TM ${tmPoint.v.toFixed(2)} dB`);
     } else {
       dot.setAttribute('visibility', 'hidden');
-      bg?.setAttribute('visibility', 'hidden');
-      text?.setAttribute('visibility', 'hidden');
     }
   }
 
-  // TC dot + label
   const tcPoint = tcSeries?.length ? _nearestByTime(tcSeries, t) : null;
   if (dot2) {
     if (tcPoint) {
-      const dotX = xScale(tcPoint.t), dotY = yScale(tcPoint.v);
-      dot2.setAttribute('cx', dotX); dot2.setAttribute('cy', dotY);
+      dot2.setAttribute('cx', xScale(tcPoint.t)); dot2.setAttribute('cy', yScale(tcPoint.v));
       dot2.setAttribute('visibility', 'visible');
-      _placeLabel(bg2, text2, dotX, dotY, `TC ${tcPoint.v.toFixed(2)} dB`);
     } else {
       dot2.setAttribute('visibility', 'hidden');
-      bg2?.setAttribute('visibility', 'hidden');
-      text2?.setAttribute('visibility', 'hidden');
     }
   }
 }
 
 function _hideEbn0Cursor(ebn0El) {
-  ['ebn0-cursor-line', 'ebn0-cursor-dot', 'ebn0-cursor-dot2',
-   'ebn0-cursor-text', 'ebn0-cursor-label-bg',
-   'ebn0-cursor-text2', 'ebn0-cursor-label-bg2'].forEach(cls => {
+  ['ebn0-cursor-line', 'ebn0-cursor-dot', 'ebn0-cursor-dot2'].forEach(cls => {
     ebn0El?.querySelector(`.${cls}`)?.setAttribute('visibility', 'hidden');
   });
 }
@@ -154,7 +130,7 @@ function _hideEbn0Cursor(ebn0El) {
 // already tracks (e.g. PassAnalyzer.js highlighting whichever TC packet was
 // sent closest to it) without this module needing to know anything about
 // what a "TC packet" is. Existing callers that don't pass it are unaffected.
-export function wireLinkedCursor(polarEl, polarPoints, ebn0El, ebn0Series, procedures, tcSeries, fallbackRange, onCursor) {
+export function wireLinkedCursor(polarEl, polarPoints, ebn0El, ebn0Series, procedures, tcSeries, fallbackRange, onCursor, spanMode) {
   const hasPolar = !!(polarEl && polarPoints?.length);
   // Chart existing (not "has data") is the bar — buildEbn0SVG already draws
   // empty axes from fallbackRange alone, and the cursor line should track
@@ -168,7 +144,7 @@ export function wireLinkedCursor(polarEl, polarPoints, ebn0El, ebn0Series, proce
     if (hasPolar) _showPolarCursor(polarEl, _nearestByTime(polarPoints, t));
     if (hasEbn0) {
       const tmPoint = ebn0Series?.length ? _nearestByTime(ebn0Series, t) : null;
-      _showEbn0Cursor(ebn0El, ebn0Series, tmPoint, procedures, tcSeries, t, fallbackRange);
+      _showEbn0Cursor(ebn0El, ebn0Series, tmPoint, procedures, tcSeries, t, fallbackRange, spanMode);
     }
     onCursor?.(t);
   }
@@ -198,7 +174,7 @@ export function wireLinkedCursor(polarEl, polarPoints, ebn0El, ebn0Series, proce
     const hit = ebn0El.querySelector('.ebn0-hit');
     hit?.addEventListener('mousemove', ev => {
       const { width, height } = _chartDims(ebn0El);
-      const { t0, t1 } = ebn0Scales(ebn0Series, procedures, fallbackRange, tcSeries, width, height);
+      const { t0, t1 } = ebn0Scales(ebn0Series, procedures, fallbackRange, tcSeries, width, height, spanMode);
       const rect = ebn0El.getBoundingClientRect();
       const px = (ev.clientX - rect.left) / rect.width * width;
       const frac = Math.min(1, Math.max(0, (px - PAD_L) / (width - PAD_L - PAD_R)));

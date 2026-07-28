@@ -162,7 +162,7 @@ export async function openPassDetail(pass, sat, groundStations) {
     const svg = coords ? buildPolarSVG(pass, sat, coords.lat, coords.lon, coords.rxMask) : '';
     if (svg && polarSlot) {
       polarSlot.outerHTML = `<div class="polar-wrap">${svg}
-        <button type="button" class="pv-azel-btn" title="Show this pass as an azimuth/elevation (Cartesian) plot">⤢ Cartesian</button>
+        <button type="button" class="pv-azel-btn" title="Show this pass as an azimuth/elevation (Cartesian) plot">⤢</button>
       </div>`;
       _bodyEl.querySelector('.pv-azel-btn')?.addEventListener('click', () =>
         openAzElModal(pass, sat, coords.lat, coords.lon, coords.rxMask));

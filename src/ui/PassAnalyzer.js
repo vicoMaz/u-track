@@ -17,7 +17,7 @@ import { store } from '../store.js';
 import { satSubsystemHost, satSubsystemOrigin } from '../satSubsystems.js';
 import { fetchPassGsCoords, buildPolarSVG, computePolarPoints, computePolarMarkers } from './passPolar.js';
 import { fetchProcedureReport, procedureReportHTML } from './procedureReport.js';
-import { fetchEbn0Series, fetchTcEbn0Series, ebn0HTML } from './ebn0.js';
+import { fetchEbn0Series, fetchTcEbn0Series, fetchTmPacketsCounterSeries, ebn0HTML, copyEbn0ChartPNG, PROC_BAR_STRIP_H, PAD_B, nearestByTime } from './ebn0.js';
 import { wireLinkedCursor } from './passCursor.js';
 import { openAzElModal } from './passAzElModal.js';
 import { fmtDuration, fmtDateTimeShort, fmtTimeOnly, grafanaLokiUrl, grafanaModalTitle, LOKI_PROC_PAD_MS, passEclipseBarHTML, positionTooltip } from './passTooltip.js';
@@ -50,6 +50,12 @@ function _fmtTimeMs(ms) {
 // at the start; the minor number "4" must be followed by "_" or end-of-string
 // specifically, so it doesn't also match TC_11_40, TC_11_129, etc.
 const TC_114_NAME_RE = /^TC_11_4(?:_|$)/;
+
+// Confirmed live: this TC never gets an acceptance report back, by SCC/OBSW
+// design (not a real ack-chain gap) — excluded from the TC "unacked" pass-
+// health dot (.pa-details' DATA row) so it doesn't trip the orange warning
+// on every pass that happens to send one.
+const TC_UNACKED_EXCLUDE = new Set(['TC_179_7_SBT_SET_MODULATION_MODE']);
 
 // A handful of guessed field PATHS (rootContainer.entries, etc.) never
 // matched anything against real data — rather than guess a 4th or 5th exact
@@ -266,12 +272,13 @@ const _ACK_STATUS_META = {
   pending:   { glyph: '○', cls: 'pa-tc-ack-grey' },
 };
 
-// 10s TC-send histogram overlaid on the Eb/N0 chart (ebn0.js's
-// _tcHistogramBars) — bucket boundaries are absolute epoch-aligned (not
-// pass-start-aligned), a fixed grid being simpler than one that shifts with
-// whichever pass happens to be open, and visually indistinguishable at this
-// bucket size.
-const TC_HIST_BUCKET_MS = 5_000;
+// 5s bucket grid shared by both the TC-send and TM-received histograms
+// overlaid on the Eb/N0 chart (ebn0.js's _tcHistogramBars/_tmHistogramBars) —
+// boundaries are absolute epoch-aligned (not pass-start-aligned), a fixed
+// grid being simpler than one that shifts with whichever pass happens to be
+// open, and visually indistinguishable at this bucket size. Using the SAME
+// constant for both keeps their bars aligned to the same x-positions.
+const HIST_BUCKET_MS = 5_000;
 
 // Counts exactly the same set of "one row per command" packets the TC list
 // itself shows (_matchScheduledTargets' consumedIds — a TC_11_4's scheduled
@@ -286,12 +293,61 @@ function _tcSendHistogram(packets) {
   const buckets = new Map(); // bucket start ms -> { t, tEnd, sent, failed }
   for (const p of packets) {
     if (consumedIds.has(p.id) || p.generationTime == null) continue;
-    const t = Math.floor(p.generationTime / TC_HIST_BUCKET_MS) * TC_HIST_BUCKET_MS;
+    const t = Math.floor(p.generationTime / HIST_BUCKET_MS) * HIST_BUCKET_MS;
     let b = buckets.get(t);
-    if (!b) { b = { t, tEnd: t + TC_HIST_BUCKET_MS, sent: 0, failed: 0 }; buckets.set(t, b); }
+    if (!b) { b = { t, tEnd: t + HIST_BUCKET_MS, sent: 0, failed: 0 }; buckets.set(t, b); }
     b.sent++;
     const status = _tcAckStatus(p.acks);
     if (status === 'reject' || status === 'exec-fail') b.failed++;
+  }
+  return [...buckets.values()].sort((a, b) => a.t - b.t);
+}
+
+// Matches the SCC's own CaduCodec framing-layer error, e.g.:
+// "ERROR [...] fr.cnes.scc.packet.codec.internalclasses.caducodec.CaduCodec:
+// A packet lost because fhp is not matching the appropriate value..." — one
+// line per lost packet, confirmed live (LEONAV-1, CL01-04, 2026-07-28 pass:
+// thousands of these during a procedure that went on to report FAILURE).
+const CADUCODEC_LOST_RE = /caducodec\.CaduCodec:.*packet lost/i;
+
+// TM-received histogram, paired with the TC-sent one above on the same
+// bucket grid. "Received" comes from GNM's own tm_packets_counter — a
+// cumulative counter, so each bucket's count is the sum of positive deltas
+// between consecutive samples landing in it (a negative delta means the
+// counter reset, e.g. a link drop/reconnect mid-pass — skipped rather than
+// subtracted, since that's not a real "un-received" packet). "Lost" comes
+// from a completely different source (the pass log's own CaduCodec errors,
+// see CADUCODEC_LOST_RE above) — there's no packet record for a lost one to
+// count from, only the framing layer's own complaint that it happened. Both
+// land in the same bucket grid regardless, so the resulting bar totals both.
+//
+// The pass log feeding "lost" is capped at 5000 lines (_fetchFullPassLog) —
+// the SAME cap the "Full pass log" panel itself already lives with. A pass
+// lossy enough to blow through that cap (confirmed live on the pass this was
+// built against: it did, by 02:25 of a pass whose procedures ran to 02:53)
+// will under-report "lost" for whatever the log fetch didn't reach, while
+// "received" stays accurate for the whole pass — a known asymmetry, not a
+// bug, inherited from the same log fetch the panel already uses.
+function _tmReceiveHistogram(counterSamples, logLines) {
+  if (!counterSamples?.length && !logLines?.length) return [];
+  const buckets = new Map(); // bucket start ms -> { t, tEnd, received, lost }
+  const bucketFor = (ms) => {
+    const t = Math.floor(ms / HIST_BUCKET_MS) * HIST_BUCKET_MS;
+    let b = buckets.get(t);
+    if (!b) { b = { t, tEnd: t + HIST_BUCKET_MS, received: 0, lost: 0 }; buckets.set(t, b); }
+    return b;
+  };
+  if (counterSamples?.length) {
+    const sorted = counterSamples.slice().sort((a, b) => a.t - b.t);
+    for (let i = 1; i < sorted.length; i++) {
+      const delta = sorted[i].v - sorted[i - 1].v;
+      if (delta > 0) bucketFor(sorted[i].t).received += delta;
+    }
+  }
+  if (logLines?.length) {
+    for (const { ts, text } of logLines) {
+      if (CADUCODEC_LOST_RE.test(text)) bucketFor(ts / 1e6).lost++; // ts is nanoseconds (see lokiQuery.js)
+    }
   }
   return [...buckets.values()].sort((a, b) => a.t - b.t);
 }
@@ -965,6 +1021,14 @@ let _lastFullLogLines = null; // stashed so a later procedure click can jump the
 // _render(): a column-width preference is about the analyzer's own layout,
 // not something that should vary pass-to-pass.
 let _paCol1Width = 612; // 460 * 1.33 — widened default, TC list needs the room
+
+// Eb/N0 chart x-axis span, toggled by .pa-ebn0-span-btn — 'pass' (default)
+// clamps the axis to exactly this pass's own AOS0→LOS0; 'procedures' widens
+// it to also cover any procedure that started before AOS or is still running
+// past LOS (see ebn0Scales' spanMode in ebn0.js). Module-level like
+// _paCol1Width above — a viewing preference, not something that should reset
+// every time a different pass is opened.
+let _ebn0Span = 'pass';
 const PA_COL1_MIN = 360; // roughly the narrowest the pass-details column can go before its own content wraps badly
 const PA_COL1_MAX = 760; // leaves the full-log/chart column at least minmax(420px, 1fr)'s floor of room
 
@@ -1108,7 +1172,11 @@ function _renderTcList() {
     tcSlot.querySelectorAll('.pa-tc-row[data-t]').forEach(row => {
       const t = Number(row.dataset.t);
       row.addEventListener('mouseenter', () => _tcCursor.driveFromTime(t));
-      row.addEventListener('mouseleave', _tcCursor.clear);
+      // Wrapped (not `_tcCursor.clear` directly) — the Eb/N0 span-toggle
+      // button can reassign _tcCursor to a fresh cursor object after this
+      // listener is attached; binding the method directly would freeze it
+      // to whichever cursor existed at attach time.
+      row.addEventListener('mouseleave', () => _tcCursor.clear());
     });
   }
   tcSlot.querySelectorAll('.pa-tc-row[data-id]').forEach(row => {
@@ -1149,13 +1217,28 @@ function _resyncSelectedPass() {
   _selectedPass = (store.satPasses[_currentSat.id] ?? []).find(p => p.start.getTime() === _selectedPass.start.getTime()) ?? null;
 }
 
+// Keeps the URL hash pointing at whatever pass is actually open, so a
+// reload or a copy-pasted link lands back on the SAME pass instead of just
+// the Analyzer tab in its empty state — main.js's own startup hash-restore
+// (the only place this format is read back) is what makes that work, not
+// anything stored here. No localStorage/backend involved — the URL IS the
+// only persistence, exactly as asked for. The satellite's own NAME (not its
+// internal sat-api-xxxx id) is what goes in the link — readable, and stable
+// across a refetch the id itself is stable across too, so either would have
+// worked; name is just the one a pasted link is actually legible with.
+function _updateHash(sat, pass) {
+  location.hash = `${encodeURIComponent(sat.name.toLowerCase())}/pass/${pass.start.getTime()}`;
+}
+
 // Entry point for "open this exact pass in the Analyzer" — called from
 // PassDetailPanel.js's microscope button, via main.js (see there for why
-// this isn't a direct import). The only way anything ever gets shown here.
+// this isn't a direct import), and from main.js's own startup hash-restore.
+// The only way anything ever gets shown here.
 export function setSelection(sat, pass) {
   if (!sat || !pass) return;
   _currentSat = sat;
   _selectedPass = pass;
+  _updateHash(sat, pass);
   _render();
 }
 
@@ -1183,7 +1266,51 @@ function _stepPass(delta) {
   const next = passes[idx + delta];
   if (!next) return;
   _selectedPass = next;
+  _updateHash(_currentSat, next);
   _render();
+}
+
+// Briefly swaps the button's own label for a ✓ (or ✗ on failure — e.g. a
+// clipboard-write permission denial) as the only copy feedback — no toast,
+// since this sits in a small fixed corner slot in the panel title. Takes the
+// whole .ebn0-block (chart + legend), not just the chart SVG, so the copied
+// PNG includes the legend too — see copyEbn0ChartPNG. passInfo prints as a
+// small header baked into the PNG itself (satellite / antenna / date) so a
+// copy pasted elsewhere still says which pass it's from.
+function _copyEbn0PNG(btn, ebn0BlockEl, passInfo) {
+  if (!ebn0BlockEl) return;
+  const prev = btn.textContent;
+  btn.disabled = true;
+  copyEbn0ChartPNG(ebn0BlockEl, undefined, passInfo).then(ok => {
+    btn.textContent = ok ? '✓' : '✗ copy failed';
+    setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 1200);
+  });
+}
+
+// Plain-text summary for the .pa-copy-details button — clipboard/paste
+// target (chat, ticket, email), so plain "Label: value" lines rather than
+// anything HTML/markdown.
+function _copyPassDetailsText({ satellite, station, network, aos0, duration, apogee }) {
+  return [
+    `Satellite: ${satellite}`,
+    `Ground station: ${station}`,
+    `Network: ${network}`,
+    `AOS0: ${aos0}`,
+    `Duration: ${duration}`,
+    `Apogee: ${apogee}`,
+  ].join('\n');
+}
+
+// Briefly swaps the button's own icon for a checkmark as the only copy
+// feedback — no toast, since this sits in a small fixed corner slot shared
+// with the < / > pass-nav buttons.
+function _copyPassDetails(btn, fields) {
+  navigator.clipboard.writeText(_copyPassDetailsText(fields)).then(() => {
+    const prev = btn.textContent;
+    btn.textContent = '✓';
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 1200);
+  });
 }
 
 async function _render() {
@@ -1199,18 +1326,25 @@ async function _render() {
   const grafanaLogLink = grafanaHost
     ? `<a class="pa-full-log-grafana" href="${grafanaLokiUrl(grafanaHost, pass.start.getTime() - FULL_LOG_PAD_MS, pass.end.getTime() + FULL_LOG_PAD_MS)}" target="_blank" rel="noopener">Open in Grafana ↗</a>`
     : '';
+  // Filled in once the polar-plot promise below resolves the pass's apogee
+  // elevation — unknown synchronously, so the Copy button reads whatever's
+  // landed by click time.
+  let copyApogee = '—';
 
   _body.innerHTML = `
     <div class="pa-main-row" style="--pa-col1-w:${_paCol1Width}px">
       <div class="pa-left-top">
         <div class="pa-panel pa-details">
+          <div class="pa-analyzer-tag">🔬 Pass Analyzer</div>
           <div class="pa-pass-nav">
+            <button type="button" class="pa-copy-details" title="Copy pass details">⧉</button>
             <button type="button" class="pa-pass-prev" title="Previous pass (same satellite)">‹</button>
             <button type="button" class="pa-pass-next" title="Next pass (same satellite)">›</button>
           </div>
           <div class="co-tt-header"><span class="co-tt-sat-name" style="color:${sat.color}">${sat.name}</span> ${pass.station ?? '—'}${pass.network ? `<span class="co-tt-network">${pass.network}</span>` : ''}</div>
           <div class="co-tt-time-row"><span class="co-tt-time-lbl">DATE</span>${fmtDateTimeShort(pass.start)}</div>
           <div class="co-tt-time-row"><span class="co-tt-time-lbl">DUR</span>${fmtDuration(pass.end - pass.start)}</div>
+          <div class="co-tt-time-row"><span class="co-tt-time-lbl">DATA</span><span class="pa-status-dot" data-status-dot="tm" title="Loading…">● TM</span><span class="pa-status-dot" data-status-dot="tc" title="Loading…">● TC</span></div>
           ${passEclipseBarHTML(sat.satrec, pass.start, pass.end)}
         </div>
         <div class="pa-panel pa-procs">
@@ -1220,7 +1354,19 @@ async function _render() {
       </div>
       <div class="pa-col-resizer" title="Drag to resize"></div>
       <div class="pa-panel pa-middle">
-        <div class="pa-panel-title">Polar plot &amp; TM/TC Eb/N0</div>
+        <div class="pa-panel-title">
+          <span>Polar plot &amp; TM/TC Eb/N0</span>
+          <div class="pa-ebn0-actions">
+            <button type="button" class="pa-ebn0-span-btn" title="Eb/N0 chart x-axis span: click to toggle between the pass's own AOS0→LOS0 and the full procedure-execution window (which can run longer than the pass)"></button>
+            <button type="button" class="pa-copy-ebn0" title="Copy Eb/N0 chart as PNG">⧉ PNG</button>
+          </div>
+        </div>
+        <div class="pa-ebn0-readout">
+          <span class="pa-ebn0-readout-item"><span class="pa-ebn0-readout-label ebn0-tag-tm">TM Eb/N0</span><span class="pa-ebn0-readout-val" data-readout="tmEbn0">—</span></span>
+          <span class="pa-ebn0-readout-item"><span class="pa-ebn0-readout-label ebn0-tag-tc">TC Eb/N0</span><span class="pa-ebn0-readout-val" data-readout="tcEbn0">—</span></span>
+          <span class="pa-ebn0-readout-item"><span class="pa-ebn0-readout-label pa-ebn0-readout-label-plain">TM rate</span><span class="pa-ebn0-readout-val" data-readout="tmRate">—</span></span>
+          <span class="pa-ebn0-readout-item"><span class="pa-ebn0-readout-label pa-ebn0-readout-label-plain">TC rate</span><span class="pa-ebn0-readout-val" data-readout="tcRate">—</span></span>
+        </div>
         <div class="co-tt-details-row">
           <div class="polar-slot"></div>
           <div class="ebn0-slot"><div class="ebn0-loading">Collecting metrics…</div></div>
@@ -1266,6 +1412,18 @@ async function _render() {
     nextBtn.addEventListener('click', () => _stepPass(1));
   }
 
+  const copyBtn = _body.querySelector('.pa-copy-details');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', () => _copyPassDetails(copyBtn, {
+      satellite: sat.name,
+      station: pass.station ?? '—',
+      network: pass.network ?? '—',
+      aos0: fmtDateTimeShort(pass.start),
+      duration: fmtDuration(pass.end - pass.start),
+      apogee: copyApogee,
+    }));
+  }
+
   // Procedure history is synchronous — pass.procedures is already resolved.
   const histSlot = _body.querySelector('.proc-history-slot');
   if (histSlot) {
@@ -1282,23 +1440,25 @@ async function _render() {
     const svg = coords ? buildPolarSVG(pass, sat, coords.lat, coords.lon, coords.rxMask) : '';
     if (svg && polarSlot) {
       polarSlot.outerHTML = `<div class="polar-wrap">${svg}
-        <button type="button" class="pv-azel-btn" title="Show this pass as an azimuth/elevation (Cartesian) plot">⤢ Cartesian</button>
+        <button type="button" class="pv-azel-btn" title="Show this pass as an azimuth/elevation (Cartesian) plot">⤢</button>
       </div>`;
       _body.querySelector('.pv-azel-btn')?.addEventListener('click', () =>
         openAzElModal(pass, sat, coords.lat, coords.lon, coords.rxMask));
       polarPoints = computePolarPoints(pass, sat, coords.lat, coords.lon);
       markers = computePolarMarkers(polarPoints, coords.rxMask);
     }
+    if (markers?.apogee) copyApogee = `${markers.apogee.el.toFixed(0)}°`;
     return { polarPoints, markers };
   });
 
   const ebn0Promise      = sat.noradId ? fetchEbn0Series(sat.noradId, pass.start.getTime(), pass.end.getTime(), pass.network) : Promise.resolve(null);
   const tcEbn0Promise    = sat.noradId ? fetchTcEbn0Series(sat.noradId, pass.start.getTime(), pass.end.getTime()) : Promise.resolve(null);
   const tcPacketsPromise = _fetchTcPackets(sat, pass.start.getTime(), pass.end.getTime());
+  const tmCounterPromise = sat.noradId ? fetchTmPacketsCounterSeries(sat.noradId, pass.start.getTime(), pass.end.getTime()) : Promise.resolve(null);
   const fullLogPromise   = _fetchFullPassLog(grafanaHost, pass);
 
-  const [{ polarPoints, markers }, series, tcSeries, tcPackets, fullLogLinesAsc] =
-    await Promise.all([polarReadyPromise, ebn0Promise, tcEbn0Promise, tcPacketsPromise, fullLogPromise]);
+  const [{ polarPoints, markers }, series, tcSeries, tcPackets, tmCounter, fullLogLinesAsc] =
+    await Promise.all([polarReadyPromise, ebn0Promise, tcEbn0Promise, tcPacketsPromise, tmCounterPromise, fullLogPromise]);
   if (myGen !== _gen) return;
   // queryLoki (lokiQuery.js) always returns oldest-first — flipped here,
   // not at the source, since grafanaModal.js's own click-triggered log
@@ -1323,16 +1483,102 @@ async function _render() {
   const rowWidth   = detailsRow?.getBoundingClientRect().width || 480;
   const POLAR_W    = 200, ROW_GAP = 8; // matches passPolar.js's fixed 200px SVG + .co-tt-details-row's gap:8px
   const chartWidth  = Math.max(220, Math.round(rowWidth - POLAR_W - ROW_GAP));
-  const chartHeight = 160; // shorter than the compact tooltip's 190 — a wide/short banner reads better at this width than a tall one
+  // Same 1:1-render idea as chartWidth above, applied to height: .pa-middle
+  // .co-tt-details-row stretches to fill the rest of .pa-main-row's fixed
+  // 270px row (see style.css — flex:1 + align-items:stretch, scoped to this
+  // panel), so its OWN measured height is real leftover space, not just
+  // whatever a fixed chartHeight constant used to leave empty below the
+  // chart. LEGEND_H_ESTIMATE accounts for the one-line stats row ebn0HTML
+  // draws below the SVG itself (not part of the SVG's own height).
+  //
+  // The procedure-bar strip is NOT a flat +PROC_BAR_STRIP_H on top of
+  // `height` — buildEbn0SVG's own totalH is
+  // `height - PAD_B + PROC_BAR_STRIP_H` when there are bars (the strip
+  // partly reuses the bottom axis padding rather than sitting fully outside
+  // it), so the real extra is PROC_BAR_STRIP_H - PAD_B. Subtracting the FULL
+  // PROC_BAR_STRIP_H here (as an earlier version of this did) overshot by
+  // PAD_B (14 units) and left that much dead space at the bottom of the
+  // chart on every pass with procedures — i.e. nearly always.
+  const rowHeight   = detailsRow?.getBoundingClientRect().height || 200;
+  const LEGEND_H_ESTIMATE = 20; // one fused legend line (.ebn0-legend-row) + its margin-top:4px
+  const hasProcBars = pass.procedures?.some(pr => pr.startMs != null && pr.endMs != null);
+  const procBarExtra = hasProcBars ? PROC_BAR_STRIP_H - PAD_B : 0;
+  const chartHeight = Math.max(120, Math.round(rowHeight - LEGEND_H_ESTIMATE - procBarExtra));
   const tcHistogram = _tcSendHistogram(tcPackets);
-  if (ebn0Slot) ebn0Slot.outerHTML = ebn0HTML(series, markers, pass.procedures, ebn0Range, tcSeries, chartWidth, chartHeight, tcHistogram);
-  const ebn0El = _body.querySelector('.ebn0-chart');
-  const cursor = wireLinkedCursor(polarEl, polarPoints, ebn0El, series, pass.procedures, tcSeries, ebn0Range,
-    t => {
-      if (t == null) { _clearTcRowHighlight(); _clearLogLineHighlight(); }
-      else            { _highlightTcRowAt(t);  _highlightLogLineAt(t); }
+  const tmHistogram = _tmReceiveHistogram(tmCounter, fullLogLinesAsc);
+
+  // Fixed-position value readout above the chart (.pa-ebn0-readout in the
+  // skeleton above) — distinct from the floating per-point label the SVG
+  // cursor itself already draws pinned to the hovered dot: that one only
+  // ever shows TM/TC Eb/N0, and drifts around the chart with the mouse. This
+  // reads BOTH Eb/N0 values AND each histogram's own bucket rate at the
+  // hovered time, all four always in the same fixed spot at a glance.
+  function _updateEbn0Readout(t) {
+    const readout = _body.querySelector('.pa-ebn0-readout');
+    if (!readout) return;
+    const set = (key, text) => { const el = readout.querySelector(`[data-readout="${key}"]`); if (el) el.textContent = text; };
+    if (t == null) {
+      set('tmEbn0', '—'); set('tcEbn0', '—'); set('tmRate', '—'); set('tcRate', '—');
+      return;
+    }
+    const tmPoint = series?.length   ? nearestByTime(series, t)   : null;
+    const tcPoint = tcSeries?.length ? nearestByTime(tcSeries, t) : null;
+    set('tmEbn0', tmPoint ? `${tmPoint.v.toFixed(2)} dB` : '—');
+    set('tcEbn0', tcPoint ? `${tcPoint.v.toFixed(2)} dB` : '—');
+    const tmBucket = tmHistogram?.find(b => t >= b.t && t < b.tEnd);
+    const tcBucket = tcHistogram?.find(b => t >= b.t && t < b.tEnd);
+    set('tmRate', tmBucket ? `${((tmBucket.received + tmBucket.lost) / ((tmBucket.tEnd - tmBucket.t) / 1000)).toFixed(1)} pkt/s` : '—');
+    set('tcRate', tcBucket ? `${(tcBucket.sent / ((tcBucket.tEnd - tcBucket.t) / 1000)).toFixed(1)} pkt/s` : '—');
+  }
+
+  // Redraws just the Eb/N0 chart + its linked cursor from already-fetched
+  // data (no network round trip) — shared by the initial draw below and the
+  // span-toggle button, so toggling span doesn't re-fetch TM/TC series, TC
+  // packets, or the full log all over again. Targets '.ebn0-slot,.ebn0-block'
+  // since the first draw replaces the skeleton's .ebn0-slot with .ebn0-block
+  // (ebn0HTML's own wrapper) via outerHTML — every redraw after that has to
+  // find THAT instead, and self-replaces it the same way.
+  function _drawEbn0() {
+    const slot = _body.querySelector('.pa-middle .ebn0-slot, .pa-middle .ebn0-block');
+    if (slot) slot.outerHTML = ebn0HTML(series, markers, pass.procedures, ebn0Range, tcSeries, chartWidth, chartHeight, tcHistogram, tmHistogram, _ebn0Span);
+    const newEbn0El = _body.querySelector('.ebn0-chart');
+    // Re-wiring (not reusing the old cursor object) is required, not just
+    // convenient — a span toggle swaps in a brand-new <svg>, so the old
+    // cursor's DOM references (line/dots/labels) point at elements no longer
+    // in the document.
+    _tcCursor = wireLinkedCursor(polarEl, polarPoints, newEbn0El, series, pass.procedures, tcSeries, ebn0Range,
+      t => {
+        _updateEbn0Readout(t);
+        if (t == null) { _clearTcRowHighlight(); _clearLogLineHighlight(); }
+        else            { _highlightTcRowAt(t);  _highlightLogLineAt(t); }
+      }, _ebn0Span);
+  }
+  _drawEbn0();
+
+  const ebn0SpanBtn = _body.querySelector('.pa-ebn0-span-btn');
+  if (ebn0SpanBtn) {
+    const _labelEbn0SpanBtn = () => { ebn0SpanBtn.textContent = _ebn0Span === 'pass' ? 'Span: Pass' : 'Span: Procedures'; };
+    _labelEbn0SpanBtn();
+    ebn0SpanBtn.addEventListener('click', () => {
+      _ebn0Span = _ebn0Span === 'pass' ? 'procedures' : 'pass';
+      _labelEbn0SpanBtn();
+      _drawEbn0();
     });
-  _tcCursor = cursor;
+  }
+
+  const copyEbn0Btn = _body.querySelector('.pa-copy-ebn0');
+  if (copyEbn0Btn) {
+    // Looks up the CURRENT .ebn0-block (chart + legend) at click time rather
+    // than capturing one now — the span-toggle button's _drawEbn0() swaps in
+    // a brand-new one via outerHTML on every toggle, and this listener is
+    // only attached once per _render() call, so a captured reference would
+    // go stale the moment someone toggled span before copying.
+    copyEbn0Btn.addEventListener('click', () => _copyEbn0PNG(copyEbn0Btn, _body.querySelector('.pa-middle .ebn0-block'), {
+      satellite: sat.name,
+      antenna: pass.station ?? '—',
+      date: fmtDateTimeShort(pass.start),
+    }));
+  }
 
   // Full pass log — same rendering/error-highlighting logView.js gives the
   // click-triggered pop-up (grafanaModal.js), just drawn into a permanent
@@ -1369,8 +1615,11 @@ async function _render() {
       // renderLogRows), no separate lines array needed.
       fullLogBody.querySelectorAll('.grm-log-line[data-t]').forEach(row => {
         const t = Number(row.dataset.t);
-        row.addEventListener('mouseenter', () => cursor.driveFromTime(t));
-        row.addEventListener('mouseleave', cursor.clear);
+        // _tcCursor (not a local var) — the span-toggle button rewires it to
+        // a new cursor object with each redraw, and these listeners need to
+        // always reach whichever one is current.
+        row.addEventListener('mouseenter', () => _tcCursor.driveFromTime(t));
+        row.addEventListener('mouseleave', () => _tcCursor.clear());
       });
     }
   }
@@ -1380,6 +1629,59 @@ async function _render() {
 
   const tcCountEl = _body.querySelector('.pa-tc-count');
   if (tcCountEl) tcCountEl.textContent = tcPackets == null ? '' : `(${tcCount})`;
+
+  // At-a-glance pass health, in .pa-details: TM received (the downlink TM
+  // Eb/N0 series actually has samples — the same `series` the chart above
+  // draws), and TC acknowledgment coverage — about ACKNOWLEDGMENT
+  // specifically (an acceptance report, success or failure, arriving at
+  // all), not execution outcome: catches both a plain 'pending' TC and the
+  // 'exec-ok with no acceptance' "Acceptance failure" oddity
+  // _failurePillHTML already flags per-row.
+  // Same "one row per command" set the TC list itself shows (and the send
+  // histogram counts) — a TC_11_4's scheduled TARGET is a separately-timed
+  // nested event absorbed into its own envelope's row, so it's excluded here
+  // too rather than double-counted as if it were its own independent send.
+  // TC_UNACKED_EXCLUDE names are dropped from the ELIGIBLE set entirely
+  // (not just skipped when checking for a missing report) — they're known
+  // to never ack by design, so they shouldn't count toward "how many of
+  // this pass's TCs got acknowledged" either.
+  const { consumedIds: tcConsumedIds } = _matchScheduledTargets(tcPackets ?? []);
+  const tcTopLevel  = tcPackets?.filter(p => !tcConsumedIds.has(p.id)) ?? [];
+  const tcEligible  = tcTopLevel.filter(p => !TC_UNACKED_EXCLUDE.has(p.name));
+  const tcAcceptedCount = tcEligible.filter(p => p.acks?.acceptance).length;
+  // Red: EVERY eligible TC in the pass is missing its acceptance report —
+  // a total ack-chain failure, worse than the merely-partial orange case.
+  const tcAllUnacked  = tcEligible.length > 0 && tcAcceptedCount === 0;
+  const tcSomeUnacked = tcAcceptedCount < tcEligible.length; // true for the all-unacked case too
+  const tcAcked = !!tcTopLevel.some(p => {
+    const st = _tcAckStatus(p.acks);
+    return st === 'accepted' || st === 'exec-ok';
+  });
+  const tmReceived = !!series?.length;
+  const tmDotEl = _body.querySelector('.pa-status-dot[data-status-dot="tm"]');
+  if (tmDotEl) {
+    tmDotEl.classList.toggle('pa-status-dot-ok', tmReceived);
+    tmDotEl.title = tmReceived ? 'TM Eb/N0 telemetry was received during this pass' : 'No TM Eb/N0 telemetry received during this pass';
+  }
+  const tcDotEl = _body.querySelector('.pa-status-dot[data-status-dot="tc"]');
+  if (tcDotEl) {
+    // Red (all unacked) beats orange (some unacked) beats green (acked/
+    // executed) — each is strictly worse/more-actionable than the next, so
+    // whichever applies highest in that order is what the single dot shows.
+    tcDotEl.classList.remove('pa-status-dot-ok', 'pa-status-dot-warn', 'pa-status-dot-crit');
+    if (tcAllUnacked) {
+      tcDotEl.classList.add('pa-status-dot-crit');
+      tcDotEl.title = 'No TC in this pass received an acceptance report at all';
+    } else if (tcSomeUnacked) {
+      tcDotEl.classList.add('pa-status-dot-warn');
+      tcDotEl.title = 'Some TCs never received an acceptance report — no acknowledgment, regardless of execution outcome';
+    } else if (tcAcked) {
+      tcDotEl.classList.add('pa-status-dot-ok');
+      tcDotEl.title = 'At least one TC was acknowledged or executed';
+    } else {
+      tcDotEl.title = 'No TC was acknowledged or executed';
+    }
+  }
 
   // Hovering a TC row drives the same hair cursor the polar plot / Eb/N0
   // chart already drive each other with (see passCursor.js) — lets you see

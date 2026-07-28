@@ -14,6 +14,7 @@ import { initVpnGuard }         from './ui/vpnGuard.js';
 import { initReadOnlyBadge }    from './ui/readOnlyBadge.js';
 import { closePassDetail }      from './ui/PassDetailPanel.js';
 import { closeAddPointPanel }   from './ui/AddPointPanel.js';
+import { store }                from './store.js';
 
 // eslint-disable-next-line no-undef -- injected by vite.config.js's `define`
 document.getElementById('app-version').textContent = __APP_VERSION__;
@@ -93,9 +94,57 @@ initWeeklySchedule();
 initPassAnalyzer();
 initNavClocks();
 
-// Restore tab from URL hash — must run after all initX() so their listeners are registered
+// Satellites and their passes each load asynchronously (loadInitialState()
+// only guarantees the satellite LIST; satPasses arrives per-satellite,
+// separately) — polls via the store's own subscribe rather than a fixed
+// delay, so this fires the instant the needed data actually shows up
+// instead of guessing how long to wait. Gives up after RESTORE_TIMEOUT_MS —
+// a stale/bad link, or that pass has since aged out of satPasses' own
+// window — and just leaves whatever tab was already active (Visualizer).
+// `done` is the only guard (store.subscribe has no unsubscribe), so once
+// resolved or timed out this listener goes permanently inert rather than
+// re-triggering (and yanking the user back into the Analyzer) on some
+// LATER unrelated satPasses refresh.
+const RESTORE_TIMEOUT_MS = 20_000;
+function _restoreAnalyzerPass(satNameSlug, passStartMs) {
+  const deadline = Date.now() + RESTORE_TIMEOUT_MS;
+  let done = false;
+  const tryNow = () => {
+    if (done) return true;
+    const sat  = store.satellites.find(s => s.name.toLowerCase() === satNameSlug);
+    const pass = sat ? (store.satPasses[sat.id] ?? []).find(p => p.start.getTime() === passStartMs) : null;
+    if (sat && pass) {
+      done = true;
+      switchTab('analyzer');
+      setAnalyzerSelection(sat, pass);
+      return true;
+    }
+    if (Date.now() > deadline) { done = true; return true; }
+    return false;
+  };
+  if (tryNow()) return;
+  store.subscribe(key => {
+    if (key === 'satellites' || key === 'satPasses') tryNow();
+  });
+}
+
+// Restore tab (+, for the Analyzer, the exact pass — see PassAnalyzer.js's
+// setSelection/_stepPass, which keep the hash in this "<sat name>/pass/
+// <passStartMs>" shape while a pass is open) from the URL hash — must run
+// after all initX() so their listeners are registered. Plain tabs restore
+// synchronously below (their nav buttons already exist); the Analyzer half
+// is handled by _restoreAnalyzerPass above instead, since it needs
+// satellites/satPasses to actually be loaded first. The 3-segment shape
+// (vs. a plain tab's single word) is what tells the two apart — a
+// satellite literally named "fleet"/"tracking"/etc. would collide with a
+// real tab, but isn't a real case worth guarding against.
 const _initHash = location.hash.slice(1);
-const _initBtn  = [...tabBtns].find(b => b.dataset.tab === _initHash);
-if (_initBtn) _initBtn.click();
+const _analyzerHash = _initHash.match(/^([^/]+)\/pass\/(\d+)$/);
+if (_analyzerHash) {
+  _restoreAnalyzerPass(decodeURIComponent(_analyzerHash[1]), Number(_analyzerHash[2]));
+} else {
+  const _initBtn = [...tabBtns].find(b => b.dataset.tab === _initHash);
+  if (_initBtn) _initBtn.click();
+}
 
 loadInitialState().then(() => { startApiPoller(); initSatPing(); initVpnGuard(); initReadOnlyBadge(); });
