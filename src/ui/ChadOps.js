@@ -440,8 +440,14 @@ function _rowHTML(sat, now, eclipse) {
     <div class="co-orbit-row"><span class="co-orbit-label">TLE</span>${tleHtml}</div>
   </div>`;
 
-  const sccColor = store.satGlobals[sat.id]?.sccColor;
-  const rowStyle = sccColor ? ` style="--scc-color:${sccColor}"` : '';
+  // sat.color, not store.satGlobals[sat.id]?.sccColor directly — the latter
+  // is whatever SCC's globals endpoint reports on its OWN periodic poll (see
+  // satGlobals.js's bdsVersion/proceduresVersion/sccVersion, still live),
+  // but color itself is captured from SCC exactly once, at creation, and
+  // frozen into sat.color from then on — same static value every other view
+  // (Settings, the Visualizer sidebar, globe/map entities) already reads,
+  // so this row's own accent stays consistent with all of them.
+  const rowStyle = sat.color ? ` style="--scc-color:${sat.color}"` : '';
 
   // The dark fill inside the badge (via --pass-progress, read by its ::before
   // in style.css) advances left-to-right as the pass runs from AOS to LOS —
@@ -467,9 +473,18 @@ function _rowHTML(sat, now, eclipse) {
     ? `<div class="co-simu-time" title="This satellite's own current time — from its SCC's own clock (satSimu.js), not real time. Contact/next-pass/TLE-age above are all anchored to it.">🕐 ${fmtDateTimeShort(new Date(now))}</div>`
     : '';
 
+  // One click to the Visualizer, already tracking this satellite — instead
+  // of switching tabs yourself and then hunting it in the satellite list.
+  // Omitted for a simulated satellite: GlobeView.js/MapView.js already keep
+  // those out of the Visualizer entirely (see simuBadge's own comment
+  // above), so tracking one here would just be a dead end.
+  const trackBtn = !isSimu
+    ? `<button type="button" class="co-track-btn" data-sat-id="${sat.id}" title="Track ${sat.name} in the Visualizer"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></button>`
+    : '';
+
   return `<tr class="co-row${inPass ? ' co-row-live' : ''}" data-sat-id="${sat.id}"${rowStyle}>
     <td class="co-name-cell">
-      <div class="co-name-row">${sat.name}${simuBadge}${liveBadge}</div>
+      <div class="co-name-row">${trackBtn}${sat.name}${simuBadge}${liveBadge}</div>
       ${simuTimeLine}
     </td>
     <td class="co-ping-cell" data-field="ping-cell">${_buildPingCell(sat.id)}</td>
@@ -680,6 +695,18 @@ export function initChadOps() {
         document.querySelector('[data-subtab="orbit"]')?.click();
         const sel = document.getElementById('oi-sat-select');
         if (sel) { sel.value = satId; sel.dispatchEvent(new Event('change')); }
+      });
+    });
+
+    // Planet icon → Visualizer, tracking this satellite — same
+    // click-the-real-tab-button navigation the eclipse cell above uses
+    // rather than importing switchTab from main.js (which itself imports
+    // this module — a real cycle, not just an avoidable one).
+    tbody.querySelectorAll('.co-track-btn[data-sat-id]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation(); // this row has no other click behavior today, but keeps a future one from also firing
+        store.setTrackedSat(btn.dataset.satId);
+        document.querySelector('[data-tab="tracking"]')?.click();
       });
     });
   }
