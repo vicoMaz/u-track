@@ -12,7 +12,7 @@ import { schedulePlanFetch } from '../planData.js';
 import { scheduleTmrFetch, TMR_SOURCES } from '../tmrData.js';
 import { requestTmrGapDownload, findMatchingGapProcedure, fetchNextPassProcedures } from '../tmrGapDownload.js';
 import { satSubsystemOrigin } from '../satSubsystems.js';
-import { fetchTcPackets, matchScheduledTargets, collectArguments, argUnitLabel, TC_114_NAME_RE } from '../tcPackets.js';
+import { fetchTcPackets, matchScheduledTargets, collectArguments, argUnitLabel, TC_114_NAME_RE, tcAckStatus } from '../tcPackets.js';
 import { fetchTmPacket, extractTmParam } from '../satTelemetry.js';
 import {
   fmtDuration, fmtTimeOnly, passSimpleTooltipContent, positionTooltip,
@@ -551,11 +551,18 @@ async function _buildTimetagEntries(sat, pass) {
   const groups = new Map(); // key -> entry
   for (const p of packets) {
     if (!TC_114_NAME_RE.test(p.name)) continue;
-    // Only a CONFIRMED insert — the envelope's own acceptance report came
-    // back SUCCESS — actually landed in the onboard schedule. One still
-    // pending (no report yet) or rejected never entered it at all, so
-    // plotting it here would claim something's scheduled that isn't.
-    if (p.acks?.acceptance?.ack !== 'SUCCESS') continue;
+    // Only a CONFIRMED insert — the envelope's OWN full verification chain
+    // (tcAckStatus — see its own comment) resolved all the way to 'exec-ok'
+    // — actually landed in the onboard schedule. Checking acceptance alone
+    // isn't enough: confirmed live (LEONAV-1, PT01-02, 2026-07-30) a TC_11_4
+    // can be ACCEPTED (envelope well-formed) and still get rejected during
+    // EXECUTION — e.g. an invalid time tag, which only ever shows up in the
+    // started/progress/completed stages, never in acceptance itself — so an
+    // acceptance-only check let a genuinely-failed insert through here.
+    // Still-pending (no completion report yet) is excluded for the same
+    // reason as a straight rejection: plotting either here would claim
+    // something's scheduled that isn't confirmed to be.
+    if (tcAckStatus(p.acks) !== 'exec-ok') continue;
     const target = targetFor.get(p.id);
     if (!target) continue;
     const dateRaw = p.args114?.date;
@@ -729,10 +736,17 @@ function _timetagFilterMenuHTML() {
   if (!ssids.length) return `<div class="sam-menu-section">Filter by SSID</div><div class="co-tt-note" style="padding:4px 8px 6px;">No SSIDs in the current pass</div>`;
   const rows = ssids.map(s => {
     const checked = !_timetagHiddenSsids.has(s);
+    // Same latest-HK_CCSW status _timetagTooltipHTML's own per-SSID rows
+    // show — lets an operator tell "hidden because I don't care about it
+    // right now" (checkbox) apart from "hidden because it's DISABLED
+    // onboard and won't fire anyway" (status) without opening a tooltip.
+    const status    = _timetagCcsw?.[s] ?? 'UNKNOWN';
+    const statusCls = status === 'ENABLED' ? 'co-tt-ok' : status === 'DISABLED' ? 'co-tt-fail' : '';
     return `<label class="sch-ssid-filter-row">
       <input type="checkbox" data-ssid="${s}"${checked ? ' checked' : ''} />
       <span class="sch-ssid-filter-swatch" style="background:${_ssidColor(s)}"></span>
       SSID ${s}
+      <span class="sch-ssid-filter-status ${statusCls}">${status}</span>
     </label>`;
   }).join('');
   const reset = _timetagHiddenSsids.size ? `<button type="button" class="sam-menu-item sch-ssid-filter-reset">Show all</button>` : '';

@@ -201,3 +201,33 @@ export function argUnitLabel(unit) {
   if (unit == null) return null;
   return typeof unit === 'string' ? unit : (unit.unit ?? null);
 }
+
+// Collapses the 4-stage PUS TC verification chain (acceptance/started/
+// progress/completed — see fetchTcPackets' own acks comment) into ONE
+// status:
+//   'pending'   — sent, no report back yet at all
+//   'accepted'  — accepted; execution outcome not in yet
+//   'exec-ok'   — execution completed successfully
+//   'reject'    — REJECTED at acceptance — never got to execute
+//   'exec-fail' — accepted, but execution failed
+// Ordered so a FAILURE anywhere wins over a SUCCESS anywhere (a completed
+// report can't undo a rejection that came before it), and acceptance
+// FAILURE is distinguished from an execution FAILURE ('reject' vs
+// 'exec-fail'), since "never ran" and "ran and failed" are different
+// problems to chase. Originally private to PassAnalyzer.js's own TC list;
+// moved here once Scheduler.js's Timetag row needed the same "is this
+// TC_11_4 actually confirmed to have landed onboard" check and, confirmed
+// live (LEONAV-1, PT01-02, 2026-07-30), checking acceptance alone wasn't
+// enough — an insert can be ACCEPTED (envelope well-formed) and still fail
+// during EXECUTION (e.g. an invalid time tag rejected only once OBSW
+// actually tries the insert), which only ever shows up in started/progress/
+// completed, never in acceptance itself.
+export function tcAckStatus(acks) {
+  if (!acks) return null;
+  const { acceptance, started, progress, completed } = acks;
+  if (acceptance?.ack === 'FAILURE') return 'reject';
+  if ([started, progress, completed].some(a => a?.ack === 'FAILURE')) return 'exec-fail';
+  if (completed?.ack === 'SUCCESS') return 'exec-ok';
+  if (acceptance?.ack === 'SUCCESS') return 'accepted';
+  return 'pending';
+}

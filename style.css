@@ -2137,6 +2137,11 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .sch-ssid-filter-row:hover { background: #24243c; color: #fff; }
 .sch-ssid-filter-swatch { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+/* Latest HK_CCSW ENABLED/DISABLED/UNKNOWN for this SSID (Scheduler.js's
+   _timetagFilterMenuHTML) — pinned to the row's own right edge, reusing the
+   same co-tt-ok/co-tt-fail colors the Timetag tooltip's per-SSID rows use,
+   just smaller to fit this tighter row. */
+.sch-ssid-filter-status { margin-left: auto; flex-shrink: 0; font-size: 9.5px; font-weight: 600; letter-spacing: 0.03em; padding-left: 8px; }
 /* This satellite's own current time (see _rowHTML/_tick's simuTimeLine,
    ChadOps.js) — every "ago"/"next"/TLE-age label in this same row is
    silently anchored to it, so it needs to be visible, not just correct.

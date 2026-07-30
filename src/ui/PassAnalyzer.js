@@ -15,7 +15,7 @@
 // reason — see TC_MAX_LIMIT below.
 import { store } from '../store.js';
 import { satSubsystemHost, satSubsystemOrigin } from '../satSubsystems.js';
-import { TC_MAX_LIMIT, TC_114_NAME_RE, TC_UNACKED_EXCLUDE, fetchTcPackets, matchScheduledTargets, collectArguments, argUnitLabel } from '../tcPackets.js';
+import { TC_MAX_LIMIT, TC_114_NAME_RE, TC_UNACKED_EXCLUDE, fetchTcPackets, matchScheduledTargets, collectArguments, argUnitLabel, tcAckStatus as _tcAckStatus } from '../tcPackets.js';
 import { fetchPassGsCoords, buildPolarSVG, computePolarPoints, computePolarMarkers } from './passPolar.js';
 import { fetchProcedureReport, procedureReportHTML } from './procedureReport.js';
 import { fetchEbn0Series, fetchTcEbn0Series, fetchTmPacketsCounterSeries, ebn0HTML, copyEbn0ChartPNG, PROC_BAR_STRIP_H, PAD_B, nearestByTime } from './ebn0.js';
@@ -73,29 +73,16 @@ const _ACK_STAGES = [
   ['completed',  'Completion of execution'],
 ];
 
-// Collapses the 4-stage chain into ONE status a row can show at a glance —
-// color says who last spoke (grey nobody yet, green good news, red bad
-// news), fill says whether that's a FINAL outcome (execution done, one way
-// or the other) or still open (hollow):
-//   grey hollow  — sent, no report back yet at all
-//   green hollow — accepted; execution outcome not in yet
-//   green filled — execution completed successfully
-//   red   hollow — REJECTED at acceptance — never got to execute
-//   red   filled — accepted, but execution failed
-// Ordered so a FAILURE anywhere wins over a SUCCESS anywhere (a completed
-// report can't undo a rejection that came before it), and acceptance
-// FAILURE is distinguished from an execution FAILURE (empty vs filled),
-// since "never ran" and "ran and failed" are different problems to chase.
-function _tcAckStatus(acks) {
-  if (!acks) return null;
-  const { acceptance, started, progress, completed } = acks;
-  if (acceptance?.ack === 'FAILURE') return 'reject';
-  if ([started, progress, completed].some(a => a?.ack === 'FAILURE')) return 'exec-fail';
-  if (completed?.ack === 'SUCCESS') return 'exec-ok';
-  if (acceptance?.ack === 'SUCCESS') return 'accepted';
-  return 'pending';
-}
-
+// _tcAckStatus (imported above as tcAckStatus) collapses the 4-stage chain
+// into ONE status a row can show at a glance — color says who last spoke
+// (grey nobody yet, green good news, red bad news), fill says whether
+// that's a FINAL outcome (execution done, one way or the other) or still
+// open (hollow):
+//   grey hollow  — 'pending'   — sent, no report back yet at all
+//   green hollow — 'accepted'  — accepted; execution outcome not in yet
+//   green filled — 'exec-ok'   — execution completed successfully
+//   red   hollow — 'reject'    — REJECTED at acceptance — never got to execute
+//   red   filled — 'exec-fail' — accepted, but execution failed
 const _ACK_STATUS_META = {
   reject:    { glyph: '○', cls: 'pa-tc-ack-red' },
   'exec-fail': { glyph: '●', cls: 'pa-tc-ack-red' },
