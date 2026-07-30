@@ -13,7 +13,15 @@ const MAX_EVENTS  = 200;
 const _ctrl = new Map(); // satId → AbortController
 
 export async function fetchSatGroundEvents(sat) {
-  const origin = satSubsystemOrigin(sat.noradId, 'scc');
+  // sccRo, not scc — this is a pure read with no follow-up write (unlike
+  // e.g. procedureCatalog.js's matchSccPassId, which deliberately stays on
+  // scc so its event id matches what a subsequent schedule/unschedule/
+  // reorder writes to). satPasses.js already reads this exact same
+  // /api/v1/events endpoint via sccRo, so it's confirmed to work there —
+  // using scc here bought nothing but an unnecessary dependency on the
+  // write-capable subnet, which breaks this under a read-only VPN for no
+  // reason.
+  const origin = satSubsystemOrigin(sat.noradId, 'sccRo');
   if (!origin) return;
 
   const now   = new Date();

@@ -14,6 +14,7 @@ import {
 } from './passTooltip.js';
 import { openPassDetail } from './PassDetailPanel.js';
 import { MITIGATION_WINDOW_DAYS } from '../satGnssMitigation.js';
+import { wireSatActionsIcon } from './satActionsMenu.js';
 
 // URL builders — subnet routing: .1=SCC, .2=FDS, .3=GNM, .4=MIC, .5=SCC RO (see satSubsystems.js).
 // FDS/GNM/SCC may be overridden as bare IPs OR full URLs (e.g. a hostname+HTTPS
@@ -24,6 +25,16 @@ const _grafanaUrl   = noradId => {
 };
 const _dashboardUrl = ip => ip ? `http://${ip}/` : null;
 const _gnmUrl       = noradId => satSubsystemOrigin(noradId, 'gnm') || null;
+// The satellite name in the Fleet row links to its synoptic view — SCC's
+// own (.1, full read/write) normally, SCC RO's (.5, read-only mirror —
+// same subsystem/port SUBSYSTEMS.sccRo already resolves) instead whenever
+// store.readOnlyVpn says this client's VPN can't reach SCC/FDS/GNM/MIC at
+// all, so the link still resolves to something reachable rather than
+// pointing at a subnet this client can't get to either way.
+const _synopticUrl = noradId => {
+  const origin = satSubsystemOrigin(noradId, store.readOnlyVpn ? 'sccRo' : 'scc');
+  return origin ? `${origin}/synoptic` : null;
+};
 
 // Read a URL override saved by the component links modal; fall back to computed value
 function _satLink(noradId, key, fallback) {
@@ -271,7 +282,7 @@ function _buildPingCell(satId) {
 // ── GNSS cell ─────────────────────────────────────────────────────
 
 function _gnssAgeCls(ms) {
-  return ms < 43_200_000 ? 'co-gnss-ok' : ms < 86_400_000 ? 'co-gnss-warn' : 'co-gnss-stale';
+  return ms < 86_400_000 ? 'co-gnss-ok' : ms < 172_800_000 ? 'co-gnss-warn' : 'co-gnss-stale';
 }
 
 // mit is not part of GNSS health per se (a recent mitigation means the
@@ -292,7 +303,7 @@ function _mitigationRow(mit) {
 }
 
 // FINESTEERING age + HK validity fused onto one row (was 3 lines: a sub-label
-// plus one row each) — HK validity collapses to a ✓/✗ glyph here, with the
+// plus one row each) — HK validity collapses to a "HK ✓"/"HK ✗" chip here, with the
 // full "HK VALID"/"HK INVALID" wording moved into its title tooltip, since
 // the two together were making this column noticeably taller than its
 // neighbors (Mode/Battery/RWH) for no informational gain. Both rendered as
@@ -310,7 +321,7 @@ function _gnssCell(gnss, mit) {
   }
   const hkOk    = gnss?.hkIsValid;
   const hkCls   = hkOk == null ? 'co-gnss-nil' : hkOk ? 'co-gnss-ok' : 'co-gnss-stale';
-  const hkSym   = hkOk == null ? '—' : hkOk ? '✓' : '✗';
+  const hkSym   = hkOk == null ? '—' : hkOk ? 'HK ✓' : 'HK ✗';
   const hkTitle = hkOk == null ? 'HK validity unknown' : hkOk ? 'HK VALID — last received packet' : 'HK INVALID — last received packet';
   return `<div class="co-gnss-stack">
     <div class="co-gnss-row" title="Time since last FINESTEERING and HK VALID together">
@@ -434,7 +445,7 @@ function _rowHTML(sat, now, eclipse) {
     const { cls: ageCls, icon: ageIcon, age } = _tleAgeLabel(ageDays);
     tleHtml = `<span class="co-tle-age ${ageCls}">${age} ${ageIcon}</span>`;
   }
-  const orbitCell = `<div class="co-orbit-stack co-eclipse-nav" data-sat-id="${sat.id}">
+  const orbitCell = `<div class="co-orbit-stack">
     <div class="co-orbit-row"><span class="co-orbit-label">ECL</span>${eclHtml}</div>
     <div class="co-orbit-row"><span class="co-orbit-label">ALT</span>${altHtml}</div>
     <div class="co-orbit-row"><span class="co-orbit-label">TLE</span>${tleHtml}</div>
@@ -447,14 +458,21 @@ function _rowHTML(sat, now, eclipse) {
   // frozen into sat.color from then on — same static value every other view
   // (Settings, the Visualizer sidebar, globe/map entities) already reads,
   // so this row's own accent stays consistent with all of them.
-  const rowStyle = sat.color ? ` style="--scc-color:${sat.color}"` : '';
+  // --pass-progress lives here too (not on the badge) — the WHOLE ROW is
+  // the progress bar now (see .co-row-live in style.css), a brighter-green
+  // sweep behind every cell/badge advancing left-to-right as the pass runs
+  // AOS→LOS, rather than a fill confined inside the small badge itself.
+  const rowStyleProps = [];
+  if (sat.color)    rowStyleProps.push(`--scc-color:${sat.color}`);
+  if (currentPass)  rowStyleProps.push(`--pass-progress:${_passProgress(currentPass, now).toFixed(3)}`);
+  const rowStyle = rowStyleProps.length ? ` style="${rowStyleProps.join(';')}"` : '';
 
-  // The dark fill inside the badge (via --pass-progress, read by its ::before
-  // in style.css) advances left-to-right as the pass runs from AOS to LOS —
-  // the text sits in its own inner span (co-pass-live-text) so it stays
-  // readable above that fill regardless of stacking-order edge cases.
+  // Just a static glowing tag now — no more internal progress fill (that
+  // moved to the row itself, above); the text sits in its own inner span
+  // (co-pass-live-text) purely so the glow's ::after can bleed past the
+  // badge's own edges without also covering the text.
   const liveBadge = currentPass
-    ? `<span class="co-pass-live-badge" style="--pass-progress:${_passProgress(currentPass, now).toFixed(3)}"><span class="co-pass-live-text">● LIVE</span></span>`
+    ? `<span class="co-pass-live-badge"><span class="co-pass-live-text">● LIVE</span></span>`
     : '';
 
   // Set once at add-time (InputPanel.js's addSatellite), not auto-detected —
@@ -463,7 +481,7 @@ function _rowHTML(sat, now, eclipse) {
   // still gets a normal Fleet row, just clearly labeled.
   const isSimu = satIsSimulated(sat.noradId);
   const simuBadge = isSimu
-    ? `<span class="co-simu-badge" title="Simulated satellite — not real-time, kept out of the Visualizer">🧪 SIMU</span>`
+    ? `<span class="co-simu-badge" title="Simulated satellite — not real-time, kept out of the Visualizer">🧪 SIM</span>`
     : '';
   // `now` here is already satEffectiveNow(sat.noradId) (see render()'s own
   // call site) — every "ago"/"next"/TLE-age label in this row is already
@@ -482,9 +500,17 @@ function _rowHTML(sat, now, eclipse) {
     ? `<button type="button" class="co-track-btn" data-sat-id="${sat.id}" title="Track ${sat.name} in the Visualizer"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></button>`
     : '';
 
+  // Links to SCC's synoptic view (SCC RO's instead under a read-only VPN —
+  // see _synopticUrl) — plain text, no dead link, when neither subsystem's
+  // IP is configured for this satellite at all.
+  const synopticUrl = _synopticUrl(sat.noradId);
+  const nameHTML = synopticUrl
+    ? `<a class="co-sat-name-link" href="${synopticUrl}" target="_blank" rel="noopener" title="Open ${sat.name}'s synoptic view">${sat.name}</a>`
+    : sat.name;
+
   return `<tr class="co-row${inPass ? ' co-row-live' : ''}" data-sat-id="${sat.id}"${rowStyle}>
     <td class="co-name-cell">
-      <div class="co-name-row">${trackBtn}${sat.name}${simuBadge}${liveBadge}</div>
+      <div class="co-name-row">${trackBtn}<button type="button" class="co-actions-btn" data-sat-id="${sat.id}" title="More actions">⋮</button>${nameHTML}${simuBadge}${liveBadge}</div>
       ${simuTimeLine}
     </td>
     <td class="co-ping-cell" data-field="ping-cell">${_buildPingCell(sat.id)}</td>
@@ -568,12 +594,12 @@ export function initChadOps() {
   const GNSS_LEGEND_HTML = `
     <div class="co-legend-title">TM_3_25_OBSW_HK_GNSS_RTE</div>
     <div class="co-legend-title co-legend-gap">FINESTEERING + HK VALID together</div>
-    <div class="co-legend-row"><span class="co-gnss-led" style="color:#00cc88">●</span> &lt; 12 h</div>
-    <div class="co-legend-row"><span class="co-gnss-led" style="color:#ffcc00">●</span> &lt; 24 h</div>
-    <div class="co-legend-row"><span class="co-gnss-led" style="color:#ff4466">●</span> ≥ 24 h</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:#00cc88">●</span> &lt; 24 h</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:#ffcc00">●</span> &lt; 48 h</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:#ff4466">●</span> ≥ 48 h</div>
     <div class="co-legend-title co-legend-gap">HK VALID — GNSS_AM_HW_HK_VALID</div>
-    <div class="co-legend-row"><span class="co-gnss-hk" style="color:#00cc88">✓</span> Last packet = VALID</div>
-    <div class="co-legend-row"><span class="co-gnss-hk" style="color:#ff4466">✗</span> Last packet = INVALID</div>
+    <div class="co-legend-row"><span class="co-gnss-hk" style="color:#00cc88">HK ✓</span> Last packet = VALID</div>
+    <div class="co-legend-row"><span class="co-gnss-hk" style="color:#ff4466">HK ✗</span> Last packet = INVALID</div>
     <div class="co-legend-title co-legend-gap">GNSS_MITIGATION procedure (♻)</div>
     <div class="co-legend-row">Time since last applied "OFF/ON/CONFIG GNSS" fix, and how many times in the last ${MITIGATION_WINDOW_DAYS} days</div>`;
 
@@ -687,27 +713,23 @@ export function initChadOps() {
       el.addEventListener('mouseleave', _scheduleHide);
     });
 
-    // Eclipse cell → Orbit Inspector navigation
-    tbody.querySelectorAll('.co-eclipse-nav').forEach(cell => {
-      cell.addEventListener('click', () => {
-        const satId = cell.dataset.satId;
-        document.querySelector('[data-tab="tools"]')?.click();
-        document.querySelector('[data-subtab="orbit"]')?.click();
-        const sel = document.getElementById('oi-sat-select');
-        if (sel) { sel.value = satId; sel.dispatchEvent(new Event('change')); }
-      });
-    });
-
-    // Planet icon → Visualizer, tracking this satellite — same
-    // click-the-real-tab-button navigation the eclipse cell above uses
-    // rather than importing switchTab from main.js (which itself imports
-    // this module — a real cycle, not just an avoidable one).
+    // Planet icon → Visualizer, tracking this satellite — clicks the real
+    // tab button rather than importing switchTab from main.js (which itself
+    // imports this module — a real cycle, not just an avoidable one).
     tbody.querySelectorAll('.co-track-btn[data-sat-id]').forEach(btn => {
       btn.addEventListener('click', e => {
         e.stopPropagation(); // this row has no other click behavior today, but keeps a future one from also firing
         store.setTrackedSat(btn.dataset.satId);
         document.querySelector('[data-tab="tracking"]')?.click();
       });
+    });
+
+    // "⋮" more-actions icon → floating menu (satActionsMenu.js) — real
+    // actions against the real satellite (mission mode enable/disable so
+    // far), acknowledged via a toast on completion, not just informational.
+    tbody.querySelectorAll('.co-actions-btn[data-sat-id]').forEach(btn => {
+      const sat = store._satById.get(btn.dataset.satId);
+      if (sat) wireSatActionsIcon(btn, sat);
     });
   }
 
@@ -797,7 +819,8 @@ export function initChadOps() {
 
       // In-pass LIVE glow + progress fill (progress advances every tick, not
       // just at aos0/los0 boundaries — the badge itself is only created/removed
-      // at those boundaries).
+      // at those boundaries). --pass-progress lives on the ROW, not the badge
+      // (see _rowHTML's own comment) — the whole row is the progress bar.
       const nameEl = row.querySelector('.co-name-cell');
       if (nameEl) {
         const currentPass = _currentPass(store.satPasses[sat.id], now);
@@ -814,9 +837,8 @@ export function initChadOps() {
         } else if (!currentPass && badge) {
           badge.remove();
         }
-        if (currentPass && badge) {
-          badge.style.setProperty('--pass-progress', _passProgress(currentPass, now).toFixed(3));
-        }
+        if (currentPass) row.style.setProperty('--pass-progress', _passProgress(currentPass, now).toFixed(3));
+        else              row.style.removeProperty('--pass-progress');
       }
 
       // TLE freshness (recomputed from epoch on every tick so the age counter advances)

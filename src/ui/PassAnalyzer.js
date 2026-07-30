@@ -15,6 +15,7 @@
 // reason — see TC_MAX_LIMIT below.
 import { store } from '../store.js';
 import { satSubsystemHost, satSubsystemOrigin } from '../satSubsystems.js';
+import { TC_MAX_LIMIT, TC_114_NAME_RE, TC_UNACKED_EXCLUDE, fetchTcPackets, matchScheduledTargets, collectArguments, argUnitLabel } from '../tcPackets.js';
 import { fetchPassGsCoords, buildPolarSVG, computePolarPoints, computePolarMarkers } from './passPolar.js';
 import { fetchProcedureReport, procedureReportHTML } from './procedureReport.js';
 import { fetchEbn0Series, fetchTcEbn0Series, fetchTmPacketsCounterSeries, ebn0HTML, copyEbn0ChartPNG, PROC_BAR_STRIP_H, PAD_B, nearestByTime } from './ebn0.js';
@@ -25,76 +26,12 @@ import { queryLoki } from './lokiQuery.js';
 import { renderLogRows, createErrorNav } from './logView.js';
 import './grafanaModal.js'; // side-effect import: registers the click-to-popup handler used by the co-tt-link anchors below
 
-const TC_MAX_LIMIT = 1000; // a typical pass sends under 1000 TC packets — confirmed live a busy 14-min pass hit 392 (10MB, ~2.6s); the 20s abort timeout below is the backstop for whatever pass exceeds that
-
 // fmtTimeOnly (passTooltip.js) only goes down to whole seconds — TC packets
 // in the same subschedule burst routinely land within a few ms of each other
 // (see module comment above), so this needs its own millisecond-precision
 // formatter to actually distinguish them.
 function _fmtTimeMs(ms) {
   return new Date(ms).toISOString().slice(11, 23); // HH:MM:SS.mmm
-}
-
-// TC_11_4 schedules another TC packet for later execution — it carries that
-// target TC's name, a date, and a sub-schedule id (SSID) as arguments (each
-// TC_11_4 wraps exactly one target). This app has no live SCC access to
-// confirm the decoded-parameter JSON shape while writing this — an earlier
-// version guessed a handful of exact field PATHS and none of them matched
-// real data (SSID always came back "?"), so extraction now does a full
-// recursive walk of the raw packet instead (see _deepFindArg below), which
-// only needs to guess plausible NAMES, not the exact nesting/container
-// structure around them.
-// Real names carry a descriptive suffix (e.g. "TC_11_4_OBSW_INSERT_TC"), not
-// just the bare "TC_11_4" — and \b is no help distinguishing "TC_11_4_..."
-// from "TC_11_129_..." since _ is a word character, not a boundary. Anchored
-// at the start; the minor number "4" must be followed by "_" or end-of-string
-// specifically, so it doesn't also match TC_11_40, TC_11_129, etc.
-const TC_114_NAME_RE = /^TC_11_4(?:_|$)/;
-
-// Confirmed live: this TC never gets an acceptance report back, by SCC/OBSW
-// design (not a real ack-chain gap) — excluded from the TC "unacked" pass-
-// health dot (.pa-details' DATA row) so it doesn't trip the orange warning
-// on every pass that happens to send one.
-const TC_UNACKED_EXCLUDE = new Set(['TC_179_7_SBT_SET_MODULATION_MODE']);
-
-// A handful of guessed field PATHS (rootContainer.entries, etc.) never
-// matched anything against real data — rather than guess a 4th or 5th exact
-// path, this walks the ENTIRE raw packet looking for any {name, value}-shaped
-// object whose name matches, regardless of how deep it's nested or what its
-// parent containers are called. Skips the packet's own top-level id/
-// generationTime/receptionTime so the packet's own timestamp is never
-// mistaken for the scheduled-execution-date argument.
-const _TOP_LEVEL_SKIP = new Set(['id', 'generationTime', 'receptionTime']);
-
-function _deepFindArg(obj, matchers, isRoot, seen) {
-  if (obj == null || typeof obj !== 'object' || seen.has(obj)) return null;
-  seen.add(obj);
-  if (Array.isArray(obj)) {
-    for (const item of obj) {
-      const found = _deepFindArg(item, matchers, false, seen);
-      if (found != null) return found;
-    }
-    return null;
-  }
-  const name = typeof obj.name === 'string' ? obj.name : (typeof obj.parameter?.name === 'string' ? obj.parameter.name : null);
-  if (name && matchers.some(m => name.toLowerCase().includes(m))) {
-    const v = obj.value?.value ?? obj.engValue?.value ?? obj.rawValue?.value ?? (typeof obj.value !== 'object' ? obj.value : null);
-    if (v != null && typeof v !== 'object') return v;
-  }
-  for (const key of Object.keys(obj)) {
-    if (isRoot && _TOP_LEVEL_SKIP.has(key)) continue;
-    const found = _deepFindArg(obj[key], matchers, false, seen);
-    if (found != null) return found;
-  }
-  return null;
-}
-
-function _extract114Args(raw) {
-  const ssid = _deepFindArg(raw, ['ssid', 'subschedule', 'sub_schedule', 'sub-schedule'], true, new Set());
-  const date = _deepFindArg(raw, ['scheduledate', 'scheduletime', 'schedule_date', 'schedule_time',
-    'executiondate', 'executiontime', 'execution_date', 'execution_time', 'targetdate', 'targettime'], true, new Set())
-    ?? _deepFindArg(raw, ['date', 'time'], true, new Set());
-  return (ssid != null || date != null) ? { ssid, date } : null;
 }
 
 // v may be an ISO string, a raw ms number, or (if the field search above
@@ -121,111 +58,6 @@ function _fmtShortDuration(ms) {
   if (ms < 1000) return `${Math.round(ms)}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
   return fmtDuration(ms);
-}
-
-async function _fetchTcPackets(sat, startMs, endMs) {
-  const origin = satSubsystemOrigin(sat.noradId, 'sccRo');
-  if (!origin) return null;
-  const params = new URLSearchParams({
-    start: new Date(startMs).toISOString(),
-    end:   new Date(endMs).toISOString(),
-    maxLimit: String(TC_MAX_LIMIT),
-  });
-  const ctrl  = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 20_000);
-  try {
-    const res = await fetch(`${origin}/api/v1/tc-packets?${params}`, { signal: ctrl.signal });
-    if (!res.ok) return null;
-    const data = await res.json();
-    // Mapped down to the lightweight fields the LIST rendering needs — each
-    // packet also echoes its full parameter/container schema (rootContainer),
-    // tens of KB per packet, that a plain "what got sent" list has no use
-    // for. `raw` keeps a REFERENCE to the untouched original (no extra copy —
-    // it's already sitting in memory from this same res.json() call) so a
-    // click on a row can walk its rootContainer for the full argument
-    // breakdown on demand, without a second fetch.
-    return data
-      .map(p => {
-        const name = p.spacePacket?.name ?? '—';
-        return {
-          id:             p.id,
-          generationTime: p.generationTime ? new Date(p.generationTime).getTime() : null,
-          receptionTime:  p.receptionTime  ? new Date(p.receptionTime).getTime()  : null,
-          name,
-          description:    p.spacePacket?.description ?? '',
-          args114:        TC_114_NAME_RE.test(name) ? _extract114Args(p) : null,
-          // PUS TC verification chain the SCC already attaches to each
-          // packet: acceptance is the onboard software's accept/reject of
-          // the command (~ "reception"), started/progress/completed are its
-          // execution report chain. Each is null (not SUCCESS/FAILURE) when
-          // that report never came — a lot of TCs only ever get an
-          // acceptance report, or none at all.
-          acks: {
-            acceptance: p.acceptance ?? null,
-            started:    p.started    ?? null,
-            progress:   p.progress   ?? null,
-            completed:  p.completed  ?? null,
-          },
-          raw:            p,
-        };
-      })
-      .sort((a, b) => (a.generationTime ?? 0) - (b.generationTime ?? 0));
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// TC_11_4's target isn't parsed from an argument — it's found by matching
-// timestamps: SCC generates the TC_11_4 "envelope" and the TC it schedules
-// as sibling packets around the same moment. An exact-millisecond match
-// turned out too strict against real data (no live SCC access while writing
-// this, so that assumption was untested) — this instead takes the CLOSEST
-// other packet within MATCH_TOLERANCE_MS, so a few ms (or more) of real
-// processing/logging jitter between the two doesn't break the match. Each
-// target is claimed by at most one TC_11_4.
-const MATCH_TOLERANCE_MS = 3000;
-
-function _matchScheduledTargets(packets) {
-  const used = new Set();
-  const targetFor = new Map(); // TC_11_4 packet id -> its target packet
-  for (const p of packets) {
-    if (!TC_114_NAME_RE.test(p.name) || p.generationTime == null) continue;
-    let best = null, bestDelta = Infinity;
-    for (const o of packets) {
-      if (o === p || used.has(o.id) || TC_114_NAME_RE.test(o.name) || o.generationTime == null) continue;
-      const delta = Math.abs(o.generationTime - p.generationTime);
-      if (delta < bestDelta) { bestDelta = delta; best = o; }
-    }
-    if (best && bestDelta <= MATCH_TOLERANCE_MS) { used.add(best.id); targetFor.set(p.id, best); }
-  }
-  return { targetFor, consumedIds: used };
-}
-
-// Recursively walks a packet's decoded field tree (see _extract114Args'
-// comment above for why this is a full walk rather than a few guessed
-// paths) collecting every leaf the SCC itself flagged argument:true — i.e.
-// an actual value the ground supplied, not a fixed CCSDS/PUS header field.
-// Confirmed live against real packets: leaves look like { name, description,
-// physicalValue:{value}, rawValue:{value}, unit }.
-function _collectArguments(node, out) {
-  if (!node || typeof node !== 'object') return;
-  if (Array.isArray(node.subContainers) && node.subContainers.length) {
-    for (const child of node.subContainers) _collectArguments(child, out);
-    return;
-  }
-  if (node.argument === true) {
-    const value = node.physicalValue?.value ?? node.rawValue?.value ?? null;
-    // Confirmed live: TC_11_4's own GENE_AR_TCPACKET field is a real
-    // argument:true leaf that's genuinely always empty (value AND
-    // description both null — an embedded-packet reference this endpoint
-    // doesn't expand) — carries zero information, so skip it rather than
-    // show a blank row. Anything with an actual value (including falsy
-    // ones like 0 or an empty string) or at least a description still shows.
-    if (value == null && !node.description) return;
-    out.push({ name: node.name, description: node.description, value, unit: node.unit });
-  }
 }
 
 // The PUS TC verification reports actually worth displaying, in report
@@ -289,7 +121,7 @@ const HIST_BUCKET_MS = 5_000;
 // else (pending/accepted/exec-ok) counts as a plain, non-failed send.
 function _tcSendHistogram(packets) {
   if (!packets?.length) return [];
-  const { consumedIds } = _matchScheduledTargets(packets);
+  const { consumedIds } = matchScheduledTargets(packets);
   const buckets = new Map(); // bucket start ms -> { t, tEnd, sent, failed }
   for (const p of packets) {
     if (consumedIds.has(p.id) || p.generationTime == null) continue;
@@ -621,12 +453,12 @@ function _tcArgsDetailHTML(packet) {
   const failHtml = _failureAnalysisHTML(packet);
   const verHtml = _tcVerificationHTML(packet.acks);
   const args = [];
-  _collectArguments(packet.raw?.spacePacket?.rootContainer, args);
+  collectArguments(packet.raw?.spacePacket?.rootContainer, args);
   const argsHtml = args.length
-    ? `<div class="pa-tc-args-rows">${args.map(a => `<div class="pa-tc-arg-row"${a.description ? ` title="${a.description}"` : ''}>
+    ? `<div class="pa-tc-args-rows">${args.map(a => { const unit = argUnitLabel(a.unit); return `<div class="pa-tc-arg-row"${a.description ? ` title="${a.description}"` : ''}>
     <span class="pa-tc-arg-name">${a.name}</span>
-    <span class="pa-tc-arg-val">${a.value != null ? a.value : '—'}${a.unit ? ` ${a.unit}` : ''}</span>
-  </div>`).join('')}</div>`
+    <span class="pa-tc-arg-val">${a.value != null ? a.value : '—'}${unit ? ` ${unit}` : ''}</span>
+  </div>`; }).join('')}</div>`
     : `<div class="co-tt-note">No decoded arguments for ${packet.name}</div>`;
   return `<div class="pa-tc-args-title">${packet.name}</div>${failHtml}${verHtml}${argsHtml}`;
 }
@@ -750,7 +582,7 @@ function _tcPacketsHTML(packets) {
   // nearest-timestamp search doesn't care which end it starts from — only
   // the DISPLAY order is newest-first, applied after merging so a TC_11_4
   // row's own timestamp (not its now-absorbed target's) is what's sorted on.
-  const { targetFor, consumedIds } = _matchScheduledTargets(packets);
+  const { targetFor, consumedIds } = matchScheduledTargets(packets);
   const procedures = _selectedPass?.procedures;
 
   // Every TC row AND every real procedure — even one that sent zero TCs of
@@ -1013,6 +845,14 @@ let _gen = 0; // guards a slower in-flight render from clobbering a newer select
 let _lastTcPackets = null; // stashed so a row click (detail expand) or a later redraw can find/re-render packets without re-fetching
 let _tcCursor = null;      // stashed so a redraw can re-wire the hover-drives-chart listeners on the new rows
 let _lastFullLogLines = null; // stashed so a later procedure click can jump the log panel without re-fetching
+// True while the mouse is anywhere over the full-log panel — guards
+// _highlightLogLineAt's own _scrollIntoViewIfNeeded call (see there). Without
+// this, hovering a log line drives the shared cursor with THAT line's own
+// timestamp, which re-searches all rows for the nearest match to it — when
+// two or more lines share the same (or a very close) timestamp, that search
+// can resolve to a DIFFERENT row than the one actually under the mouse,
+// scrolling the panel out from under the user the instant they hover it.
+let _hoveringFullLog = false;
 
 // Width of the grid's first column (pass details/procedures + TC list),
 // dragged via .pa-col-resizer (see _wireColResizer) — module-level so it
@@ -1113,7 +953,10 @@ function _highlightLogLineAt(t) {
     if (diff < bestDiff) { bestDiff = diff; nearest = row; }
   }
   rows.forEach(row => row.classList.toggle('grm-log-cursor', row === nearest));
-  _scrollIntoViewIfNeeded(nearest, logBody);
+  // Skip the scroll (not the highlight — that's still useful feedback)
+  // while the mouse is directly over the log itself — see _hoveringFullLog's
+  // own comment for why this specifically is the problematic case.
+  if (!_hoveringFullLog) _scrollIntoViewIfNeeded(nearest, logBody);
 }
 
 function _clearLogLineHighlight() {
@@ -1159,6 +1002,21 @@ function _wireAckTooltips(container) {
       _ackTooltipHideTimer = setTimeout(() => { _ackTooltipEl.style.display = 'none'; }, 100);
     });
   });
+}
+
+// Date label that tracks the Eb/N0 crosshair line — see _updateEbn0DateTooltip
+// (below, in _drawEbn0's scope) for the show/position/hide logic itself.
+// pointer-events:none in CSS (.ebn0-date-tooltip), so unlike _procTooltipEl/
+// _ackTooltipEl above it needs no hover-to-keep-open/hide-timer dance — it
+// only ever reflects wherever the linked cursor already is.
+let _ebn0DateTooltipEl = null;
+
+function _ensureEbn0DateTooltip() {
+  if (_ebn0DateTooltipEl) return;
+  _ebn0DateTooltipEl = document.createElement('div');
+  _ebn0DateTooltipEl.className = 'co-tooltip ebn0-date-tooltip';
+  _ebn0DateTooltipEl.style.display = 'none';
+  document.body.appendChild(_ebn0DateTooltipEl);
 }
 
 // Re-renders just the TC list from the already-fetched packets (no network) —
@@ -1270,21 +1128,31 @@ function _stepPass(delta) {
   _render();
 }
 
-// Briefly swaps the button's own label for a ✓ (or ✗ on failure — e.g. a
-// clipboard-write permission denial) as the only copy feedback — no toast,
-// since this sits in a small fixed corner slot in the panel title. Takes the
-// whole .ebn0-block (chart + legend), not just the chart SVG, so the copied
-// PNG includes the legend too — see copyEbn0ChartPNG. passInfo prints as a
-// small header baked into the PNG itself (satellite / antenna / date) so a
-// copy pasted elsewhere still says which pass it's from.
+// Briefly swaps the button's own label for a ✓ (clipboard), "⬇ saved"
+// (downloaded instead — see copyEbn0ChartPNG's own comment on why: the
+// Clipboard API needs a secure context, which a plain-HTTP LAN/VPN address
+// doesn't qualify as even though the exact same button works fine at
+// localhost), or ✗ on a genuine failure — as the only copy feedback, no
+// toast, since this sits in a small fixed corner slot in the panel title.
+// The .catch() matters here: without it, a rejected promise (this used to
+// only ever expect success/false, never a throw) left the button disabled
+// forever with no feedback at all, since nothing downstream ever ran to
+// reset it. Takes the whole .ebn0-block (chart + legend), not just the
+// chart SVG, so the copied PNG includes the legend too. passInfo prints as
+// a small header baked into the PNG itself (satellite / antenna / date) so
+// a copy pasted elsewhere still says which pass it's from.
 function _copyEbn0PNG(btn, ebn0BlockEl, passInfo) {
   if (!ebn0BlockEl) return;
   const prev = btn.textContent;
   btn.disabled = true;
-  copyEbn0ChartPNG(ebn0BlockEl, undefined, passInfo).then(ok => {
-    btn.textContent = ok ? '✓' : '✗ copy failed';
-    setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 1200);
-  });
+  copyEbn0ChartPNG(ebn0BlockEl, undefined, passInfo)
+    .then(result => {
+      btn.textContent = result === 'clipboard' ? '✓' : result === 'download' ? '⬇ saved' : '✗ copy failed';
+    })
+    .catch(() => { btn.textContent = '✗ copy failed'; })
+    .finally(() => {
+      setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 1200);
+    });
 }
 
 // Plain-text summary for the .pa-copy-details button — clipboard/paste
@@ -1453,7 +1321,7 @@ async function _render() {
 
   const ebn0Promise      = sat.noradId ? fetchEbn0Series(sat.noradId, pass.start.getTime(), pass.end.getTime(), pass.network) : Promise.resolve(null);
   const tcEbn0Promise    = sat.noradId ? fetchTcEbn0Series(sat.noradId, pass.start.getTime(), pass.end.getTime()) : Promise.resolve(null);
-  const tcPacketsPromise = _fetchTcPackets(sat, pass.start.getTime(), pass.end.getTime());
+  const tcPacketsPromise = fetchTcPackets(sat, pass.start.getTime(), pass.end.getTime());
   const tmCounterPromise = sat.noradId ? fetchTmPacketsCounterSeries(sat.noradId, pass.start.getTime(), pass.end.getTime()) : Promise.resolve(null);
   const fullLogPromise   = _fetchFullPassLog(grafanaHost, pass);
 
@@ -1531,6 +1399,34 @@ async function _render() {
     set('tcRate', tcBucket ? `${(tcBucket.sent / ((tcBucket.tEnd - tcBucket.t) / 1000)).toFixed(1)} pkt/s` : '—');
   }
 
+  // Small floating label pinned to the Eb/N0 crosshair line's own x — shows
+  // the hovered moment's full DATE, not just HH:MM:SS. The fixed
+  // .pa-ebn0-readout above the chart has no room for it, and a 'procedures'
+  // -span chart can run long enough to cross midnight where time-only would
+  // be ambiguous. Positioned off the crosshair LINE's current screen x
+  // (converted from its SVG viewBox coordinate) rather than the raw mouse
+  // event, so it tracks correctly even when driven from the POLAR side of
+  // the linked cursor (passCursor.js), which moves this same line without
+  // ever firing a mousemove on the Eb/N0 chart itself.
+  function _updateEbn0DateTooltip(t, ebn0El) {
+    _ensureEbn0DateTooltip();
+    const line = ebn0El?.querySelector('.ebn0-cursor-line');
+    const vb   = ebn0El?.viewBox?.baseVal;
+    if (t == null || !line || !vb?.width) { _ebn0DateTooltipEl.style.display = 'none'; return; }
+    _ebn0DateTooltipEl.textContent   = fmtDateTimeShort(new Date(t));
+    _ebn0DateTooltipEl.style.display = 'block';
+    const rect   = ebn0El.getBoundingClientRect();
+    const scaleX = rect.width / vb.width;
+    const x1     = parseFloat(line.getAttribute('x1')) || 0;
+    const w = _ebn0DateTooltipEl.offsetWidth  || 140;
+    const h = _ebn0DateTooltipEl.offsetHeight || 22;
+    let left = rect.left + x1 * scaleX - w / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+    const top = rect.top - h - 6 >= 8 ? rect.top - h - 6 : rect.top + 6;
+    _ebn0DateTooltipEl.style.left = `${left}px`;
+    _ebn0DateTooltipEl.style.top  = `${top}px`;
+  }
+
   // Redraws just the Eb/N0 chart + its linked cursor from already-fetched
   // data (no network round trip) — shared by the initial draw below and the
   // span-toggle button, so toggling span doesn't re-fetch TM/TC series, TC
@@ -1549,6 +1445,7 @@ async function _render() {
     _tcCursor = wireLinkedCursor(polarEl, polarPoints, newEbn0El, series, pass.procedures, tcSeries, ebn0Range,
       t => {
         _updateEbn0Readout(t);
+        _updateEbn0DateTooltip(t, newEbn0El);
         if (t == null) { _clearTcRowHighlight(); _clearLogLineHighlight(); }
         else            { _highlightTcRowAt(t);  _highlightLogLineAt(t); }
       }, _ebn0Span);
@@ -1587,6 +1484,13 @@ async function _render() {
   const fullLogBody = _body.querySelector('.pa-full-log-body');
   const fullLogNav  = _body.querySelector('.pa-full-log .grm-err-nav');
   if (fullLogBody) {
+    // Container-level, not per-row — see _hoveringFullLog's own comment.
+    // Reset false on every redraw of this panel too (a fresh innerHTML
+    // wouldn't otherwise fire a mouseleave for whatever the mouse happened
+    // to be sitting over just before the redraw).
+    _hoveringFullLog = false;
+    fullLogBody.addEventListener('mouseenter', () => { _hoveringFullLog = true; });
+    fullLogBody.addEventListener('mouseleave', () => { _hoveringFullLog = false; });
     if (fullLogLines == null) {
       fullLogBody.innerHTML = `<div class="co-tt-note">Could not reach Grafana/Loki</div>`;
     } else if (!fullLogLines.length) {
@@ -1645,7 +1549,7 @@ async function _render() {
   // (not just skipped when checking for a missing report) — they're known
   // to never ack by design, so they shouldn't count toward "how many of
   // this pass's TCs got acknowledged" either.
-  const { consumedIds: tcConsumedIds } = _matchScheduledTargets(tcPackets ?? []);
+  const { consumedIds: tcConsumedIds } = matchScheduledTargets(tcPackets ?? []);
   const tcTopLevel  = tcPackets?.filter(p => !tcConsumedIds.has(p.id)) ?? [];
   const tcEligible  = tcTopLevel.filter(p => !TC_UNACKED_EXCLUDE.has(p.name));
   const tcAcceptedCount = tcEligible.filter(p => p.acks?.acceptance).length;

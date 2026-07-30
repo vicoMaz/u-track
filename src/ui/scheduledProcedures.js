@@ -13,7 +13,9 @@ import { satSubsystemOrigin } from '../satSubsystems.js';
 // tolerance, not by reusing pass.id directly.
 const MATCH_TOLERANCE_MS = 10 * 60_000;
 
-async function _matchSccPassId(origin, pass, signal) {
+// Exported for procedureCatalog.js's own scheduleProcedure — it needs the
+// exact same SCC-event-id lookup to POST a new procedure onto this pass.
+export async function matchSccPassId(origin, pass, signal) {
   const start = new Date(pass.start.getTime() - 30 * 60_000).toISOString();
   const end   = new Date(pass.end.getTime()   + 30 * 60_000).toISOString();
   const url = `${origin}/api/v1/events`
@@ -52,7 +54,7 @@ export async function fetchScheduledProcedures(sat, pass) {
     const ctrl  = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15_000);
     try {
-      const eventId = await _matchSccPassId(origin, pass, ctrl.signal);
+      const eventId = await matchSccPassId(origin, pass, ctrl.signal);
       if (!eventId) return null;
       const res = await fetch(`${origin}/api/v1/procedure-scheduler?id=${encodeURIComponent(eventId)}`, { signal: ctrl.signal });
       if (!res.ok) return null;
@@ -66,6 +68,28 @@ export async function fetchScheduledProcedures(sat, pass) {
   })();
   _cache.set(key, promise);
   return promise;
+}
+
+// Drops the cached result for this pass so the NEXT fetchScheduledProcedures
+// call actually hits SCC again instead of replaying a stale answer —
+// Scheduler.js calls this right after successfully scheduling or
+// unscheduling a procedure on a pass, since otherwise the "scheduled
+// procedures" list would keep showing the pre-change state indefinitely
+// (this cache has no TTL of its own; it's keyed purely on satId+passId).
+export function invalidateScheduledProcedures(sat, pass) {
+  _cache.delete(`${sat.noradId}|${pass.id}`);
+}
+
+// Same idea as invalidateScheduledProcedures, but for callers that scheduled
+// something WITHOUT going through a specific FDS-space pass object — e.g.
+// tmrGapDownload.js's gap-download button, which schedules onto whatever SCC
+// itself reports as the satellite's next pass (a separate, SCC-event-space
+// lookup that doesn't resolve back to one of THIS module's own pass.id keys
+// without another round trip). Dropping the whole cache is cheap (it's just
+// unresolved/resolved Promises, no in-flight requests get cancelled) and
+// guarantees correctness regardless of which pass actually got the new entry.
+export function invalidateAllScheduledProcedures() {
+  _cache.clear();
 }
 
 function _paramValue(parameters, name) {

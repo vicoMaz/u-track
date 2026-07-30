@@ -23,7 +23,7 @@ export function satSeverities(sat) {
     ping:   ping === 'ok' ? SEV.NOMINAL : ping === 'unconfigured' ? SEV.WATCH : SEV.CRITICAL,
     mode:   Math.max(_rank(tm?.sysMode?.status), _rank(tm?.gncMode?.status)),
     batt:   _rank(tm?.battVoltage?.status),
-    gnss:   gAge < 43_200_000 ? SEV.NOMINAL : gAge < 86_400_000 ? SEV.WARNING : SEV.CRITICAL,
+    gnss:   gAge < 86_400_000 ? SEV.NOMINAL : gAge < 172_800_000 ? SEV.WARNING : SEV.CRITICAL,
     ground: ge.critical ? SEV.CRITICAL : ge.distress ? SEV.DISTRESS : ge.warning ? SEV.WARNING : ge.watch ? SEV.WATCH : SEV.NOMINAL,
   };
 }

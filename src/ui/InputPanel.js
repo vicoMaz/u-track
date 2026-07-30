@@ -449,11 +449,13 @@ function renderSettingsSatList() {
     item.draggable = true;
     item.dataset.id = sat.id;
     item.style.setProperty('--sat-color', sat.color);
+    const isSimu = satIsSimulated(sat.noradId);
     item.innerHTML = `
       <span class="st-drag-handle" title="Drag to reorder">⠿</span>
       <span class="st-sat-dot" style="background:${sat.color}"></span>
       <span class="st-item-name">${sat.name}</span>
       <span class="st-model-badge${model === 'FF' ? ' ff-active' : ''}">${model}</span>
+      ${isSimu ? '<span class="st-simu-badge" title="Simulated satellite — not a real, currently-orbiting object; kept out of the Visualizer (Globe/Map)">🧪 SIM</span>' : ''}
       ${unreachable ? '<span class="st-unreachable-badge" title="Not reachable on your current VPN — hidden from the sat panel, Fleet table, globe/map and weekly schedule until it responds again">unreachable</span>' : ''}
       <button class="st-gear-btn" title="Edit">⚙</button>
       <button class="remove-btn" data-id="${sat.id}" data-norad="${sat.noradId}" title="Remove">×</button>
@@ -511,9 +513,9 @@ if (modelToggle) {
   });
 }
 
-// ─── SIMU toggle ──────────────────────────────────────────────────────────
+// ─── SIM toggle ───────────────────────────────────────────────────────────
 // Same on/off-pill pattern as the model toggle above, just without a
-// textContent swap — this button's own label ("🧪 SIMU") never changes,
+// textContent swap — this button's own label ("🧪 SIM") never changes,
 // only whether it's lit up (see .sat-simu-toggle.simu-active in style.css).
 
 const simuToggleBtn = document.getElementById('sat-simu-toggle');

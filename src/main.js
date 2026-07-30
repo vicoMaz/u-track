@@ -8,6 +8,7 @@ import { initSatInfo } from './ui/SatInfo.js';
 import { initChadOps }          from './ui/ChadOps.js';
 import { initWeeklySchedule }   from './ui/WeeklySchedule.js';
 import { initPassAnalyzer, setSelection as setAnalyzerSelection } from './ui/PassAnalyzer.js';
+import { initScheduler, setSchedulerSelection } from './ui/Scheduler.js';
 import { initNavClocks }        from './ui/NavClocks.js';
 import { initSatPing }          from './satPing.js';
 import { initVpnGuard }         from './ui/vpnGuard.js';
@@ -43,7 +44,7 @@ function _applyTrackingVisibility(isTracking) {
 // microscope button in PassDetailPanel.js's slide-in, which has no
 // data-tab button of its own to click.
 function switchTab(target) {
-  const hideSide    = target === 'fleet' || target === 'schedule' || target === 'settings' || target === 'analyzer';
+  const hideSide    = target === 'fleet' || target === 'schedule' || target === 'settings' || target === 'analyzer' || target === 'scheduler';
   const isTracking  = target === 'tracking';
   closePassDetail();   // slide-in shouldn't persist across a tab change — it's tied to whatever view opened it
   closeAddPointPanel(); // same — tied to the sat panel, which just hid
@@ -66,6 +67,13 @@ tabBtns.forEach(btn => {
 document.addEventListener('pda:open-pass', e => {
   switchTab('analyzer');
   setAnalyzerSelection(e.detail.sat, e.detail.pass);
+});
+
+// Dispatched by passTooltip.js's own "Schedule procedures" button (future
+// passes only) — same announce-the-intent shape as pda:open-pass above.
+document.addEventListener('sch:open-pass', e => {
+  switchTab('scheduler');
+  setSchedulerSelection(e.detail.sat, e.detail.pass);
 });
 
 // Tracking internal subtabs (3D / 2D)
@@ -92,6 +100,7 @@ initSatInfo();
 initChadOps();
 initWeeklySchedule();
 initPassAnalyzer();
+initScheduler();
 initNavClocks();
 
 // Satellites and their passes each load asynchronously (loadInitialState()

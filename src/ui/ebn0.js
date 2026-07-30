@@ -579,13 +579,15 @@ function _paintLegendOnCanvas(ctx, legendEl, scale, offsetX, offsetY) {
 
 // Rasterizes the live <svg class="ebn0-chart"> — plus, if present, its
 // sibling <div class="ebn0-legend"> — to a single PNG and writes it to the
-// clipboard. The SVG itself paints no background (it sits directly on its
-// panel's own dark background, like the polar plot) and uses a percentage
-// width/height that only resolves against a real layout container — neither
-// survives being decoded standalone as an <img>, so a background fill and
-// explicit pixel dimensions are stamped onto a clone before serializing it,
-// leaving the live elements untouched. The legend (plain HTML, not SVG) is
-// composited onto the SAME canvas afterward via _paintLegendOnCanvas.
+// clipboard, falling back to a plain download if the clipboard isn't
+// available (see the secure-context comment further down). The SVG itself
+// paints no background (it sits directly on its panel's own dark background,
+// like the polar plot) and uses a percentage width/height that only resolves
+// against a real layout container — neither survives being decoded
+// standalone as an <img>, so a background fill and explicit pixel dimensions
+// are stamped onto a clone before serializing it, leaving the live elements
+// untouched. The legend (plain HTML, not SVG) is composited onto the SAME
+// canvas afterward via _paintLegendOnCanvas.
 //
 // passInfo ({ satellite, antenna, date }, all optional) prints as a small
 // right-aligned header strip above the chart — plain ctx.fillText, not DOM
@@ -593,6 +595,12 @@ function _paintLegendOnCanvas(ctx, legendEl, scale, offsetX, offsetY) {
 // anything that needs real flex layout the way the legend does. A PNG copied
 // out of the Analyzer is meant to stand alone (pasted into a chat/ticket,
 // away from the pass it came from), so it carries which pass it is with it.
+//
+// Resolves to 'clipboard' or 'download' (whichever actually happened) or
+// false (no chart to capture) — never rejects on a clipboard failure
+// specifically, that's caught internally to trigger the download fallback;
+// a genuine rejection here means something else went wrong (image decode,
+// canvas, etc.) and the caller should treat it as a hard failure.
 export async function copyEbn0ChartPNG(el, background = '#12121e', passInfo = null) {
   const svgEl    = el.matches?.('.ebn0-chart') ? el : el.querySelector('.ebn0-chart');
   const legendEl = el.matches?.('.ebn0-block') ? el.querySelector('.ebn0-legend') : null;
@@ -642,8 +650,30 @@ export async function copyEbn0ChartPNG(el, background = '#12121e', passInfo = nu
     }
     const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
     if (!blob) return false;
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-    return true;
+    // navigator.clipboard.write needs a "secure context" — HTTPS, or
+    // localhost/127.0.0.1 specifically — which a plain-HTTP LAN/VPN address
+    // (confirmed live: http://<vpn-ip>:5173) does NOT qualify as, so the API
+    // is either missing entirely or its write() rejects there, even though
+    // the exact same code works fine at http://localhost:5173. Rather than
+    // just failing in that case, fall back to a plain browser download of
+    // the same PNG — still gets the user their image, just pasted-from-
+    // downloads instead of pasted-from-clipboard.
+    if (window.isSecureContext && navigator.clipboard?.write) {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        return 'clipboard';
+      } catch { /* fall through to the download below */ }
+    }
+    const pngUrl = URL.createObjectURL(blob);
+    try {
+      const a = document.createElement('a');
+      a.href = pngUrl;
+      a.download = `ebn0-${Date.now()}.png`;
+      a.click();
+      return 'download';
+    } finally {
+      URL.revokeObjectURL(pngUrl);
+    }
   } finally {
     URL.revokeObjectURL(url);
   }

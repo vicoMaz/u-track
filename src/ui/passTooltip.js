@@ -97,8 +97,18 @@ export function grafanaModalTitle(sat, pass, pr) {
 // is already resolved on the pass object, no fetch needed for this part.
 function _procedureListHTML(pass, grafanaHost, sat) {
   if (pass.future) {
+    // Same data-sch-* + delegated-listener shape as the microscope's own
+    // data-pda-* below — jumps to the Scheduler tab with this sat/pass
+    // pre-selected, ready to queue something onto it, rather than making
+    // the operator re-find both by hand over there. Hidden without a real
+    // `sat` for the same reason the microscope hides then (Scheduler needs
+    // one to select).
+    const schedBtn = sat
+      ? `<button type="button" class="co-tt-sched-btn" data-sch-open data-sch-sat-id="${sat.id}" data-sch-pass-start="${pass.start.getTime()}">Schedule procedures</button>`
+      : '';
     return `<div class="co-tt-future-status co-dot-future">○ SCHEDULED</div>
-      <div class="pass-procs-slot"><div class="co-tt-note">Checking SCC for scheduled procedures…</div></div>`;
+      <div class="pass-procs-slot"><div class="co-tt-note">Checking SCC for scheduled procedures…</div></div>
+      ${schedBtn}`;
   }
   const procs = pass.procedures;
   if (!procs?.length) return `<div class="co-tt-proc co-tt-ok">● PASS OCCURRED</div>`;
@@ -199,6 +209,22 @@ document.addEventListener('click', e => {
   const tooltip = el.closest('.co-tooltip');
   if (tooltip) tooltip.style.display = 'none';
   document.dispatchEvent(new CustomEvent('pda:open-pass', { detail: { sat, pass } }));
+});
+
+// Same shape as the microscope handler just above, for the future-pass
+// "Schedule procedures" button (_procedureListHTML) instead — announces
+// intent via sch:open-pass rather than importing Scheduler.js directly, same
+// "don't couple this module to a specific destination tab" reasoning.
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-sch-open]');
+  if (!el) return;
+  const sat = store.satellites.find(s => s.id === el.dataset.schSatId);
+  const startMs = Number(el.dataset.schPassStart);
+  const pass = sat ? (store.satPasses[sat.id] ?? []).find(p => p.start.getTime() === startMs) : null;
+  if (!sat || !pass) return;
+  const tooltip = el.closest('.co-tooltip');
+  if (tooltip) tooltip.style.display = 'none';
+  document.dispatchEvent(new CustomEvent('sch:open-pass', { detail: { sat, pass } }));
 });
 
 // Per-element generation counters (not a single module-level counter) — each

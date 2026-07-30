@@ -9,6 +9,7 @@ import { sampleAttitudeTable, DEFAULT_MAX_GAP_MS } from '../attitudeSample.js';
 import { resolveRealAttitudeEntries, scheduleAttitudeFetch, applyRealAttitudeModelCorrection } from '../satAttitudeReal.js';
 import { showActionToast }              from './actionToast.js';
 import { passSimpleTooltipContent, hydratePassGeometry, hydrateScheduledProcedures } from './passTooltip.js';
+import { invalidateAllScheduledProcedures } from './scheduledProcedures.js';
 import { openPassDetail }               from './PassDetailPanel.js';
 import { escapeHtml }                   from './logView.js';
 
@@ -495,6 +496,12 @@ function _renderGapTooltip(gap, sat, source) {
       try {
         const { linkEstablished } = await requestTmrGapDownload(sat, gap, source);
         _getSccPassCheck(sat, { forceRefresh: true }); // reflect the new request as soon as it lands
+        // Drops the pass tooltip's own scheduled-procedures cache (see
+        // scheduledProcedures.js's invalidateAllScheduledProcedures) so the
+        // NEXT hover over that pass — here or in Scheduler.js — shows the
+        // request that just landed instead of replaying the pre-request
+        // list from cache.
+        invalidateAllScheduledProcedures();
         showActionToast(linkEstablished
           ? 'TM/TC link + TMR gap download scheduled on the next pass.'
           : 'TMR gap download scheduled on the next pass.');
@@ -747,9 +754,53 @@ function _renderGanttPlans() {
     ganttSlots.appendChild(bar);
   }
 }
+// Same hover-tooltip convention as _showPlanTooltip — reuses the shared
+// _ganttTooltip singleton and _fmtDT/_fmtGapDuration formatters already
+// defined above for the Pass/Plan rows.
+function _eclipseTooltipHTML(win) {
+  const hdr   = `<div class="co-tt-header">ECLIPSE <span class="co-pill" style="background:#2244cc22; color:#6a8fff; border:1px solid #2244cc66;">SHADOW</span></div>`;
+  const times = `<div class="co-tt-time-row"><span class="co-tt-time-lbl">START</span>${_fmtDT(new Date(win.start))}</div>`
+              + `<div class="co-tt-time-row"><span class="co-tt-time-lbl">END</span>${_fmtDT(new Date(win.end))}</div>`
+              + `<div class="co-tt-time-row"><span class="co-tt-time-lbl">DUR</span>${_fmtGapDuration(win.end - win.start)}</div>`;
+  return hdr + times;
+}
+
+function _showEclipseTooltip(e, win) {
+  _ttAnchorX = e.clientX;
+  _ttAnchorY = e.clientY;
+  clearTimeout(_ttHideTimer);
+  _openGapTooltip = null; // this tooltip now shows an eclipse window, not a gap
+  _ganttTooltip.innerHTML     = _eclipseTooltipHTML(win);
+  _ganttTooltip.style.display = 'block';
+  _posTooltipAt(_ttAnchorX, _ttAnchorY);
+}
+
+// Render eclipse bars with per-bar hover tooltip — same shape as
+// _renderGanttPlans (hoverable, not clickable — there's no eclipse detail
+// view to open).
 function _renderGanttEclipse() {
-  if (ganttEclipse) ganttEclipse.style.background = '#e6b800aa'; // bright sun-yellow
-  _renderBars(ganttEclipse, _eclipseWindows, '#2244cc', '0 0 8px #4466ffcc');
+  if (!ganttEclipse) return;
+  ganttEclipse.style.background = '#e6b800aa'; // bright sun-yellow
+  ganttEclipse.innerHTML = '';
+  const tMin    = _viewStartMs();
+  const rangeMs = _viewRangeMs();
+  for (const win of _eclipseWindows) {
+    const l  = (win.start - tMin) / rangeMs * 100;
+    const r  = (win.end   - tMin) / rangeMs * 100;
+    const lc = Math.max(0, l);
+    const rc = Math.min(100, r);
+    if (rc - lc < 0.01) continue;
+    const bar = document.createElement('div');
+    bar.className        = 'gantt-bar';
+    bar.style.left        = `${lc.toFixed(3)}%`;
+    bar.style.width       = `${(rc - lc).toFixed(3)}%`;
+    bar.style.background  = '#2244cc';
+    bar.style.boxShadow   = '0 0 8px #4466ffcc';
+    bar.style.cursor      = 'help';
+    bar.addEventListener('mouseenter', e => _showEclipseTooltip(e, win));
+    bar.addEventListener('mouseleave', _hidePassTooltipSoon);
+    ganttEclipse.appendChild(bar);
+  }
 }
 
 function _renderGanttStt() {
@@ -947,22 +998,25 @@ function _updateGanttPlans() {
   schedulePlanFetch(sat, rangeStart, rangeEnd, plans => store.setPlans(sat.id, plans));
 }
 
-// Compute eclipse + STT-blinding windows for a fixed ±14-day range then render.
+// Compute eclipse + STT-blinding windows for a fixed ±5-day range then render.
 // Both share the same propagate()/sunDirectionECI() per-step results — STT
 // blinding just adds a couple of dot products + one acos + one asin on top
 // of samples already being computed for the eclipse line, so it's a small
 // fraction of extra work, not extra propagate() calls.
-// ±14-day span ÷ 5-min step ≈ 8065 SGP4 propagations — run as one flat loop
-// this was a single uninterrupted ~40-160ms main-thread stall (visible as a
-// hitch) every time the tracked satellite changed or "Now" was pressed. This
+// ±5-day span ÷ 1-min step ≈ 14400 SGP4 propagations — run as one flat loop
+// this was a single uninterrupted main-thread stall (visible as a hitch)
+// every time the tracked satellite changed or "Now" was pressed. This
 // generator does the exact same work but yields after each sample, so a
 // runner (_runEclipseChunk) can process it in ~8ms time-sliced bursts across
 // multiple ticks instead of one blocking burst — same total work, but no
 // single frame gets blocked long enough to be noticeable.
+// Step was 5 min; tightened to 1 min so eclipse bar edges (and the hover
+// tooltip's start/end times) are accurate to the minute instead of only to
+// the nearest 5-minute bucket.
 function* _eclipseSttWork(sat) {
   const tMin = EPOCH.getTime() - ECLIPSE_HALF_SEC * 1000;
   const tMax = EPOCH.getTime() + ECLIPSE_HALF_SEC * 1000;
-  const STEP = 5 * 60 * 1000;
+  const STEP = 60 * 1000;
   const windows = [];
   let inEcl = false, wStart = 0;
 

@@ -40,7 +40,8 @@
         <div class="tab-bar-sep"></div>
         <a class="tab-btn" data-tab="fleet" href="#fleet">Fleet</a>
         <a class="tab-btn active" data-tab="tracking" href="#tracking">Visualizer</a>
-        <a class="tab-btn" data-tab="schedule" href="#schedule">Weekly Schedule</a>
+        <a class="tab-btn" data-tab="scheduler" href="#scheduler">Scheduler</a>
+        <a class="tab-btn" data-tab="schedule" href="#schedule">Weekly Agenda</a>
         <a class="tab-btn" data-tab="settings" href="#settings">Settings</a>
         <div id="nav-clocks">
           <div class="nc-box nc-box-utc">
@@ -127,6 +128,80 @@
         </div>
       </div>
 
+      <!-- Scheduler view (new feature, WIP — satellite+pass picker is step
+           one; more to come) -->
+      <div id="scheduler-view" class="view">
+        <div class="sch-section">
+          <div class="sch-main-row">
+            <div class="pa-panel sch-side-panel">
+              <div class="sch-toolbar">
+                <label class="sch-label" for="sch-sat-select">Satellite</label>
+                <select id="sch-sat-select" class="sch-select"></select>
+              </div>
+              <div class="sch-selected-panel" id="sch-selected-panel">
+                <div id="sch-selected-body"></div>
+              </div>
+            </div>
+            <div class="pa-panel sch-gantt-panel">
+              <div class="pa-panel-title">Eclipse / Pass / Plan / TMR / Timetag <span class="sch-gantt-hint">scroll to zoom · drag to pan</span></div>
+              <div class="sch-gantt-body" id="sch-gantt-body">
+                <div class="sch-gantt-ruler" id="sch-gantt-ruler"></div>
+                <div class="sch-gantt-rows">
+                  <div class="gantt-row">
+                    <span class="gantt-label">Eclipse</span>
+                    <div class="gantt-track" id="sch-gantt-eclipse"></div>
+                  </div>
+                  <div class="gantt-row">
+                    <span class="gantt-label">Pass</span>
+                    <div class="gantt-track" id="sch-gantt-pass"></div>
+                  </div>
+                  <div class="gantt-row">
+                    <span class="gantt-label">Plan</span>
+                    <div class="gantt-track" id="sch-gantt-plan"></div>
+                  </div>
+                  <div class="gantt-row">
+                    <span class="gantt-label" title="TM/param used to detect gaps: TM_3_25_OBSW_HK_PLT · GENE_AM_CCSDSAPID">TMR BUS</span>
+                    <div class="gantt-track" id="sch-gantt-tmr-bus"></div>
+                  </div>
+                  <div class="gantt-row">
+                    <span class="gantt-label" title="TM/param used to detect gaps: TM_3_25_OBSW_HK_PAY_MGT · GENE_AM_CCSDSAPID">TMR PAY</span>
+                    <div class="gantt-track" id="sch-gantt-tmr-pay"></div>
+                  </div>
+                  <div class="gantt-row">
+                    <span class="gantt-label">Timetag<button type="button" class="sch-timetag-filter-btn" id="sch-timetag-filter-btn" title="Filter by SSID"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg></button></span>
+                    <div class="gantt-track" id="sch-gantt-timetag"></div>
+                  </div>
+                </div>
+                <div class="sch-gantt-overlay" id="sch-gantt-overlay">
+                  <div class="sch-gantt-now-full" id="sch-gantt-now-full" title="Now"></div>
+                  <div class="sch-gantt-crosshair" id="sch-gantt-crosshair">
+                    <span class="sch-gantt-crosshair-label" id="sch-gantt-crosshair-label"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="pa-panel sch-pass-list-panel">
+              <div class="pa-panel-title">All passes</div>
+              <div class="sch-pass-list" id="sch-pass-list"></div>
+            </div>
+            <div class="pa-panel sch-schedule-panel" id="sch-schedule-panel">
+              <div class="sch-schedule-col">
+                <div class="pa-panel-title">Scheduled procedures</div>
+                <div class="sch-proc-panel-body" id="sch-scheduled-procs"></div>
+              </div>
+              <div class="sch-schedule-divider" id="sch-schedule-divider" title="Drag to resize"></div>
+              <div class="sch-schedule-col sch-schedule-col-right">
+                <div class="sch-proc-search-wrap" id="sch-proc-search-wrap">
+                  <input type="text" id="sch-proc-search" class="sch-proc-search" placeholder="Select a pass first" autocomplete="off" disabled />
+                  <div class="sch-proc-catalog" id="sch-proc-catalog"></div>
+                </div>
+                <div class="sch-proc-detail-view" id="sch-proc-detail-view"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Settings view -->
       <div id="settings-view" class="view">
         <div class="st-container">
@@ -155,7 +230,7 @@
                 <input id="name-input" type="text" placeholder="Display name (optional)" maxlength="30" />
                 <div class="btn-row">
                   <button id="model-toggle" class="model-toggle" title="Select 3D model">12U</button>
-                  <button type="button" id="sat-simu-toggle" class="sat-simu-toggle" title="Not a real, currently-orbiting object — kept out of the Visualizer (Globe/Map), still shown in Fleet, clearly labeled SIMU">🧪 SIMU</button>
+                  <button type="button" id="sat-simu-toggle" class="sat-simu-toggle" title="Not a real, currently-orbiting object — kept out of the Visualizer (Globe/Map), still shown in Fleet, clearly labeled SIM">🧪 SIM</button>
                   <button id="add-sat-btn">Add</button>
                 </div>
               </div>

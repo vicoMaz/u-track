@@ -715,6 +715,32 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .stt-pov-open-btn svg { width: 12px; height: 12px; }
 .stt-pov-open-btn:hover { color: #ffd166; border-color: #ffd16688; background: #221e14; }
+/* Opens the SSID checkbox popup (Scheduler.js's _wireTimetagFilter/.sch-ssid-filter-menu)
+   — same small bordered-icon-button treatment as .stt-pov-open-btn just above,
+   inside the Timetag row's own .gantt-label. Gets a highlighted state
+   (.sch-timetag-filter-btn-active) when at least one SSID is currently
+   hidden, so a filter left on from an earlier click is visible at a glance
+   instead of silently narrowing the row with no indication why. */
+.sch-timetag-filter-btn {
+  background: #1a1a28;
+  border: 1px solid #2a2a3a;
+  border-radius: 4px;
+  color: #9999b3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  margin-left: 4px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+}
+.sch-timetag-filter-btn svg { width: 12px; height: 12px; }
+.sch-timetag-filter-btn:hover { color: #fff; border-color: #4444aa; background: #1e1e30; }
+.sch-timetag-filter-btn-active { color: #008cff; border-color: #008cff88; background: #0e1e30; }
 .gantt-track {
   position: absolute;
   left: var(--track-ml, 68px);
@@ -1113,10 +1139,6 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .leaflet-container { background: #0d0d18 !important; }
 .leaflet-tile-pane { opacity: 1; }
 
-/* ── Tools view ─────────────────────────────────────── */
-#tools-view { background: #0a0a0f; flex-direction: column; overflow: hidden; }
-#tools-view.active { display: flex; }
-
 /* ── Settings view ──────────────────────────────────── */
 #settings-view { background: #0a0a0f; overflow-y: auto; }
 #settings-view.active { display: block; }
@@ -1423,6 +1445,16 @@ body.gantt-collapsed .gantt-rows { display: none; }
   padding: 1px 5px; white-space: nowrap; flex-shrink: 0;
 }
 .st-model-badge.ff-active { color: #c77dff; border-color: #5a2a8a; }
+/* Same violet .co-simu-badge (Fleet view) already uses for this exact
+   status, so it reads as the same signal in both places rather than a
+   different color scheme per view. */
+.st-simu-badge {
+  font-size: 9px; font-weight: 700; letter-spacing: .04em;
+  color: #e4d9ff; border: 1px solid #7a5ce8; border-radius: 3px;
+  background: rgba(122,92,232,0.12);
+  padding: 1px 5px; white-space: nowrap; flex-shrink: 0;
+  cursor: default;
+}
 .st-unreachable-badge {
   font-size: 9px; font-weight: 700; letter-spacing: .04em;
   text-transform: uppercase;
@@ -1850,115 +1882,9 @@ body.gantt-collapsed .gantt-rows { display: none; }
   gap: 5px;
 }
 
-/* ── Scheduler ──────────────────────────────────────── */
-#tools-subtab-orbit {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.oi-topbar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-bottom: 1px solid #2a2a3a;
-  flex-shrink: 0;
-}
-.oi-sat-label { font-size: 11px; color: #555; text-transform: uppercase; letter-spacing: 0.06em; }
-.oi-sat-select {
-  background: #1a1a28;
-  border: 1px solid #2a2a3a;
-  border-radius: 5px;
-  color: #ddd;
-  padding: 4px 10px;
-  font-size: 12px;
-  cursor: pointer;
-}
-.oi-sat-select:focus { outline: none; border-color: #c77dff; }
-
-.oi-scroll { flex: 1; overflow-y: auto; min-height: 0; }
-
-.oi-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  padding: 12px;
-}
-
-.oi-card {
-  background: #12121a;
-  border: 1px solid #2a2a3a;
-  border-radius: 8px;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.oi-card-eclipse { gap: 8px; }
-
-.oi-card-title {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #555;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.oi-card-subtitle {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #444;
-  margin-top: 4px;
-}
-.oi-live-badge {
-  font-size: 9px;
-  background: #00ff9d22;
-  border: 1px solid #00ff9d44;
-  color: #00ff9d;
-  border-radius: 3px;
-  padding: 1px 5px;
-  letter-spacing: 0.08em;
-}
-
-.oi-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.oi-table td { padding: 3px 0; color: #888; }
-.oi-table td:first-child { color: #555; width: 52%; }
-.oi-val { font-family: 'Courier New', monospace; font-size: 11px; color: #ccc; text-align: right; }
-
-.oi-stale-ok   { color: #00ff9d !important; }
-.oi-stale-warn { color: #ffbe0b !important; }
-.oi-stale-bad  { color: #ff3860 !important; }
-
-.oi-live-ecl { font-family: 'Courier New', monospace; font-size: 11px; text-align: right; }
-.oi-ecl-shadow { color: #8888ff; }
-.oi-ecl-sun    { color: #e6b800; }
-
-.oi-eclipse-state {
-  text-align: center;
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  padding: 7px 0;
-  border-radius: 5px;
-  transition: background 0.3s, color 0.3s;
-}
-.oi-state-shadow {
-  background: #2244cc33;
-  border: 1px solid #4466cc88;
-  color: #aabbff;
-}
-.oi-state-sun {
-  background: #b8920a2a;
-  border: 1px solid #b8920a88;
-  color: #f0c040;
-}
+/* .oi-eclipse-bar/.oi-eclipse-legend below are shared with passTooltip.js's
+   passEclipseBarHTML — the rest of the "oi-" prefix (OrbitInspector, now
+   deleted) is gone, but these specific classes are still live. */
 
 .oi-eclipse-bar {
   display: flex;
@@ -1988,33 +1914,6 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .oi-ecl-shadow { color: #8899ff; }
 .oi-ecl-sun    { color: #e6b800; }
-
-.oi-events-list { display: flex; flex-direction: column; gap: 3px; }
-.oi-event {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  padding: 3px 0;
-  border-top: 1px solid #1e1e2a;
-}
-.oi-badge {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  border-radius: 3px;
-  padding: 2px 6px;
-  min-width: 72px;
-  text-align: center;
-  flex-shrink: 0;
-}
-.oi-badge-shadow { background: #2244cc44; border: 1px solid #4466cc; color: #99aaff; }
-.oi-badge-sun    { background: #b8920a33; border: 1px solid #b8920a; color: #e6b800; }
-.oi-ev-time  { font-family: 'Courier New', monospace; color: #777; flex: 1; }
-.oi-ev-delta { font-family: 'Courier New', monospace; color: #aaa; min-width: 58px; text-align: right; }
-
-.oi-no-events { color: #444; font-size: 11px; font-style: italic; }
-.oi-empty { color: #444; font-size: 12px; font-style: italic; padding: 20px; text-align: center; }
 
 /* ═══════════════════════════════════════════════════════════════
    chadOps — Operational Status Dashboard
@@ -2093,11 +1992,7 @@ body.gantt-collapsed .gantt-rows { display: none; }
   letter-spacing: 0;
 }
 
-.co-row {
-  border-bottom: 1px solid #141420;
-  transition: background 0.12s;
-}
-.co-row:hover { background: #111122; }
+.co-row { border-bottom: 1px solid #141420; }
 
 .co-row td {
   padding: 7px 4px;
@@ -2107,10 +2002,32 @@ body.gantt-collapsed .gantt-rows { display: none; }
 
 /* Colored accent from SCC's own sccColor (globals endpoint) — same left-edge
    treatment as the side-panel satellite list, keyed off the satellite's own
-   reported color rather than the app-local color picker. */
+   reported color rather than the app-local color picker.
+   Hover used to darken the WHOLE row's background instead — besides being
+   a fairly heavy-handed hover treatment, it visually fought with
+   .co-row-live's own progress-sweep background below (an in-progress
+   pass's row IS the progress bar; the flat hover background painted right
+   over that sweep, making it look like it had vanished while the mouse sat
+   over it). Thickening this left accent on hover instead touches a
+   completely different property, so it can never collide with that.
+   Confirmed live: animating border-left-WIDTH (as this first tried) grows
+   the cell's own border-box, which the table's column-width algorithm
+   reacts to — since this is the very first column, growing it pushes the
+   remainder of that same row rightward instead of just "thickening
+   inward". An inset box-shadow paints over the existing space instead of
+   adding to it — same trick .co-row-live's own left-edge glow below
+   already uses for exactly this reason — so it only ever grows rightward,
+   never touching layout/column widths at all. */
 .co-row td:first-child {
   border-left: 3px solid var(--scc-color, transparent);
+  /* A couple extra px beyond the other cells' shared 4px (.co-row td, above)
+     — clearance so the hover shadow's growth (6px, below) never paints
+     under the planet icon/name themselves, not just the empty space next
+     to them. */
+  padding-left: 6px;
+  transition: box-shadow 0.15s ease;
 }
+.co-row:hover td:first-child { box-shadow: inset 6px 0 0 0 var(--scc-color, transparent); }
 
 /* ── Name + ping dot ───────────────────────────────────────────── */
 .co-name-cell {
@@ -2120,6 +2037,12 @@ body.gantt-collapsed .gantt-rows { display: none; }
   white-space: nowrap;
 }
 .co-name-row { display: flex; align-items: center; }
+/* Opens the satellite's synoptic view (SCC, or SCC RO under a read-only VPN
+   — see ChadOps.js's own _synopticUrl) — same color as the plain text this
+   replaces (not a default blue underlined link), underlining only on
+   hover as the one affordance that it's clickable at all. */
+.co-sat-name-link { color: inherit; text-decoration: none; }
+.co-sat-name-link:hover { color: #fff; text-decoration: underline; }
 /* Planet icon → track this satellite in the Visualizer, one click (see
    .co-track-btn's click handler in ChadOps.js's _wireDots). Same small
    bordered-box treatment (and grey-to-white hover) as .co-tt-microscope/
@@ -2143,6 +2066,77 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .co-track-btn svg { width: 13px; height: 13px; }
 .co-track-btn:hover { color: #fff; border-color: #4444aa; background: #1e1e30; }
+
+/* "⋮" more-actions icon, same small bordered-box treatment as .co-track-btn
+   just to its right — opens satActionsMenu.js's floating menu. */
+.co-actions-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 7px;
+  background: transparent;
+  border: 1px solid #2a2a4a;
+  border-radius: 4px;
+  color: #889;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+}
+.co-actions-btn:hover { color: #fff; border-color: #4444aa; background: #1e1e30; }
+
+/* satActionsMenu.js's floating dropdown — fixed-position, singleton, filled
+   in fresh on each open. Same dark-card treatment as .co-tooltip. */
+.sam-menu {
+  position: fixed;
+  z-index: 500;
+  min-width: 160px;
+  background: #16162a;
+  border: 1px solid #2a2a4a;
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+.sam-menu-section {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #556;
+  padding: 5px 8px 3px;
+}
+.sam-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: #ccc;
+  font-size: 12px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.sam-menu-item:hover { background: #24243c; color: #fff; }
+/* SSID checkbox rows inside the same .sam-menu shell (Scheduler.js's
+   _timetagFilterMenuHTML) — a label (not a button, like .sam-menu-item) so
+   the whole row toggles its checkbox, not just a precise click on the tiny
+   box itself. */
+.sch-ssid-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'Courier New', monospace;
+  color: #ccc;
+  cursor: pointer;
+}
+.sch-ssid-filter-row:hover { background: #24243c; color: #fff; }
+.sch-ssid-filter-swatch { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 /* This satellite's own current time (see _rowHTML/_tick's simuTimeLine,
    ChadOps.js) — every "ago"/"next"/TLE-age label in this same row is
    silently anchored to it, so it needs to be visible, not just correct.
@@ -2188,22 +2182,6 @@ body.gantt-collapsed .gantt-rows { display: none; }
   0%, 100% { opacity: 0.4; }
   50%      { opacity: 1; }
 }
-/* Progress fill — a darker overlay advancing left→right as the pass runs
-   from AOS to LOS (--pass-progress set in JS, 0-1). Its width is already
-   bounded by the badge's own box (a percentage), so nothing needs clipping
-   here — that matters because overflow:hidden on the badge itself would
-   also clip the ::after glow above, which relies on bleeding past the box. */
-.co-pass-live-badge::before {
-  content: '';
-  position: absolute;
-  top: 0; bottom: 0; left: 0;
-  z-index: 0;
-  width: calc(var(--pass-progress, 0) * 100%);
-  background: rgba(0, 0, 0, 0.4);
-  border-radius: inherit;
-  transition: width 1s linear;
-  pointer-events: none;
-}
 .co-pass-live-text {
   position: relative;
   z-index: 1;
@@ -2233,9 +2211,35 @@ body.gantt-collapsed .gantt-rows { display: none; }
   box-shadow: 0 0 5px rgba(122, 92, 232, 0.35);
 }
 
-/* Whole row gets a subtle live tint + left-edge glow while a pass is in progress */
+/* Whole row IS the progress bar while a pass is in progress — not just a
+   flat live tint anymore: a slightly brighter green sweeps left-to-right
+   behind every cell/badge as the pass runs AOS→LOS (--pass-progress, 0-1,
+   set in JS on the <tr> itself — see _rowHTML/the per-tick update in
+   ChadOps.js), reverting to the plain darker tint once it reaches the far
+   edge and the pass completes. A hard-edged two-stop background-image
+   (rather than a soft gradient) animated via background-size instead of
+   the stop positions themselves — CSS can't smoothly transition a
+   gradient's own color-stop offsets, but background-size DOES animate
+   smoothly, so the "edge" of the sweep still glides rather than jumping.
+   Plain background-color (not background, so it composes with the
+   background-image below rather than replacing it) is the not-yet-reached
+   remainder of the row; deliberately faint on both — "the row is a
+   progress bar" should read as a subtle wash, not a loud fill, especially
+   since it's sitting directly behind every badge/indicator in the row. */
 .co-row-live {
-  background: rgba(45,184,114,0.06);
+  background-color: rgba(45,184,114,0.06);
+  background-image: linear-gradient(rgba(45,184,114,0.15), rgba(45,184,114,0.15));
+  background-repeat: no-repeat;
+  background-size: calc(var(--pass-progress, 0) * 100%) 100%;
+  /* 10s, matching ChadOps.js's own _tick interval (setInterval(_tick,
+     10000)) that updates --pass-progress — NOT an arbitrary "smooth-looking"
+     duration. JS only writes a new value once every 10s, so a shorter
+     transition (1s, as this briefly was) finishes its animation and then
+     sits dead still for the remaining ~9s until the next write, reading as
+     a staggered hop rather than continuous motion. Matching the two means
+     each 10s transition is still gliding when the NEXT value arrives and
+     retriggers it, so it never actually stops moving. */
+  transition: background-size 10s linear;
 }
 .co-row-live td:first-child {
   /* Negative x-offset confines this to the left edge only — a plain "0 0"
@@ -2243,6 +2247,17 @@ body.gantt-collapsed .gantt-rows { display: none; }
      which for a wide first column reads as an unintentional box around the
      satellite name rather than a left-edge accent. */
   box-shadow: inset 3px 0 0 0 #2db872, -10px 0 10px -4px rgba(45,184,114,0.6);
+}
+/* .co-row:hover td:first-child (above) has the same specificity as this
+   would without also naming :hover — without this override, hovering a
+   live row would replace the green glow above with the plain sccColor
+   hover shadow instead of just adding to it (box-shadow doesn't merge
+   across separate rules the way multiple comma-separated shadows within
+   ONE rule do). Widened to the same 6px the plain hover state uses, kept
+   green rather than switching to --scc-color, so it reads as "still the
+   live indicator, just thicker" instead of swapping colors on hover. */
+.co-row-live:hover td:first-child {
+  box-shadow: inset 6px 0 0 0 #2db872, -10px 0 10px -4px rgba(45,184,114,0.6);
 }
 .co-ping-cell {
   white-space: nowrap;
@@ -2459,6 +2474,19 @@ body.gantt-collapsed .gantt-rows { display: none; }
      legitimately needs to render outside its own box, so clip it outright
      rather than relying solely on every descendant's flex math being correct. */
   overflow: hidden;
+}
+/* Small pill that tracks the Eb/N0 crosshair line (PassAnalyzer.js's
+   _updateEbn0DateTooltip) — overrides .co-tooltip's wide min-width/padding
+   since this is one short "YYYY-MM-DD HH:MM UTC" line, not a multi-row
+   panel. pointer-events:none: it only ever follows the cursor, never itself
+   receives hover. */
+.ebn0-date-tooltip {
+  min-width: 0;
+  max-width: none;
+  padding: 3px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
 }
 .co-tt-more-hint {
   margin-top: 6px;
@@ -2698,6 +2726,18 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-tt-ecl-bar .oi-eclipse-bar { height: 14px; }
 .co-tt-ecl-bar .oi-eclipse-legend { font-size: 10px; margin-top: 3px; }
 .co-tt-sep { border-top: 1px solid #2a2a4a; margin: 8px 0 4px; }
+/* Opt-in per-value — .co-tt-time-row itself stays wrappable (some tooltips
+   put free-text prose there, e.g. a Plan's own NOTE row) so this only
+   applies where a caller specifically doesn't want its value breaking
+   mid-token (Scheduler.js's Timetag tooltip: a long number + its unit, e.g.
+   "-6206598.842 m/s", reading as two lines otherwise). */
+.co-tt-nowrap { white-space: nowrap; }
+/* Timetag tooltip (Scheduler.js's _showTimetagTooltip) — wider than the
+   .co-tooltip default: its argument rows pair long OBSW_AR_ORBIT_BULLETIN_*-
+   style labels with a nowrap value+unit (see .co-tt-nowrap above), and the
+   default 300px cap clips that combination before it ever gets the chance
+   to just... not wrap. */
+.sch-timetag-tooltip { max-width: 380px; }
 .co-batt-mon-note { font-size: 12px; color: #555; margin-bottom: 6px; } /* 10px * 1.2 */
 .co-batt-mon-row  { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; font-family: 'Courier New', monospace; margin-bottom: 2px; } /* 11px * 1.2 */
 .co-batt-mon-lvl  { font-weight: 700; min-width: 70px; }
@@ -2715,6 +2755,7 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-tt-future-status { font-weight: 700; font-size: 11.5px; margin-top: 4px; }
 .co-tt-time-row { display: flex; align-items: baseline; gap: 8px; font-size: 11px; color: #ccc; margin-bottom: 2px; font-family: 'Courier New', monospace; }
 .co-tt-time-lbl { font-size: 10px; text-transform: uppercase; color: #5a5a7a; min-width: 28px; }
+#sch-selpass-countdown { color: #008cff; }
 
 /* Shared pass-tooltip section heading (Procedure history / Routine Report / Pass trajectory) */
 .co-tt-section-title {
@@ -2771,7 +2812,7 @@ body.gantt-collapsed .gantt-rows { display: none; }
   letter-spacing: 0.05em;
 }
 .co-tt-preport-total .co-tt-preport-time { color: #ddd; }
-.co-tt-gap-btn {
+.co-tt-gap-btn, .co-tt-sched-btn {
   display: block;
   width: 100%;
   margin-top: 8px;
@@ -2784,8 +2825,8 @@ body.gantt-collapsed .gantt-rows { display: none; }
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
-.co-tt-gap-btn:hover { background: #2a2a48; border-color: #4444aa; }
-.co-tt-gap-btn:disabled { color: #666; cursor: default; background: #18182a; border-color: #2a2a44; }
+.co-tt-gap-btn:hover, .co-tt-sched-btn:hover { background: #2a2a48; border-color: #4444aa; }
+.co-tt-gap-btn:disabled, .co-tt-sched-btn:disabled { color: #666; cursor: default; background: #18182a; border-color: #2a2a44; }
 .co-tt-gap-status {
   margin-top: 6px;
   font-size: 10px;
@@ -3984,6 +4025,978 @@ a.co-link:hover {
   font-size: 10px;
   color: #556;
   font-style: italic;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Scheduler (new feature, step 1 — satellite+pass picker)
+   ═══════════════════════════════════════════════════════════════ */
+.sch-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  overflow-y: auto;
+  padding: 14px 16px;
+}
+/* Grid, not flex — the gantt needs to match .sch-side-panel's height
+   specifically, NOT the full column's height (.sch-side-panel +
+   .sch-pass-list-panel stacked below it, which fills all the way to the
+   bottom of the page). A single flex row can only stretch its DIRECT
+   children to match each other; it can't single out one nested box while
+   ignoring its sibling. Grid rows solve this directly: row 1 (side panel +
+   gantt) sizes to its own tallest cell and stretches both to match — row
+   2's height (the passes list, which is 1fr and can be much taller) never
+   enters into that at all, since row-track sizing is independent per row.
+   flex:1/min-height:0 on THIS element (unusual for a grid container, but
+   it's still a flex ITEM of .sch-section, above) is what gives row 2's 1fr
+   an actual bounded height to fill down to the bottom of the page in the
+   first place. */
+.sch-main-row {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  grid-template-rows: auto 1fr;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+.sch-side-panel {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sch-toolbar { display: flex; align-items: center; gap: 10px; }
+.sch-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: #889; }
+.sch-select {
+  background: #1a1a28;
+  border: 1px solid #2a2a3a;
+  border-radius: 4px;
+  color: #ddd;
+  font-size: 12px;
+  padding: 5px 8px;
+  flex: 1;
+  min-width: 0;
+}
+/* Gantt now shares its row with .sch-side-panel instead of spanning the full
+   section width on its own line — grows to fill whatever the side panel
+   doesn't use. min-width:0 lets it actually shrink below its content's
+   intrinsic width instead of overflowing the row (the default flex-basis
+   behavior would otherwise force the row wider than .sch-section). Grid
+   row 1, same as .sch-side-panel — matches ITS height only (see
+   .sch-main-row's own comment), not .sch-pass-list-panel's below it.
+   display:flex column so .sch-gantt-body (below) can itself flex:1 and pass
+   any extra stretched height down into the actual rows instead of leaving
+   it as dead space below the title. */
+.sch-gantt-panel {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sch-gantt-hint {
+  float: right;
+  font-size: 9.5px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  color: #556;
+}
+/* Wraps the ruler + .sch-gantt-rows (not the panel title) — wheel-zoom/
+   drag-pan are wired on this element (see Scheduler.js's initScheduler),
+   same pointer-capture drag-to-pan .gantt-track's own cursor:grab/grabbing
+   pair already signals elsewhere, just applied to the whole wrapper here
+   since panning should work from anywhere in the ruler+rows area, not only
+   while the cursor happens to sit over a track. */
+/* flex:1 column so .sch-gantt-rows (below) can itself flex:1 and absorb any
+   extra height .sch-main-row's stretch hands this panel, rather than that
+   space just sitting blank below the ruler+rows. .sch-gantt-ruler keeps its
+   own fixed 16px (flex-shrink:0 — a day-tick ruler taller than one line of
+   text wouldn't mean anything), so only the rows grow. */
+.sch-gantt-body { position: relative; cursor: grab; display: flex; flex-direction: column; flex: 1; }
+/* .gantt-row/.gantt-label/.gantt-track/.gantt-bar (the ROWS themselves) are
+   reused verbatim from the live gantt (TimePlayer.js/index.html's
+   #timeline-gantt) — generic, standalone classes, no duplicate CSS needed.
+   The OUTER wrapper is deliberately its OWN class rather than reusing that
+   gantt's .gantt-rows, though: body.gantt-collapsed .gantt-rows{display:
+   none} (below) is a body-scoped rule with no #timeline-gantt scoping of
+   its own, so it wasn't just styling the live gantt's wrapper — it was
+   hiding THIS one too, collapsing the Pass track to 0×0 (confirmed live:
+   getBoundingClientRect() came back all-zero) any time the Visualizer
+   happened to have no tracked satellite, which is also why wheel-zoom
+   silently did nothing (_onWheel's own `if (!rect.width) return` guard). */
+/* flex:1 to claim the space .sch-gantt-body's own flex:1 (above) frees up;
+   flex-direction:column + each .gantt-row itself flex:1 (below) shares that
+   extra height equally across Eclipse/Pass/Plan instead of it going unused
+   below the Plan row. */
+.sch-gantt-rows { padding-top: 2px; display: flex; flex-direction: column; flex: 1; }
+.sch-gantt-rows .gantt-row { flex: 1; height: auto; }
+/* Ruler (day ticks + "now" line) sits ABOVE the actual .sch-gantt-rows (its
+   .gantt-row/.gantt-label/.gantt-track/.gantt-bar children are reused
+   verbatim from the live gantt — TimePlayer.js/index.html's #timeline-gantt
+   — generic, standalone classes, so no duplicate CSS needed for the rows
+   themselves; only the outer wrapper has its own class, see .sch-gantt-rows
+   above). margin here matches .gantt-track's own default
+   left:var(--track-ml,68px)/right:var(--track-mr,8px) inset EXACTLY (this
+   view never sets those custom properties, so both sides are reading the
+   same fallback), so the ruler's 0-100% lines up with the tracks below even
+   though they're separate elements with no shared coordinate system beyond
+   that matching inset. */
+.sch-gantt-ruler {
+  position: relative;
+  height: 16px;
+  flex-shrink: 0;
+  margin: 0 8px 4px 68px;
+  border-bottom: 1px solid #22222e;
+}
+.sch-gantt-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid #22222e;
+}
+.sch-gantt-tick-label {
+  position: absolute;
+  top: 0;
+  left: 3px;
+  font-size: 9px;
+  font-family: 'Courier New', monospace;
+  color: #556;
+  white-space: nowrap;
+}
+/* Full-height overlay spanning ruler+rows — sits directly on .sch-gantt-body
+   (position:relative, above) rather than inside the ruler or any one row, so
+   top:0/bottom:0 stretches across BOTH instead of being confined to the
+   ruler's own 16px the way an in-ruler line would be. left/right reuse the
+   exact same --track-ml/--track-mr fallback (68px/8px) the ruler's own
+   margin and every .gantt-track already key off, so 0-100% inside this
+   overlay lines up with the tracks below despite being a separate element —
+   same trick .sch-gantt-ruler's own comment above describes, just stretched
+   the full height instead of confined to one row. */
+.sch-gantt-overlay {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--track-ml, 68px);
+  right: var(--track-mr, 8px);
+  pointer-events: none;
+  z-index: 3;
+}
+/* "Now" — red so it reads as a fixed time reference at a glance, distinct
+   from the crosshair (below) which follows the mouse instead. Position
+   (left, %) and visibility are set by Scheduler.js's _updateNowLine, ticked
+   on an interval so it stays correct even at the view's most zoomed-in span
+   (MIN_SPAN_MS = 5 min) where drift would otherwise show within seconds. */
+.sch-gantt-now-full {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1.5px solid #ff3b3b;
+  display: none;
+}
+/* Hover crosshair — follows the mouse (no click) across the Eclipse/Pass/
+   Plan tracks, reading out the time under the cursor via the label below.
+   Shown/hidden and positioned by Scheduler.js's pointermove/pointerleave
+   handlers on #sch-gantt-body. */
+.sch-gantt-crosshair {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed #8888aa;
+  display: none;
+}
+/* "Pick from timeline" active (see Scheduler.js's _enterDateTimePickMode) —
+   solid and blue instead of the default dashed grey, the visual cue that
+   the next gantt click sets a date/time argument rather than doing its
+   usual thing (pass-select / pan). */
+.sch-gantt-crosshair-picking { border-left: 2px solid #008cff; }
+.sch-gantt-crosshair-label {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  transform: translate(-50%, -100%);
+  background: #1a1a28;
+  border: 1px solid #2a2a3a;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-family: 'Courier New', monospace;
+  color: #ddd;
+  white-space: nowrap;
+}
+/* Pass row's bars are clickable (data-start, set by Scheduler.js) — Eclipse/
+   Plan bars aren't, so this is scoped to [data-start] rather than the bare
+   .gantt-bar class, which TimePlayer.js's own (non-Scheduler) bars also use
+   without wanting this hover/outline treatment. Outline rather than
+   touching the bar's own background color, so it composes on top of
+   whichever outcome color is already there. */
+.gantt-bar[data-start] {
+  cursor: pointer;
+  transition: filter 0.15s, outline-color 0.15s;
+  outline: 1.5px solid transparent;
+  outline-offset: 1px;
+}
+.gantt-bar[data-start]:hover { filter: brightness(1.3); }
+.gantt-bar[data-selected] { outline-color: #7ad4ff; }
+/* No longer its own .pa-panel box (fused into .sch-side-panel, see
+   index.html) — a top border stands in for the panel edge that used to
+   separate it from the toolbar above. */
+.sch-selected-panel {
+  flex-shrink: 0;
+  padding-top: 10px;
+  border-top: 1px solid #1e1e2e;
+}
+/* All-passes list — a SEPARATE .pa-panel box below .sch-side-panel (not
+   fused into it — see index.html). Grid row 2, column 1 — same column as
+   .sch-side-panel (so it's the same 260px width for free, no extra CSS
+   needed for that part), but its OWN row, sized 1fr by .sch-main-row's own
+   grid-template-rows so it fills all the way to the bottom of the page
+   independently of row 1's height (.sch-side-panel/.sch-gantt-panel) — the
+   entire reason this is grid rows and not one flex column, see
+   .sch-main-row's own comment. Scrolls internally (.sch-pass-list's own
+   overflow-y) rather than overflowing that 1fr allocation. */
+.sch-pass-list-panel {
+  grid-column: 1;
+  grid-row: 2;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Same grid row as .sch-pass-list-panel (row 2), column 2 (under the
+   gantt) — the "big space" that opened up once the gantt was capped to
+   .sch-side-panel's height instead of the whole column's. Split into two
+   columns by a draggable vertical divider (.sch-schedule-divider, wired by
+   Scheduler.js's _wireScheduleDivider) rather than a fixed 50/50 flex split —
+   the left column is just a compact one-line-per-row list, the right one
+   holds the search box/catalog dropdown/argument form and needs most of the
+   room. Fixed px (--sch-split), not %, same convention as PassAnalyzer.js's
+   own --pa-col1-w/.pa-col-resizer — a column-width preference is a plain
+   pixel amount an operator drags to taste, not a proportion of window size. */
+.sch-schedule-panel {
+  grid-column: 2;
+  grid-row: 2;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+}
+.sch-schedule-col {
+  flex: 0 0 var(--sch-split, 413px);
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-right: 14px;
+}
+.sch-schedule-col-right {
+  flex: 1;
+  padding-right: 0;
+  padding-left: 14px;
+}
+/* Drag handle between the two columns — same visual/interaction language as
+   .pa-col-resizer (PassAnalyzer.js's TC-list/full-log splitter): a thin
+   centered line inside a wider invisible hit-track, thickening + tinting on
+   hover/drag so a 1px line stays easy to grab without looking heavy at rest. */
+.sch-schedule-divider {
+  flex: 0 0 12px;
+  position: relative;
+  cursor: col-resize;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.sch-schedule-divider::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  transform: translateX(-50%);
+  background: #2a2a4a;
+  transition: background-color 0.15s, width 0.15s;
+}
+.sch-schedule-divider:hover::before,
+.sch-schedule-divider.sch-schedule-divider-active::before {
+  width: 3px;
+  background: #4444aa;
+}
+/* Left column — scheduled-procedures list (future pass) or executed-
+   procedures list + "Open in Pass Analyzer" button (past pass); see
+   Scheduler.js's _renderProcedurePanel. */
+.sch-proc-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sch-proc-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 10.5px;
+  font-family: 'Courier New', monospace;
+  color: #ccc;
+}
+.sch-proc-dot { flex-shrink: 0; width: 7px; height: 7px; border-radius: 50%; }
+.sch-proc-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sch-proc-time { flex-shrink: 0; color: #778; }
+.sch-open-analyzer-btn { align-self: flex-start; margin-top: 4px; }
+/* Future-pass scheduled procedures (see _scheduledProcListHTML) — clicking
+   the row loads it into the right column's argument form; the ⠿ handle
+   drags to reorder (PUT .../procedure-scheduler?previousIndex=&newIndex=);
+   the X unschedules it (DELETE .../procedure-scheduler?procedureIndex=). */
+.sch-scheduled-proc-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-family: 'Courier New', monospace;
+  color: #ccc;
+  cursor: pointer;
+}
+.sch-scheduled-proc-row:hover { background: #1c1c2c; }
+/* The row currently picked up — toggled from JS (see
+   _renderProcedurePanel's dragstart/dragend handlers), not CSS :hover,
+   since HTML5 drag/drop doesn't mark this state on its own. There's no
+   separate "drop target" highlight — the dragged row physically relocates
+   in the DOM live as you drag over another row (_animateProcRowMove), so a
+   highlight on top of that would be redundant. */
+.sch-scheduled-proc-row-dragging { opacity: 0.4; }
+.sch-scheduled-proc-num {
+  flex-shrink: 0;
+  min-width: 1.4em;
+  text-align: right;
+  color: #667;
+  font-variant-numeric: tabular-nums;
+}
+.sch-scheduled-proc-handle {
+  flex-shrink: 0;
+  color: #667;
+  font-size: 12px;
+  line-height: 1;
+  cursor: grab;
+}
+.sch-scheduled-proc-handle:active { cursor: grabbing; }
+.sch-scheduled-proc-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sch-scheduled-proc-x {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: #778;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: color 0.15s, background-color 0.15s;
+}
+.sch-scheduled-proc-x:hover:not(:disabled) { color: #ff6666; background: #2a1418; }
+.sch-scheduled-proc-x:disabled { color: #445; cursor: default; }
+/* Search bar stays visible at all times (not swapped out once a procedure
+   is picked — see Scheduler.js's own note on why) — a short, fixed-height
+   wrap, NOT flex:1, so .sch-proc-catalog's top:100% (below) lands right
+   under the input itself rather than under a tall flex:1 box (that was the
+   earlier bug: with the wrap stretched to fill the column, top:100% put the
+   dropdown at the bottom of the whole column instead of below the input).
+   position:relative anchors that dropdown to the wrap specifically. */
+.sch-proc-search-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+.sch-proc-search {
+  background: #1a1a28;
+  border: 1px solid #33334a;
+  border-radius: 6px;
+  color: #eee;
+  font-size: 12px;
+  padding: 7px 10px;
+  width: 100%;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+.sch-proc-search:focus { outline: none; border-color: #4a8cff; background: #1e1e30; }
+.sch-proc-search:disabled { opacity: 0.5; cursor: default; }
+/* Floats OVER whatever's below (the argument form, and the gantt/pass-list
+   panels beneath this whole row) instead of reserving permanent layout
+   space for a list that's only relevant while actively searching —
+   shown/hidden via the .sch-proc-catalog-open class (Scheduler.js's own
+   _showProcCatalogDropdown/_hideProcCatalogDropdown), toggled on the search
+   input's focus/blur. */
+.sch-proc-catalog {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px;
+  background: #16161f;
+  border: 1px solid #33334a;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+  z-index: 20;
+}
+.sch-proc-catalog.sch-proc-catalog-open { display: flex; }
+/* Argument form — directly below the (always-visible) search bar, not a
+   separate toggled "view": picking a different procedure just re-renders
+   this in place, so there's no need for a Back button to get out of it —
+   the search bar is always right there above it. */
+.sch-proc-detail-view {
+  flex: 1;
+  min-height: 0;
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+}
+/* Explicit height+line-height (not padding-driven) — a variable-height row
+   sized only by font metrics turned out to render with visible overlap
+   between adjacent rows in practice; a fixed row height like .gantt-row's
+   own 16px (TimePlayer.js's live gantt) sidesteps that regardless of the
+   exact cause. */
+.sch-proc-catalog-row {
+  height: 22px;
+  line-height: 22px;
+  padding: 0 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-family: 'Courier New', monospace;
+  color: #ccc;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  transition: background-color 0.1s;
+}
+.sch-proc-catalog-row:hover { background: #23233a; color: #fff; }
+/* Detail view header — just the picked procedure's display name (no back
+   button — the search bar above is always there to pick a different one). */
+.sch-proc-detail-header {
+  flex-shrink: 0;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #22222e;
+}
+.sch-proc-detail-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  letter-spacing: 0.01em;
+}
+.sch-proc-arg-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 2px; /* keeps row content clear of the scrollbar */
+}
+/* Label + field side by side (was label above field, one full row each) —
+   the big vertical-space win for a form that's routinely a dozen-plus
+   params long. .sch-proc-arg-row-list (the ONE exception — see
+   _procListRowHTML's own comment) reverts to a column: a list needs the
+   room for its own rows/struct-fields below the label, not squeezed onto
+   one line with them. */
+.sch-proc-arg-row { display: flex; flex-direction: row; align-items: center; gap: 10px; }
+.sch-proc-arg-row-list { flex-direction: column; align-items: stretch; gap: 4px; }
+/* .sch-proc-arg-label's own flex:0 0 128px (below) means "128px WIDE" in the
+   default row layout — but flex-basis tracks the MAIN axis, and
+   .sch-proc-arg-row-list just flipped that to column, where the main axis is
+   VERTICAL. Left as-is, that same declaration forced every list label
+   (parametersToChange, valuesToSet, ...) to be 128px TALL instead — a huge
+   blank gap above each list's own body (confirmed live: a 37px-tall list
+   body sitting inside a 197px-tall row). Resets it back to natural content
+   height for exactly this one context. */
+.sch-proc-arg-row-list > .sch-proc-arg-label { flex: 0 0 auto; }
+/* nowrap + ellipsis, not wrap — a long name (PACKETSTORAGETOADDTO, 21
+   chars) was wrapping onto a second line INSIDE this fixed-width column,
+   which both broke row-to-row alignment (a wrapped row is taller than a
+   one-line one, so fields no longer line up at the same y) and could push
+   the trailing type-hint span (below) onto that same wrapped line
+   unpredictably. The full name is still available via the row's own
+   title= (_procArgRowHTML). */
+.sch-proc-arg-label {
+  flex: 0 0 150px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #99a0c0;
+}
+/* Type hint (int/double/boolean/... — see _procParamTypeLabel) — lowercase
+   and non-uppercase-transformed deliberately, so it doesn't visually blend
+   into the all-caps label it sits next to. */
+.sch-proc-arg-type {
+  text-transform: none;
+  font-weight: 400;
+  font-style: italic;
+  color: #667;
+}
+/* The field half of an inline label+field row (every _procArgRowHTML
+   branch except the list one, which has no use for this at all — see
+   .sch-proc-arg-row-list above) — fills whatever's left of the row past the
+   label's own fixed width. */
+.sch-proc-arg-field { flex: 1; min-width: 0; }
+.sch-proc-arg-input, .sch-proc-arg-select {
+  background: #1a1a28;
+  border: 1px solid #33334a;
+  border-radius: 5px;
+  color: #eee;
+  font-size: 10.5px;
+  font-family: 'Courier New', monospace;
+  padding: 4px 7px;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+.sch-proc-arg-input:focus, .sch-proc-arg-select:focus {
+  outline: none;
+  border-color: #4a8cff;
+  background: #1e1e30;
+}
+/* Type-to-search combo for a (sometimes very long — confirmed live, 759
+   entries) enumValues list (Scheduler.js's _procEnumComboHTML) — same
+   floating-panel shape .sch-proc-catalog uses for the procedure search box
+   itself, just anchored to this one input instead of the whole column.
+   position:relative on the wrap is what lets .sch-combo-list's top:100%
+   land directly under THIS input specifically. */
+.sch-combo { position: relative; }
+/* width:100% — .sch-combo (position:relative, above) IS a direct flex child
+   of .sch-proc-arg-row and stretches to the row's full width for free, but
+   the <input> INSIDE it isn't a flex child of anything anymore (that's what
+   made the plain, unwrapped input full-width before this combo existed) —
+   left to its own default intrinsic size, it rendered ~180px wide inside a
+   925px-wide wrapper, stranding the caret (anchored to the WRAPPER's own
+   right edge) hundreds of pixels past the actual visible box. Also reserve
+   room on the right for the caret itself, same idea as a native <select>'s
+   own built-in arrow gutter. */
+.sch-combo-input { width: 100%; padding-right: 24px; }
+/* Marks this text input as a dropdown, not a plain free-text field —
+   pointer-events:none so it never steals a click/focus from the input it
+   sits on top of; the input's own focus/click handling (_wireProcEnumCombos)
+   is what actually opens the list underneath. */
+.sch-combo-caret {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  color: #667;
+  font-size: 10px;
+  line-height: 1;
+  pointer-events: none;
+}
+.sch-combo-list {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px;
+  background: #16161f;
+  border: 1px solid #33334a;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+  z-index: 30;
+}
+.sch-combo-list.sch-combo-list-open { display: flex; }
+.sch-combo-option {
+  height: 20px;
+  line-height: 20px;
+  padding: 0 8px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-family: 'Courier New', monospace;
+  color: #ccc;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  transition: background-color 0.1s;
+}
+.sch-combo-option:hover { background: #23233a; color: #fff; }
+.sch-combo-trunc { padding: 4px 8px; font-size: 10.5px; font-style: italic; color: #556; flex-shrink: 0; }
+/* Date/time param — a plain dd/mm/yyyy HH:mm:ss text field (Scheduler.js's
+   own _fmtDTInput/_parseDTInput; NOT <input type="datetime-local">, whose
+   displayed format follows the browser/OS locale, not this app's), a 📅
+   button opening the custom calendar widget below it, and a small "seconds
+   offset" field (defaults to 0) for nudging the picked instant finer than
+   either UI comfortably allows — see _renderProcDetailView/_procArgValue. */
+/* flex-wrap — the quickfill buttons now sit in this SAME row (used to be
+   their own line below via .sch-proc-arg-quickfill) — wraps onto a second
+   line instead of overflowing once the panel's too narrow for all of it. */
+.sch-proc-arg-datetime { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; position: relative; }
+/* Fixed, not flex:1 — this used to be the only thing in the row worth
+   growing into leftover space; now that the quickfill buttons share the
+   row too, an unbounded grow would just starve them of room instead of
+   letting the row wrap. 150px comfortably fits its own placeholder
+   ("dd/mm/yyyy HH:mm:ss", 19 chars). */
+.sch-proc-arg-dt { flex: 0 0 150px; color-scheme: dark; }
+.sch-proc-arg-cal-btn { flex: 0 0 auto; padding: 3px 7px; }
+.sch-proc-arg-offset { width: 56px; text-align: right; }
+.sch-proc-arg-offset-lbl { font-size: 9px; color: #889; white-space: nowrap; }
+/* Quick-fill shortcuts (see _nextPassAfterSelected/_renderProcDetailView) —
+   sized down from the base .sch-nav-btn so the longer labels ("CURRENT PASS
+   LOS+0") don't dominate a row they now share with the date/time inputs. */
+.sch-proc-quickfill-btn, .sch-proc-pick-btn {
+  font-size: 9.5px;
+  padding: 3px 7px;
+}
+/* Custom calendar+time widget (Scheduler.js's _calendarPickerHTML) — floats
+   below the 📅 button against .sch-proc-arg-datetime's own position:relative
+   above, same floating-panel shape .sch-proc-catalog uses elsewhere in this
+   column. Always UTC, always 24h — see its own header comment for why this
+   isn't just <input type="datetime-local">'s native popup. */
+/* position:fixed + JS-computed top/left (Scheduler.js's own
+   _positionCalendarPicker), not position:absolute against the row — this
+   argument row can sit anywhere in the (scrollable) procedure-detail column,
+   and an absolute panel just floated wherever THAT happened to be scrolled
+   to, routinely opening below the visible area. Fixed + viewport-relative
+   placement (with edge-avoidance: flips above the button if there's no room
+   below) always lands fully in view instead, same reasoning
+   passTooltip.js's own positionTooltip already follows for the same reason. */
+.sch-dt-picker {
+  position: fixed;
+  z-index: 99999;
+  width: 224px;
+  padding: 10px;
+  background: #161624;
+  border: 1px solid #33335a;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px #000000aa;
+}
+.sch-dtcal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.sch-dtcal-month { font-size: 12px; font-weight: 600; color: #ddd; }
+.sch-dtcal-nav {
+  background: none;
+  border: none;
+  color: #9999b3;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.sch-dtcal-nav:hover { color: #fff; background: #23233a; }
+.sch-dtcal-dow-row, .sch-dtcal-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
+.sch-dtcal-dow { text-align: center; font-size: 10px; color: #667; padding: 2px 0; }
+.sch-dtcal-day {
+  background: none;
+  border: none;
+  color: #ccc;
+  font-size: 11px;
+  padding: 5px 0;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.sch-dtcal-day:hover { background: #23233a; }
+.sch-dtcal-day-dim { color: #454560; }
+.sch-dtcal-day-today { box-shadow: inset 0 0 0 1px #008cff88; }
+/* Wins over .sch-dtcal-day-dim (an adjacent-month day can be both dim AND
+   selected) by coming after it in source order — same cascade convention
+   .sch-proc-pick-btn-active's own comment documents for this file. */
+.sch-dtcal-day-selected { background: #008cff; color: #fff; }
+.sch-dtcal-day-selected:hover { background: #0099ff; }
+.sch-dtcal-time {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #2a2a44;
+  color: #889;
+}
+.sch-dtcal-time-input {
+  width: 32px;
+  background: #0e0e18;
+  border: 1px solid #2a2a44;
+  border-radius: 4px;
+  color: #ddd;
+  font-size: 11px;
+  text-align: center;
+  padding: 3px 0;
+  color-scheme: dark;
+}
+.sch-dtcal-tz { font-size: 10px; margin-left: 4px; }
+.sch-dtcal-footer { display: flex; justify-content: space-between; margin-top: 8px; }
+/* doSchedule-gated group (scheduleTime/subscheduleId — see
+   _renderProcDetailView/_isGatedScheduleParam) — collapsed automatically
+   when doSchedule is false, expanded when true, but the ▸/▾ toggle always
+   works regardless of that value (manual override). The card framing
+   (fill/border/padding) only applies once actually EXPANDED, when there's a
+   real .sch-proc-gated-body underneath it to visually group — while
+   collapsed, its header is the ONLY thing showing (see _procGateHeaderHTML),
+   so the padded/bordered box was just extra bulk around what reads as a
+   single ordinary row, sitting noticeably taller than every plain row next
+   to it for no visual payoff. */
+.sch-proc-gated-group { border-radius: 6px; }
+.sch-proc-gated-group:not(.sch-proc-gated-collapsed) {
+  background: #14141f;
+  border: 1px solid #2a2a3a;
+  padding: 8px 10px;
+}
+/* Was width:100% + its own "Schedule timing" text — now wraps the gate
+   param's own chevron+label instead (see _procGateHeaderHTML), sitting in
+   the SAME .sch-proc-arg-row as that param's live field (a sibling, not
+   nested inside this button — a <select>/combo can't sit inside a <button>
+   without breaking its own interaction). flex:0 0 150px matches every other
+   row's .sch-proc-arg-label width, so the field alongside it still starts
+   at the same x as every other row's own field. */
+.sch-proc-gated-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 150px;
+  min-width: 0;
+  background: none;
+  border: none;
+  font-family: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+.sch-proc-gated-toggle:hover .sch-proc-gated-chevron,
+.sch-proc-gated-toggle:hover .sch-proc-arg-label { color: #fff; }
+.sch-proc-gated-chevron { display: inline-block; width: 1em; flex-shrink: 0; color: #99a0c0; transition: color 0.15s; }
+.sch-proc-gated-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+.sch-proc-gated-collapsed .sch-proc-gated-body { display: none; }
+/* List-typed argument editor (Scheduler.js's _procListRowHTML/
+   _procListFieldInputHTML — e.g. ELEM_FSW_PUS140_CHANGE_PARAMETER's own
+   parametersToChange) — one bordered row per list entry, one input per
+   element field inside it, a remove button per row, an add button below.
+   Same faint-fill-block language as .sch-proc-gated-group above, so a list
+   argument reads as its own grouped unit the same way. */
+.sch-proc-list { display: flex; flex-direction: column; gap: 6px; }
+.sch-proc-list-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #14141f;
+  border: 1px solid #2a2a3a;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.sch-proc-list-row-fields {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sch-proc-list-field { display: flex; flex-direction: column; gap: 2px; min-width: 90px; flex: 1; }
+.sch-proc-list-field-label { font-size: 9px; color: #667; text-transform: uppercase; letter-spacing: 0.04em; }
+.sch-proc-list-input { width: 100%; }
+.sch-proc-list-remove-btn { flex: 0 0 auto; padding: 3px 8px; color: #b57; }
+.sch-proc-list-remove-btn:hover:not(:disabled) { color: #ff6688; border-color: #ff667788; }
+/* Label + add button share one line — same "small bordered icon box" shape
+   .co-track-btn/.co-actions-btn use elsewhere in this app (ChadOps.js),
+   just here it's this list's own right-aligned header action instead of a
+   per-row one. Replaces the old full-width "+ Add entry" button that used
+   to sit below the list body as its own row. */
+.sch-proc-list-header { display: flex; align-items: center; gap: 8px; }
+.sch-proc-list-add-btn {
+  flex-shrink: 0;
+  margin-left: auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 1px solid #2a2a3a;
+  border-radius: 4px;
+  color: #9999b3;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+}
+.sch-proc-list-add-btn:hover { color: #fff; border-color: #4444aa; background: #1e1e30; }
+.sch-proc-list-empty { padding: 4px 0; }
+.sch-proc-schedule-row {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #22222e;
+}
+.sch-pass-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sch-pass-list-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-family: 'Courier New', monospace;
+  color: #ccc;
+  cursor: pointer;
+  overflow: hidden;
+  /* Without this, a flex item's own overflow:hidden (above) makes its
+     automatic min-height resolve to 0 instead of its content's natural size
+     (a real flexbox spec quirk, not a typo) — so once enough passes make
+     .sch-pass-list's content taller than the panel, EVERY row gets crushed
+     down toward 0 instead of the list just scrolling normally, and their
+     text visually overlaps the row below. flex-shrink:0 keeps each row at
+     its natural height regardless of row count; .sch-pass-list's own
+     overflow-y:auto is what should (and now does) handle the excess. */
+  flex-shrink: 0;
+  transition: background-color 0.1s;
+}
+.sch-pass-list-row:hover { background: #1c1c2c; }
+.sch-pass-list-row-selected { background: #1e2a3a; }
+.sch-pass-list-row-selected:hover { background: #223247; }
+.sch-pass-list-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+/* The one column allowed to shrink/truncate first (station codes are
+   usually abbreviations already, unlike the date/duration columns which
+   need every character) — min-width:0 is required for text-overflow:
+   ellipsis to actually kick in on a flex item instead of the default
+   min-width:auto just forcing the row wider. */
+.sch-pass-list-stn {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 72px;
+  color: #9999b3;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sch-pass-list-date { flex-shrink: 0; white-space: nowrap; }
+.sch-pass-list-dur { flex-shrink: 0; color: #778; white-space: nowrap; margin-left: auto; }
+/* Static floor matching the full pass card's own typical height (4
+   co-tt-time-rows + eclipse bar + geometry line — see .sch-selpass-card's
+   contents in Scheduler.js), so the "No pass selected" placeholder doesn't
+   render short before Scheduler.js's own _syncSelBodyMinHeight ever gets a
+   chance to measure a real card (e.g. right after a page load/HMR reset,
+   before any pass has been selected yet in this session — that JS state
+   starts at 0 and only grows from actual measurements, so without this
+   floor the placeholder would be exactly as short as its own two lines
+   until a pass gets selected at least once). _syncSelBodyMinHeight's own
+   inline min-height can still grow past this if real content ever needs
+   more (e.g. a wrapped station name), since inline style overrides this
+   class value the same way it overrides anything else. */
+#sch-selected-body { min-height: 132px; }
+.sch-empty {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding-left: 4px;
+  color: #556;
+  font-size: 11px;
+  font-style: italic;
+}
+/* Plain inline version of .sch-empty's text styling, without the
+   height:100%/flex-row layout that's meant for a full-height track
+   background — used inside #sch-selected-body's own column layout instead
+   (see .sch-next-pass-empty), where that would just fight the button below. */
+.sch-empty-inline {
+  color: #556;
+  font-size: 11px;
+  font-style: italic;
+}
+.sch-next-pass-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+/* Same look as .stt-pov-open-btn (TimePlayer.js's docked-POV button) —
+   dark chip, no border emphasis until hovered. */
+.sch-nav-btn {
+  background: #1a1a28;
+  border: 1px solid #2a2a3a;
+  border-radius: 4px;
+  color: #9999b3;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 3px 9px;
+  line-height: 1.4;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+}
+.sch-nav-btn:hover:not(:disabled) { color: #ddd; border-color: #4a4a6a; background: #20202e; }
+.sch-nav-btn:disabled { color: #45455a; cursor: default; }
+/* Primary action — the one thing in this whole column meant to actually
+   DO something irreversible (schedule onto a real pass), so it's styled as
+   a filled accent button rather than blending into the same quiet chip
+   style every nav/quick-fill/pick button here otherwise shares. Placed
+   AFTER .sch-nav-btn (same specificity — source order decides) since the
+   button carries both classes and this one needs to win. */
+.sch-proc-schedule-btn {
+  margin-left: auto;
+  background: #0a6ecf;
+  border-color: #0a6ecf;
+  color: #fff;
+  font-weight: 600;
+  padding: 5px 14px;
+}
+.sch-proc-schedule-btn:hover:not(:disabled) { background: #1580ea; border-color: #1580ea; }
+.sch-proc-schedule-btn:disabled { background: #23233a; border-color: #2a2a3a; color: #556; }
+/* "Pick from timeline" (see Scheduler.js's _enterDateTimePickMode) — active
+   state matches the crosshair's own #008cff while awaiting the gantt click.
+   Placed after .sch-nav-btn for the same reason .sch-proc-schedule-btn is
+   above — both carry the .sch-nav-btn class too and need to win the cascade. */
+.sch-proc-pick-btn-active {
+  color: #fff;
+  background: #008cff;
+  border-color: #008cff;
+}
+.sch-proc-pick-btn-active:hover { background: #0099ff; border-color: #0099ff; }
+/* Prev/next pass — pinned to the card's top-right corner, overlapping the
+   SAT row rather than reserving a dedicated strip above it: the SAT row's
+   own content (satellite name only) is short enough to leave room. */
+.sch-selpass-card { position: relative; }
+.sch-selpass-nav {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  gap: 4px;
+}
+.sch-selpass-nav .sch-nav-btn {
+  font-size: 12px;
+  padding: 1px 7px;
 }
 
 /* ═══════════════════════════════════════════════════════════════

@@ -35,6 +35,13 @@ function _groupSites(rawList) {
 const CUSTOM_POINTS_KEY = 'chadops-custom-points';
 const CUSTOM_POINT_COLOR = '#ffd60a';
 
+// Real ground antennas don't track down to the true horizon — terrain/RF
+// noise near 0° elevation makes that angle unusable in practice, so every
+// GNM-collected antenna site gets this minimum-elevation mask by default
+// (drives the footprint circle radius in both the 2D map and 3D globe, same
+// as a custom point's own optional `mask`).
+const GNM_DEFAULT_MASK_DEG = 5;
+
 function _loadCustomPoints() {
   try {
     const raw = JSON.parse(localStorage.getItem(CUSTOM_POINTS_KEY) ?? '[]');
@@ -254,6 +261,7 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
           lat:           site.lat,
           lon:           site.lon,
           color:         sat.color,
+          mask:          GNM_DEFAULT_MASK_DEG,
           showFootprint: this.showFootprints,
           antennaCount:  site.count,
         });
