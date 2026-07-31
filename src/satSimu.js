@@ -66,3 +66,13 @@ export async function fetchSatTimeOffset(sat) {
 export function satEffectiveNow(noradId) {
   return Date.now() + (_offsetMsCache.get(noradId) ?? 0);
 }
+
+// Whether this satellite's offset has ever actually been resolved — lets a
+// caller (satPing.js's own first-cycle handling) tell "no correction needed,
+// this is a real satellite" apart from "this IS simulated but its offset
+// hasn't landed yet, satEffectiveNow is still silently returning uncorrected
+// Date.now()" — a distinction satEffectiveNow's own 0-default deliberately
+// erases for every OTHER call site, which don't need it.
+export function hasSatTimeOffset(noradId) {
+  return _offsetMsCache.has(noradId);
+}

@@ -256,10 +256,6 @@
             <div class="gsi-row"><span class="gsi-key">Next pass</span><span id="gsi-next"></span></div>
           </div>
           <div class="gantt-row">
-            <span class="gantt-label">Plans</span>
-            <div class="gantt-track" id="gantt-slots"></div>
-          </div>
-          <div class="gantt-row">
             <span class="gantt-label" title="TM/param used to detect gaps: TM_3_25_OBSW_HK_PLT · GENE_AM_CCSDSAPID">TMR BUS</span>
             <div class="gantt-track" id="gantt-tmr"></div>
           </div>
@@ -268,8 +264,16 @@
             <div class="gantt-track" id="gantt-tmr-pay"></div>
           </div>
           <div class="gantt-row">
+            <span class="gantt-label">Plans</span>
+            <div class="gantt-track" id="gantt-slots"></div>
+          </div>
+          <div class="gantt-row">
             <span class="gantt-label">Passes</span>
             <div class="gantt-track" id="gantt-passes"></div>
+          </div>
+          <div class="gantt-row">
+            <span class="gantt-label">Timetag<button type="button" class="sch-timetag-filter-btn" id="gantt-timetag-filter-btn" title="Filter by SSID"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="7" y1="12" x2="17" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg></button></span>
+            <div class="gantt-track" id="gantt-timetag"></div>
           </div>
           <div class="gantt-row">
             <span class="gantt-label">Eclipse</span>
@@ -293,6 +297,9 @@
             <div class="gantt-track gantt-ruler" id="gantt-ruler"></div>
           </div>
           <div id="gantt-cursor"></div>
+          <div id="gantt-crosshair">
+            <span id="gantt-crosshair-label"></span>
+          </div>
         </div>
       </div>
 

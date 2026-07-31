@@ -35,12 +35,6 @@ export const TC_MAX_LIMIT = 1000; // a typical pass sends under 1000 TC packets 
 // specifically, so it doesn't also match TC_11_40, TC_11_129, etc.
 export const TC_114_NAME_RE = /^TC_11_4(?:_|$)/;
 
-// Confirmed live: this TC never gets an acceptance report back, by SCC/OBSW
-// design (not a real ack-chain gap) — excluded from the TC "unacked" pass-
-// health dot (PassAnalyzer.js's .pa-details DATA row) so it doesn't trip the
-// orange warning on every pass that happens to send one.
-export const TC_UNACKED_EXCLUDE = new Set(['TC_179_7_SBT_SET_MODULATION_MODE']);
-
 // A handful of guessed field PATHS (rootContainer.entries, etc.) never
 // matched anything against real data — rather than guess a 4th or 5th exact
 // path, this walks the ENTIRE raw packet looking for any {name, value}-shaped
@@ -230,4 +224,18 @@ export function tcAckStatus(acks) {
   if (completed?.ack === 'SUCCESS') return 'exec-ok';
   if (acceptance?.ack === 'SUCCESS') return 'accepted';
   return 'pending';
+}
+
+// Whether at least one TC in the pass reached a real acceptance SUCCESS
+// ('accepted' or 'exec-ok' above) — the single pass/fail signal
+// PassAnalyzer.js's own TC status dot and passTooltip.js's hover-tooltip
+// copy of it both show, so the two can't drift onto different criteria for
+// the same claim. A TC_11_4's scheduled TARGET is excluded via
+// matchScheduledTargets' consumedIds — it's a separately-timed nested event
+// absorbed into its own envelope's row, not an independent send to judge on
+// its own.
+export function tcPacketsAcked(packets) {
+  if (!packets?.length) return false;
+  const { consumedIds } = matchScheduledTargets(packets);
+  return packets.some(p => !consumedIds.has(p.id) && ['accepted', 'exec-ok'].includes(tcAckStatus(p.acks)));
 }

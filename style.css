@@ -392,6 +392,11 @@ body.tracking-active #side-panel { top: 100px; }
 }
 .sat-item .remove-btn:hover { color: #ff3860; }
 
+/* InputPanel.js's own "Unassigned points" group header (see renderSatList) —
+   same size/color as .sat-item .sat-name, but italic and non-interactive
+   (no cursor:pointer/hover — there's no satellite behind it to track). */
+.sat-name-unassigned { flex: 1; font-size: 11px; color: #ccc; font-style: italic; }
+
 .sat-loading { font-size: 10px; color: #888; font-style: italic; }
 .sat-error { font-size: 10px; color: #ff3860; }
 
@@ -816,6 +821,37 @@ body.gantt-collapsed .gantt-rows { display: none; }
   width: 1px;
   background: #00d4ff99;
   pointer-events: none;
+}
+/* Hover crosshair — follows the mouse (no click effect; positioned by
+   TimePlayer.js's own pointermove handler on #timeline-gantt, same px-based
+   left offset _updateGanttCursor already uses, not a % overlay) across
+   whichever row is under the cursor, reading out the time via the label
+   below. Dashed grey, same as Scheduler.js's own .sch-gantt-crosshair —
+   distinct from #gantt-cursor's solid cyan so the two (current time vs.
+   time-under-mouse) never read as the same thing. pointer-events:none so it
+   never blocks the pass/plan/eclipse/TMR/timetag rows' own hover tooltips or
+   the drag-to-pan gesture underneath it. */
+#gantt-crosshair {
+  position: absolute;
+  top: 0; bottom: 0;
+  width: 0;
+  border-left: 1px dashed #8888aa;
+  pointer-events: none;
+  display: none;
+}
+#gantt-crosshair-label {
+  position: absolute;
+  top: -3px;
+  left: 0;
+  transform: translate(-50%, -100%);
+  background: #1a1a28;
+  border: 1px solid #2a2a3a;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-family: 'Courier New', monospace;
+  color: #ddd;
+  white-space: nowrap;
 }
 .gantt-ruler-row { height: 20px; }
 .gantt-ruler {
@@ -2045,11 +2081,11 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-sat-name-link:hover { color: #fff; text-decoration: underline; }
 /* Planet icon → track this satellite in the Visualizer, one click (see
    .co-track-btn's click handler in ChadOps.js's _wireDots). Same small
-   bordered-box treatment (and grey-to-white hover) as .co-tt-microscope/
-   .pdp-microscope elsewhere in the app, just inline in the row's own flow
-   instead of absolutely positioned in a corner — this cell has no competing
-   corner content. currentColor on the SVG's own stroke means the button's
-   own color transition (below) is all that's needed to recolor the icon. */
+   bordered-box treatment (and grey-to-white hover) as .pdp-close elsewhere
+   in the app, just inline in the row's own flow instead of absolutely
+   positioned in a corner — this cell has no competing corner content.
+   currentColor on the SVG's own stroke means the button's own color
+   transition (below) is all that's needed to recolor the icon. */
 .co-track-btn {
   display: inline-flex;
   align-items: center;
@@ -2088,10 +2124,16 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-actions-btn:hover { color: #fff; border-color: #4444aa; background: #1e1e30; }
 
 /* satActionsMenu.js's floating dropdown — fixed-position, singleton, filled
-   in fresh on each open. Same dark-card treatment as .co-tooltip. */
+   in fresh on each open. Same dark-card treatment as .co-tooltip. Also reused
+   by Scheduler.js's/TimePlayer.js's own Timetag SSID filter menu (same
+   shape, different trigger button) — z-index has to clear #timeline-gantt's
+   own 9998 (position:fixed itself) for that TimePlayer.js case, confirmed
+   live: at the old z-index:500 the menu was actually open and populated
+   (visible via devtools) but rendered fully BEHIND the gantt panel, so it
+   never appeared on screen at all. */
 .sam-menu {
   position: fixed;
-  z-index: 500;
+  z-index: 10001;
   min-width: 160px;
   background: #16162a;
   border: 1px solid #2a2a4a;
@@ -2246,24 +2288,12 @@ body.gantt-collapsed .gantt-rows { display: none; }
      retriggers it, so it never actually stops moving. */
   transition: background-size 10s linear;
 }
-.co-row-live td:first-child {
-  /* Negative x-offset confines this to the left edge only — a plain "0 0"
-     offset (as this briefly was) glows on all four sides of the whole cell,
-     which for a wide first column reads as an unintentional box around the
-     satellite name rather than a left-edge accent. */
-  box-shadow: inset 3px 0 0 0 #2db872, -10px 0 10px -4px rgba(45,184,114,0.6);
-}
-/* .co-row:hover td:first-child (above) has the same specificity as this
-   would without also naming :hover — without this override, hovering a
-   live row would replace the green glow above with the plain sccColor
-   hover shadow instead of just adding to it (box-shadow doesn't merge
-   across separate rules the way multiple comma-separated shadows within
-   ONE rule do). Widened to the same 6px the plain hover state uses, kept
-   green rather than switching to --scc-color, so it reads as "still the
-   live indicator, just thicker" instead of swapping colors on hover. */
-.co-row-live:hover td:first-child {
-  box-shadow: inset 6px 0 0 0 #2db872, -10px 0 10px -4px rgba(45,184,114,0.6);
-}
+/* A live row's first-child used to also get its own green inset box-shadow
+   here, layered on top of .co-row td:first-child's own --scc-color border —
+   two competing vertical bars on the same edge. Removed per instruction:
+   the whole-row background sweep above is the live indicator now; the color
+   bar stays exactly what .co-row/.co-row:hover td:first-child (above) already
+   render, live or not. */
 .co-ping-cell {
   white-space: nowrap;
   width: 80px;
@@ -2447,19 +2477,6 @@ body.gantt-collapsed .gantt-rows { display: none; }
   border: 1.5px solid currentColor;
 }
 
-/* Whichever pass PassDetailPanel's slide-in currently has open, regardless of
-   which view opened it (Fleet dots here, Weekly Schedule, or the gantt) — a
-   persistent ring, same color as the dot itself, so the pass stays
-   identifiable while the panel is open. outline+offset (a ring with a visible
-   gap) rather than a flush box-shadow — a future/hollow dot already has its
-   own flush border (.co-dot.co-dot-future above), so a flush ring here would
-   be indistinguishable from just "this is an upcoming pass." The gap makes
-   "selected" read as a distinct marker on top of whatever the dot already is. */
-.co-dot-selected {
-  outline: 1.5px solid currentColor;
-  outline-offset: 2px;
-}
-
 /* ── Tooltip ───────────────────────────────────────────────────── */
 .co-tooltip {
   position: fixed;
@@ -2470,8 +2487,8 @@ body.gantt-collapsed .gantt-rows { display: none; }
   padding: 10px 12px;
   min-width: 210px;
   /* Was 620px to fit the polar+Eb/N0 charts side by side — that detail now
-     lives in the PassDetailPanel.js slide-in panel instead, so the hover
-     itself only ever holds a few short lines of text. */
+     lives in PassAnalyzer.js's full-page view instead, so the hover itself
+     only ever holds a few short lines of text. */
   max-width: 300px;
   box-shadow: 0 4px 20px #00000066;
   font-size: 11.5px;
@@ -2523,8 +2540,8 @@ body.gantt-collapsed .gantt-rows { display: none; }
    render), so the ONLY genuinely empty spot to dock a corner button is the
    small triangle outside the circle's own curve near the actual corner; a
    wider text button's far corner still clipped into the circle there. Same
-   small bordered-box treatment as .co-tt-microscope elsewhere, sized to fit
-   that triangle with room to spare — full description lives in the title
+   small bordered-box treatment as .pdp-close elsewhere, sized to fit that
+   triangle with room to spare — full description lives in the title
    tooltip instead. */
 .pv-azel-btn {
   position: absolute;
@@ -2675,34 +2692,6 @@ body.gantt-collapsed .gantt-rows { display: none; }
   vertical-align: middle;
 }
 .co-tt-result { margin-bottom: 5px; font-weight: 600; }
-/* Small bordered box in the tooltip's own top-right corner — same look as
-   PassDetailPanel.js's .pdp-microscope button, just sized down to fit this
-   much smaller tooltip. Absolutely positioned against .co-tooltip itself
-   (position:fixed, so it's already a positioning context) rather than
-   inline in the header, so it stays put in the corner regardless of how
-   long the satellite name/station/network text ends up being. */
-.co-tt-microscope {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  background: transparent;
-  border: 1px solid #2a2a4a;
-  border-radius: 4px;
-  color: #889;
-  font-size: 11px;
-  line-height: 1;
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
-}
-.co-tt-microscope:hover { color: #fff; border-color: #4444aa; background: #1e1e30; }
-/* Reserves room so the header text can't run underneath the corner box —
-   only applied when the box is actually present (a future pass has none). */
-.co-tt-header:has(.co-tt-microscope) { padding-right: 26px; }
 .co-tt-procs  { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
 /* min-width:0 is needed HERE too, not just on .co-tt-pname below — this row is
    itself a flex item of .co-tt-procs, and a flex item's default min-width:auto
@@ -2743,17 +2732,6 @@ body.gantt-collapsed .gantt-rows { display: none; }
    default 300px cap clips that combination before it ever gets the chance
    to just... not wrap. */
 .sch-timetag-tooltip { max-width: 380px; }
-.co-batt-mon-note { font-size: 12px; color: #555; margin-bottom: 6px; } /* 10px * 1.2 */
-.co-batt-mon-row  { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; font-family: 'Courier New', monospace; margin-bottom: 2px; } /* 11px * 1.2 */
-.co-batt-mon-lvl  { font-weight: 700; min-width: 70px; }
-.co-batt-mon-band { color: #aaa; }
-.co-mon-nominal  { color: #2db872; }
-.co-mon-watch    { color: #a0d4ff; }
-.co-mon-warning  { color: #ffbe0b; }
-.co-mon-distress { color: #ff8c00; }
-.co-mon-severe   { color: #ff4466; }
-.co-mon-critical { color: #ff0040; }
-.co-batt-hover   { cursor: help; }
 .co-soc          { display: block; font-size: 9px; opacity: 0.6; margin-top: 1px; }
 .co-tt-dur { font-size: 10px; opacity: 0.55; flex-shrink: 0; }
 .co-tt-num { opacity: 0.45; min-width: 1ch; }
@@ -2841,12 +2819,10 @@ body.gantt-collapsed .gantt-rows { display: none; }
 .co-tt-gap-warn { color: #ffcc00; }
 .co-tt-gap-lost { color: #ff4466; }
 
-/* ── Pass Detail Panel — vertical slide-in from the right, opened by clicking
-   a pass (dot/block/gantt bar). Holds the full detail that used to overload
-   the hover tooltip: eclipse bar, polar plot, Eb/N0 chart, procedure history,
-   procedure report. Not a modal — no backdrop — so it reads as a persistent
-   reference panel the operator can leave open while working the rest of the
-   screen, closed via the × button or Escape. ─────────────────────────────── */
+/* ── Slide-in panel chrome — vertical panel from the right (currently just
+   AddPointPanel.js). Not a modal — no backdrop — so it reads as a
+   persistent reference panel the operator can leave open while working the
+   rest of the screen, closed via the × button or Escape. ──────────────── */
 .pdp-panel {
   position: fixed;
   top: 56px; /* clears the fixed tab bar */
@@ -2874,9 +2850,7 @@ body.gantt-collapsed .gantt-rows { display: none; }
   flex-shrink: 0;
 }
 .pdp-title { font-size: 15px; font-weight: 700; color: #ccc; }
-.pdp-sat-name { letter-spacing: 0.02em; }
-.pdp-header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.pdp-close, .pdp-microscope {
+.pdp-close {
   background: transparent;
   border: 1px solid #2a2a4a;
   color: #889;
@@ -2889,8 +2863,7 @@ body.gantt-collapsed .gantt-rows { display: none; }
   flex-shrink: 0;
   transition: color 0.15s, border-color 0.15s, background-color 0.15s;
 }
-.pdp-close:hover, .pdp-microscope:hover { color: #fff; border-color: #4444aa; background: #1e1e30; }
-.pdp-microscope { font-size: 13px; }
+.pdp-close:hover { color: #fff; border-color: #4444aa; background: #1e1e30; }
 .pdp-body {
   flex: 1;
   overflow-y: auto;
@@ -2898,20 +2871,6 @@ body.gantt-collapsed .gantt-rows { display: none; }
   padding: 14px;
   font-size: 11.5px;
 }
-/* Scoped to the panel only — .co-tt-header is shared with the hover tooltip
-   and the TMR gap tooltip elsewhere, which don't need flex layout. */
-.pdp-body .co-tt-header { display: flex; align-items: baseline; gap: 8px; }
-.pdp-raw-logs {
-  margin-left: auto;
-  font-size: 10px;
-  color: #778;
-  text-decoration: none;
-  border: 1px solid #2a2a4a;
-  border-radius: 4px;
-  padding: 2px 6px;
-  white-space: nowrap;
-}
-.pdp-raw-logs:hover { color: #ccc; border-color: #4444aa; }
 /* Mask AOS · apogee · mask LOS — one line, colors/symbols match the polar
    plot's own markers (MARKER_COLORS in passPolar.js) so this text and the
    plot read as the same information. */
@@ -3561,8 +3520,8 @@ a.co-link:hover {
 }
 .pa-details .co-tt-header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; padding-bottom: 0; border-bottom: none; padding-right: 82px; } /* reserves room so a long satellite/station/network name can't run under the copy/< / > buttons in the corner (3 buttons now, was 56px for 2) */
 /* < / > pass step buttons + copy, top-right corner of the card — same small
-   bordered-box treatment as .co-tt-microscope/.pdp-microscope elsewhere,
-   scaled for this context. .pa-details needs position:relative for this to
+   bordered-box treatment as .pdp-close elsewhere, scaled for this
+   context. .pa-details needs position:relative for this to
    anchor to ITS corner specifically rather than some further ancestor.
    padding-top reserves a strip across the top of the card for both this AND
    .pa-analyzer-tag (opposite corner) — replaces what used to be a full-width
@@ -3710,13 +3669,13 @@ a.co-link:hover {
    Eb/N0 span toggle + Copy PNG) — every other .pa-panel-title is plain text,
    so the flex layout is scoped here rather than on the shared class. */
 .pa-middle .pa-panel-title { display: flex; align-items: center; justify-content: space-between; flex: 0 0 auto; }
-/* .co-tt-details-row's shared rule (used by PassDetailPanel.js's slide-in and
-   the hover tooltip too) keeps align-items:flex-start and no fixed height —
-   fine there, since neither sits in a fixed-height grid row with spare space
-   to give away. Scoped here instead of changing that shared rule: this is
-   the one context (.pa-middle, a 270px grid row — see .pa-main-row) with
-   real leftover vertical space, and PassAnalyzer.js measures THIS element's
-   resulting height to size the Eb/N0 chart to fill it exactly (see
+/* .co-tt-details-row's own base rule keeps align-items:flex-start and no
+   fixed height — fine there, since it doesn't otherwise sit in a
+   fixed-height grid row with spare space to give away. Scoped here instead
+   of changing that shared rule: this is the one context (.pa-middle, a
+   270px grid row — see .pa-main-row) with real leftover vertical space, and
+   PassAnalyzer.js measures THIS element's resulting height to size the
+   Eb/N0 chart to fill it exactly (see
    chartHeight in _render) — flex:1 + stretch is what makes that height real
    instead of just the row's own (small) content height. */
 .pa-middle .co-tt-details-row { flex: 1 1 auto; min-height: 0; align-items: stretch; }
@@ -4082,7 +4041,17 @@ a.co-link:hover {
   padding: 5px 8px;
   flex: 1;
   min-width: 0;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
 }
+.sch-select:hover  { border-color: #3a3a52; }
+.sch-select:focus  { outline: none; border-color: #4a8cff; background: #1e1e30; }
+/* Each <option>'s own color:${sat.color} (set in Scheduler.js's
+   _renderSelector) carries into this closed box too once selected — the
+   satellite's usual accent (same one ChadOps.js/InputPanel.js already tag
+   its Fleet row/gantt bars with) shows here as well instead of just inside
+   the opened list. */
+.sch-select option { background: #1a1a28; }
 /* Gantt now shares its row with .sch-side-panel instead of spanning the full
    section width on its own line — grows to fill whatever the side panel
    doesn't use. min-width:0 lets it actually shrink below its content's
@@ -4861,6 +4830,49 @@ a.co-link:hover {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+/* Thin, dark, low-contrast scrollbars for every scrolling region on this
+   tab (All-passes list, scheduled/executed-procedures panel, procedure
+   catalog + enum-combo floating dropdowns, argument list) — same treatment
+   PassAnalyzer.js's own .pa-body/.pa-tc-slot/etc. already use (see that
+   rule's own comment); the default OS scrollbar (thick, light gray) stood
+   out against the dark theme far more than a scroll affordance needs to. */
+.sch-pass-list,
+.sch-proc-panel-body,
+.sch-proc-catalog,
+.sch-combo-list,
+.sch-proc-arg-list {
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: #2a2a4a transparent;
+}
+.sch-pass-list::-webkit-scrollbar,
+.sch-proc-panel-body::-webkit-scrollbar,
+.sch-proc-catalog::-webkit-scrollbar,
+.sch-combo-list::-webkit-scrollbar,
+.sch-proc-arg-list::-webkit-scrollbar {
+  width: 8px;
+}
+.sch-pass-list::-webkit-scrollbar-track,
+.sch-proc-panel-body::-webkit-scrollbar-track,
+.sch-proc-catalog::-webkit-scrollbar-track,
+.sch-combo-list::-webkit-scrollbar-track,
+.sch-proc-arg-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sch-pass-list::-webkit-scrollbar-thumb,
+.sch-proc-panel-body::-webkit-scrollbar-thumb,
+.sch-proc-catalog::-webkit-scrollbar-thumb,
+.sch-combo-list::-webkit-scrollbar-thumb,
+.sch-proc-arg-list::-webkit-scrollbar-thumb {
+  background: #2a2a4a;
+  border-radius: 4px;
+}
+.sch-pass-list::-webkit-scrollbar-thumb:hover,
+.sch-proc-panel-body::-webkit-scrollbar-thumb:hover,
+.sch-proc-catalog::-webkit-scrollbar-thumb:hover,
+.sch-combo-list::-webkit-scrollbar-thumb:hover,
+.sch-proc-arg-list::-webkit-scrollbar-thumb:hover {
+  background: #3a3a5a;
 }
 .sch-pass-list-row {
   display: flex;

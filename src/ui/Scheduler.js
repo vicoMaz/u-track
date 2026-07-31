@@ -12,11 +12,12 @@ import { schedulePlanFetch } from '../planData.js';
 import { scheduleTmrFetch, TMR_SOURCES } from '../tmrData.js';
 import { requestTmrGapDownload, findMatchingGapProcedure, fetchNextPassProcedures } from '../tmrGapDownload.js';
 import { satSubsystemOrigin } from '../satSubsystems.js';
+import { satIsSimulated, satEffectiveNow, hasSatTimeOffset } from '../satSimu.js';
 import { fetchTcPackets, matchScheduledTargets, collectArguments, argUnitLabel, TC_114_NAME_RE, tcAckStatus } from '../tcPackets.js';
 import { fetchTmPacket, extractTmParam } from '../satTelemetry.js';
 import {
   fmtDuration, fmtTimeOnly, passSimpleTooltipContent, positionTooltip,
-  hydratePassGeometry, hydrateScheduledProcedures, passEclipseBarHTML, passGeometryHTML,
+  hydratePassGeometry, hydrateScheduledProcedures, hydratePassStatusDots, passEclipseBarHTML, passGeometryHTML,
 } from './passTooltip.js';
 import { escapeHtml } from './logView.js';
 import { fetchPassGsCoords, computePolarPoints, computePolarMarkers } from './passPolar.js';
@@ -110,6 +111,7 @@ function _showPassTooltip(e, pass, sat) {
   positionTooltip(e, _tooltipEl);
   hydratePassGeometry(_tooltipEl, e, pass, sat);
   hydrateScheduledProcedures(_tooltipEl, pass, sat);
+  hydratePassStatusDots(_tooltipEl, pass, sat);
 }
 
 // `comments` is a JSON-encoded string (pass-geometry metadata) — parsed into
@@ -296,11 +298,14 @@ let _winT0 = null, _winT1 = null; // HARD outer bounds, frozen at satellite-sele
 let _viewT0 = null, _viewT1 = null; // CURRENT visible window — starts equal to [_winT0,_winT1] (fully zoomed out), moved by wheel-zoom/drag-pan within it
 let _eclipseWindows = [];         // [{start,end}] in ms, within [_winT0,_winT1] — filled in by _scheduleEclipseWork
 
-// Matches TimePlayer.js's own MIN_SPAN_SEC (300s) — the closest you can ever
-// zoom in. No separate max: the max span is just the full [_winT0,_winT1]
-// horizon itself (mirrors TimePlayer's MAX_SPAN_SEC = VIEW_HALF_SEC*2), so
-// zooming out has nowhere further to go once the whole horizon is visible.
-const MIN_SPAN_MS = 5 * 60_000;
+// The closest you can ever zoom in. Originally matched TimePlayer.js's own
+// MIN_SPAN_SEC (300s = 5min) exactly; tightened further per Victor's own
+// request for this tab specifically (not applied to TimePlayer.js's live
+// gantt, whose scrubber has different needs) — 2min instead of 5min. No
+// separate max: the max span is just the full [_winT0,_winT1] horizon itself
+// (mirrors TimePlayer's MAX_SPAN_SEC = VIEW_HALF_SEC*2), so zooming out has
+// nowhere further to go once the whole horizon is visible.
+const MIN_SPAN_MS = 2 * 60_000;
 
 function _viewSpan() { return _viewT1 - _viewT0; }
 
@@ -326,6 +331,21 @@ function _sat() {
   return store.satellites.find(s => s.id === _satId) ?? null;
 }
 
+// "Now", from the currently selected satellite's own point of view — plain
+// Date.now() for a real satellite (or when none is selected); corrected by
+// the satellite's own SCC-reported clock offset when it's simulated (see
+// satSimu.js). satPasses.js already fetches this satellite's pass data
+// against satEffectiveNow, so every "now"-relative thing on this tab (the
+// ±WINDOW_MS window itself, the gantt's "now" line, T-MINUS countdowns, the
+// "Next pass" shortcut) has to agree with THAT clock too, or a simulated
+// satellite whose sim time runs far from real wall-clock time would show a
+// window with no data in it, or a countdown to a pass that's already past
+// from its own clock's point of view.
+function _now() {
+  const sat = _sat();
+  return sat ? satEffectiveNow(sat.noradId) : Date.now();
+}
+
 // Chronological — the gantt reads left-to-right as time passing, so display
 // order should match, unlike PassAnalyzer's own newest-first TC list (a
 // different reading direction for a different purpose).
@@ -343,7 +363,7 @@ function _plans() {
 // [_winT0,_winT1] horizon (the button is disabled in that case — see
 // _renderGantt's own selBody template).
 function _selectNextUpcomingPass() {
-  const now = Date.now();
+  const now = _now();
   const next = _passes().find(p => p.end.getTime() > now);
   if (!next) return;
   _selectedPass = next;
@@ -506,7 +526,11 @@ function _previousPass() {
 async function _fetchCcswSubscheduleStatus(sat) {
   const origin = satSubsystemOrigin(sat.noradId, 'sccRo');
   if (!origin) return null;
-  const nowMs = Date.now();
+  // satEffectiveNow: plain Date.now() for a real satellite (see satSimu.js);
+  // for a simulated one, corrected by its own SCC-reported clock offset, so
+  // this actually lands on the window HK_CCSW downlinked in (same reasoning
+  // satTelemetry.js's own fetchSatTelemetry follows).
+  const nowMs = satEffectiveNow(sat.noradId);
   const end   = new Date(nowMs + 10_000).toISOString();
   const start = new Date(nowMs - 5 * 24 * 3_600_000).toISOString();
   const ctrl  = new AbortController();
@@ -834,7 +858,7 @@ function _tmrGapUrgency(gap) {
 // use (duplicated, not exported there either — same precedent
 // _PLAN_STATUS_COLOR above already follows). Fixed day-boundary ticks were
 // fine back when this view had no zoom, but wheel-zoom/drag-pan (added
-// since) can narrow the view down to MIN_SPAN_MS (5 min) — at that span a
+// since) can narrow the view down to MIN_SPAN_MS (2 min) — at that span a
 // day-boundary-only ruler would usually show NO ticks at all. Targets ~8
 // ticks across whatever span is currently visible, snapping to the largest
 // interval at or below that ideal spacing.
@@ -884,12 +908,12 @@ function _rulerHTML(t0, t1) {
 // Full-height red "now" line (#sch-gantt-now-full, see style.css) — ticked on
 // an interval (see initScheduler) rather than only redrawn on satellite
 // select/zoom/pan, so it stays accurate even while the view sits idle at its
-// most zoomed-in span (MIN_SPAN_MS = 5 min), where a few minutes of drift
+// most zoomed-in span (MIN_SPAN_MS = 2 min), where a few minutes of drift
 // would otherwise be visible as a wrongly-placed line.
 function _updateNowLine() {
   if (!_nowLineEl) return;
   if (_viewT0 == null) { _nowLineEl.style.display = 'none'; return; }
-  const pct = (Date.now() - _viewT0) / (_viewT1 - _viewT0) * 100;
+  const pct = (_now() - _viewT0) / (_viewT1 - _viewT0) * 100;
   if (pct < 0 || pct > 100) { _nowLineEl.style.display = 'none'; return; }
   _nowLineEl.style.display = 'block';
   _nowLineEl.style.left = `${pct.toFixed(3)}%`;
@@ -924,7 +948,7 @@ function _fmtCountdown(deltaMs) {
 function _updateSelPassCountdown() {
   const el = document.getElementById('sch-selpass-countdown');
   if (!el || !_selectedPass) return;
-  el.textContent = _fmtCountdown(_selectedPass.start.getTime() - Date.now());
+  el.textContent = _fmtCountdown(_selectedPass.start.getTime() - _now());
 }
 
 // Shared by the hover crosshair below AND the "pick from timeline" feature
@@ -1498,8 +1522,9 @@ function _renderProcedurePanel(pass, sat) {
   body.innerHTML = _pastProcListHTML(pass)
     + `<button type="button" class="sch-nav-btn sch-open-analyzer-btn" id="sch-open-analyzer-btn">Open in Pass Analyzer 🔬</button>`;
   // Dispatched, not a direct import of PassAnalyzer.js/main.js — same
-  // decoupling PassDetailPanel.js's own microscope button uses (see there);
-  // main.js already listens for this to switch tabs + set the selection.
+  // decoupling passTooltip.js's own "Open with Pass Analyzer" button uses
+  // (see there); main.js already listens for this to switch tabs + set the
+  // selection.
   document.getElementById('sch-open-analyzer-btn')?.addEventListener('click', () => {
     document.dispatchEvent(new CustomEvent('pda:open-pass', { detail: { sat, pass } }));
   });
@@ -2718,7 +2743,7 @@ function _renderGantt() {
 
   if (!selBody) return;
   if (!_selectedPass) {
-    const hasNext = _passes().some(p => p.end.getTime() > Date.now());
+    const hasNext = _passes().some(p => p.end.getTime() > _now());
     selBody.innerHTML = `
       <div class="sch-next-pass-empty">
         <span class="sch-empty-inline">No pass selected.</span>
@@ -2742,7 +2767,7 @@ function _renderGantt() {
       <div class="co-tt-time-row"><span class="co-tt-time-lbl">DUR</span>${fmtDuration(_selectedPass.end - _selectedPass.start)}</div>
       <div class="co-tt-time-row"><span class="co-tt-time-lbl">STN</span>${_selectedPass.station ?? '—'}${_selectedPass.network ? `<span class="co-tt-network">${_selectedPass.network}</span>` : ''}</div>
       <div class="co-tt-time-row"><span class="co-tt-time-lbl">DATE</span>${_fmtDT(_selectedPass.start)}</div>
-      <div class="co-tt-time-row"><span class="co-tt-time-lbl">T-MINUS</span><span id="sch-selpass-countdown">${_fmtCountdown(_selectedPass.start.getTime() - Date.now())}</span></div>
+      <div class="co-tt-time-row"><span class="co-tt-time-lbl">T-MINUS</span><span id="sch-selpass-countdown">${_fmtCountdown(_selectedPass.start.getTime() - _now())}</span></div>
       ${passEclipseBarHTML(sat.satrec, _selectedPass.start, _selectedPass.end)}
       <div class="pass-geometry-slot"></div>
     </div>
@@ -2806,6 +2831,20 @@ function _movePan(clientX) {
 }
 function _endPan() { _pan = null; }
 
+// Set at freeze time (below) to the satellite's id whenever the window was
+// just frozen for a SIMULATED satellite whose clock offset (satSimu.js)
+// hadn't resolved yet — satPing.js's own fetch is async and starts only
+// once that satellite's ping cycle gets going, which this tab's auto-select
+// (initScheduler's _renderSelector, on the very first store.satellites
+// populate) can easily beat, especially for the FIRST satellite in the
+// list, selected the instant it exists. Confirmed live: a simulated
+// satellite in that slot froze its window against plain, uncorrected
+// Date.now() and stayed wrong even after the real offset landed, since
+// _selectSatellite otherwise only ever runs again on an actual selection
+// change. null once corrected (see _recheckPendingOffsetCorrection below) or
+// whenever nothing needs correcting in the first place.
+let _pendingOffsetCorrectionSatId = null;
+
 // Freezes a new ±WINDOW_MS window around "now" for this satellite, kicks off
 // the eclipse computation and the plan fetch against it, and clears any
 // selection carried over from a different satellite (which would otherwise
@@ -2815,6 +2854,7 @@ function _selectSatellite(satId) {
   _selectedPass = null;
   const sat = _sat();
   if (!sat) {
+    _pendingOffsetCorrectionSatId = null;
     _winT0 = _winT1 = _viewT0 = _viewT1 = null;
     _procCatalog = null;
     _selectedProc = null;
@@ -2826,7 +2866,15 @@ function _selectSatellite(satId) {
     _renderGantt();
     return;
   }
-  const now = Date.now();
+  // satEffectiveNow, not Date.now(): satPasses.js fetches this satellite's
+  // own pass data centered on ITS effective now (real Date.now() for a
+  // normal satellite, clock-offset-corrected for a simulated one — see
+  // satSimu.js) — this window has to match that exactly, or a simulated
+  // satellite running on a sim clock far from real wall-clock time would
+  // freeze a window with no pass data anywhere in it (see WINDOW_MS's own
+  // comment).
+  _pendingOffsetCorrectionSatId = (satIsSimulated(sat.noradId) && !hasSatTimeOffset(sat.noradId)) ? sat.id : null;
+  const now = satEffectiveNow(sat.noradId);
   _winT0 = now - WINDOW_MS;
   _winT1 = now + WINDOW_MS;
   _viewT0 = _winT0; // fully zoomed out by default — same starting point as TimePlayer.js's own ±VIEW_HALF_SEC default
@@ -2837,6 +2885,21 @@ function _selectSatellite(satId) {
   _triggerTimetag();
   _loadProcedureCatalog(sat);
   _renderGantt();
+}
+
+// Runs on the same 1s tick as _updateNowLine/_updateSelPassCountdown (see
+// initScheduler) — catches the moment a still-pending simulated satellite's
+// clock offset (see _pendingOffsetCorrectionSatId's own comment) actually
+// resolves, and re-freezes the window/eclipse/plan/TMR/timetag fetches
+// against the now-corrected satEffectiveNow by just re-running the normal
+// selection path. No-ops (cheap: two comparisons) once nothing's pending, or
+// if the selection has since moved on to a different satellite — in which
+// case there's nothing left here worth correcting.
+function _recheckPendingOffsetCorrection() {
+  if (_pendingOffsetCorrectionSatId == null || _pendingOffsetCorrectionSatId !== _satId) return;
+  const sat = _sat();
+  if (!sat || !hasSatTimeOffset(sat.noradId)) return;
+  _selectSatellite(sat.id);
 }
 
 // Entry point for the pass tooltip's "Schedule procedures" button
@@ -2939,7 +3002,18 @@ export function initScheduler() {
       _selectSatellite(null);
       return;
     }
-    select.innerHTML = store.satellites.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+    // style="color:${s.color}" — the same per-satellite accent color the
+    // Fleet row dot/gantt bars already use elsewhere (ChadOps.js's
+    // --scc-color, InputPanel.js's --sat-dot), applied to the option itself
+    // since a native <select>'s closed state can't host an actual colored
+    // dot element. "🧪 SIM" suffix mirrors ChadOps.js's/InputPanel.js's own
+    // simu badge text (same "not exported there either" — a <select>'s
+    // options are plain text, so this can't reuse their .co-simu-badge/
+    // .st-simu-badge markup, only the label itself).
+    select.innerHTML = store.satellites.map(s => {
+      const label = satIsSimulated(s.noradId) ? `${s.name}  🧪 SIM` : s.name;
+      return `<option value="${s.id}" style="color:${s.color}">${label}</option>`;
+    }).join('');
     const stillThere = prev && store.satellites.some(s => s.id === prev);
     const nextId = stillThere ? prev : store.satellites[0].id;
     select.value = nextId;
@@ -3011,7 +3085,7 @@ export function initScheduler() {
   _nowLineEl        = document.getElementById('sch-gantt-now-full');
   _crosshairEl      = document.getElementById('sch-gantt-crosshair');
   _crosshairLabelEl = document.getElementById('sch-gantt-crosshair-label');
-  setInterval(() => { _updateNowLine(); _updateSelPassCountdown(); }, 1000);
+  setInterval(() => { _updateNowLine(); _updateSelPassCountdown(); _recheckPendingOffsetCorrection(); }, 1000);
 
   // Right column: the catalog dropdown floats open only while actively
   // searching — shown on focus (rendering whatever's already fetched, even

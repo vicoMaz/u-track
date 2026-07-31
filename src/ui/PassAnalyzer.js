@@ -15,10 +15,10 @@
 // reason — see TC_MAX_LIMIT below.
 import { store } from '../store.js';
 import { satSubsystemHost, satSubsystemOrigin } from '../satSubsystems.js';
-import { TC_MAX_LIMIT, TC_114_NAME_RE, TC_UNACKED_EXCLUDE, fetchTcPackets, matchScheduledTargets, collectArguments, argUnitLabel, tcAckStatus as _tcAckStatus } from '../tcPackets.js';
+import { TC_MAX_LIMIT, TC_114_NAME_RE, fetchTcPackets, matchScheduledTargets, collectArguments, argUnitLabel, tcAckStatus as _tcAckStatus, tcPacketsAcked } from '../tcPackets.js';
 import { fetchPassGsCoords, buildPolarSVG, computePolarPoints, computePolarMarkers } from './passPolar.js';
 import { fetchProcedureReport, procedureReportHTML } from './procedureReport.js';
-import { fetchEbn0Series, fetchTcEbn0Series, fetchTmPacketsCounterSeries, ebn0HTML, copyEbn0ChartPNG, PROC_BAR_STRIP_H, PAD_B, nearestByTime } from './ebn0.js';
+import { fetchEbn0Series, fetchTcEbn0Series, fetchTmPacketsCounterSeries, tmPacketsReceived, ebn0HTML, copyEbn0ChartPNG, PROC_BAR_STRIP_H, PAD_B, nearestByTime } from './ebn0.js';
 import { wireLinkedCursor } from './passCursor.js';
 import { openAzElModal } from './passAzElModal.js';
 import { fmtDuration, fmtDateTimeShort, fmtTimeOnly, grafanaLokiUrl, grafanaModalTitle, LOKI_PROC_PAD_MS, passEclipseBarHTML, positionTooltip } from './passTooltip.js';
@@ -822,10 +822,10 @@ async function _fetchFullPassLog(grafanaHost, pass) {
 
 let _body;
 // No selectors at all anymore (removed both the pass AND satellite
-// dropdowns — the only real entry point is the microscope button in
-// PassDetailPanel.js's slide-in, via setSelection() below, which already
-// knows the exact satellite+pass to show). _currentSat/_selectedPass just
-// track whatever that last call handed over.
+// dropdowns — the only real entry point is the "Open with Pass Analyzer"
+// button in passTooltip.js's hover tooltip, via setSelection() below, which
+// already knows the exact satellite+pass to show). _currentSat/_selectedPass
+// just track whatever that last call handed over.
 let _currentSat = null;
 let _selectedPass = null;
 let _gen = 0; // guards a slower in-flight render from clobbering a newer selection
@@ -1076,9 +1076,9 @@ function _updateHash(sat, pass) {
 }
 
 // Entry point for "open this exact pass in the Analyzer" — called from
-// PassDetailPanel.js's microscope button, via main.js (see there for why
-// this isn't a direct import), and from main.js's own startup hash-restore.
-// The only way anything ever gets shown here.
+// passTooltip.js's "Open with Pass Analyzer" button, via main.js (see there
+// for why this isn't a direct import), and from main.js's own startup
+// hash-restore. The only way anything ever gets shown here.
 export function setSelection(sat, pass) {
   if (!sat || !pass) return;
   _currentSat = sat;
@@ -1414,28 +1414,51 @@ async function _render() {
     _ebn0DateTooltipEl.style.top  = `${top}px`;
   }
 
+  // Current scroll-to-zoom window on the Eb/N0 chart's X (time) axis — null
+  // means fully zoomed out (the whole span, same as before this existed).
+  // Local to this one pass's render (not a module-level preference like
+  // _ebn0Span): an absolute {t0,t1} window only means anything against THIS
+  // pass's own time domain, so it can't be carried over to the next pass
+  // opened, and it's reset below whenever the span TOGGLE changes that
+  // domain out from under it.
+  let _ebn0ViewRange = null;
+  let _ebn0RedrawRaf = null;
+  // Wheel events during a fast scroll can fire many times per animation
+  // frame — coalesces any burst within one frame into a single _drawEbn0()
+  // (a real DOM rebuild, not cheap) using whichever zoom window is current
+  // when the frame actually renders, same reasoning Scheduler.js's own
+  // _scheduleRender coalesces its gantt's wheel-zoom redraws.
+  function _scheduleEbn0Redraw() {
+    if (_ebn0RedrawRaf) return;
+    _ebn0RedrawRaf = requestAnimationFrame(() => { _ebn0RedrawRaf = null; _drawEbn0(); });
+  }
+
   // Redraws just the Eb/N0 chart + its linked cursor from already-fetched
-  // data (no network round trip) — shared by the initial draw below and the
-  // span-toggle button, so toggling span doesn't re-fetch TM/TC series, TC
-  // packets, or the full log all over again. Targets '.ebn0-slot,.ebn0-block'
-  // since the first draw replaces the skeleton's .ebn0-slot with .ebn0-block
-  // (ebn0HTML's own wrapper) via outerHTML — every redraw after that has to
-  // find THAT instead, and self-replaces it the same way.
+  // data (no network round trip) — shared by the initial draw below, the
+  // span-toggle button, and scroll-to-zoom, so none of those re-fetch TM/TC
+  // series, TC packets, or the full log all over again. Targets
+  // '.ebn0-slot,.ebn0-block' since the first draw replaces the skeleton's
+  // .ebn0-slot with .ebn0-block (ebn0HTML's own wrapper) via outerHTML —
+  // every redraw after that has to find THAT instead, and self-replaces it
+  // the same way.
   function _drawEbn0() {
     const slot = _body.querySelector('.pa-middle .ebn0-slot, .pa-middle .ebn0-block');
-    if (slot) slot.outerHTML = ebn0HTML(series, markers, pass.procedures, ebn0Range, tcSeries, chartWidth, chartHeight, tcHistogram, tmHistogram, _ebn0Span);
+    if (slot) slot.outerHTML = ebn0HTML(series, markers, pass.procedures, ebn0Range, tcSeries, chartWidth, chartHeight, tcHistogram, tmHistogram, _ebn0Span, _ebn0ViewRange);
     const newEbn0El = _body.querySelector('.ebn0-chart');
     // Re-wiring (not reusing the old cursor object) is required, not just
-    // convenient — a span toggle swaps in a brand-new <svg>, so the old
-    // cursor's DOM references (line/dots/labels) point at elements no longer
-    // in the document.
+    // convenient — a span toggle (or a zoom redraw) swaps in a brand-new
+    // <svg>, so the old cursor's DOM references (line/labels) point at
+    // elements no longer in the document.
     _tcCursor = wireLinkedCursor(polarEl, polarPoints, newEbn0El, series, pass.procedures, tcSeries, ebn0Range,
       t => {
         _updateEbn0Readout(t);
         _updateEbn0DateTooltip(t, newEbn0El);
         if (t == null) { _clearTcRowHighlight(); _clearLogLineHighlight(); }
         else            { _highlightTcRowAt(t);  _highlightLogLineAt(t); }
-      }, _ebn0Span);
+      }, _ebn0Span, _ebn0ViewRange, viewRange => {
+        _ebn0ViewRange = viewRange;
+        _scheduleEbn0Redraw();
+      });
   }
   _drawEbn0();
 
@@ -1445,6 +1468,7 @@ async function _render() {
     _labelEbn0SpanBtn();
     ebn0SpanBtn.addEventListener('click', () => {
       _ebn0Span = _ebn0Span === 'pass' ? 'procedures' : 'pass';
+      _ebn0ViewRange = null; // the underlying time domain just changed entirely — any current zoom window no longer means anything against it
       _labelEbn0SpanBtn();
       _drawEbn0();
     });
@@ -1521,57 +1545,21 @@ async function _render() {
   const tcCountEl = _body.querySelector('.pa-tc-count');
   if (tcCountEl) tcCountEl.textContent = tcPackets == null ? '' : `(${tcCount})`;
 
-  // At-a-glance pass health, in .pa-details: TM received (the downlink TM
-  // Eb/N0 series actually has samples — the same `series` the chart above
-  // draws), and TC acknowledgment coverage — about ACKNOWLEDGMENT
-  // specifically (an acceptance report, success or failure, arriving at
-  // all), not execution outcome: catches both a plain 'pending' TC and the
-  // 'exec-ok with no acceptance' "Acceptance failure" oddity
-  // _failurePillHTML already flags per-row.
-  // Same "one row per command" set the TC list itself shows (and the send
-  // histogram counts) — a TC_11_4's scheduled TARGET is a separately-timed
-  // nested event absorbed into its own envelope's row, so it's excluded here
-  // too rather than double-counted as if it were its own independent send.
-  // TC_UNACKED_EXCLUDE names are dropped from the ELIGIBLE set entirely
-  // (not just skipped when checking for a missing report) — they're known
-  // to never ack by design, so they shouldn't count toward "how many of
-  // this pass's TCs got acknowledged" either.
-  const { consumedIds: tcConsumedIds } = matchScheduledTargets(tcPackets ?? []);
-  const tcTopLevel  = tcPackets?.filter(p => !tcConsumedIds.has(p.id)) ?? [];
-  const tcEligible  = tcTopLevel.filter(p => !TC_UNACKED_EXCLUDE.has(p.name));
-  const tcAcceptedCount = tcEligible.filter(p => p.acks?.acceptance).length;
-  // Red: EVERY eligible TC in the pass is missing its acceptance report —
-  // a total ack-chain failure, worse than the merely-partial orange case.
-  const tcAllUnacked  = tcEligible.length > 0 && tcAcceptedCount === 0;
-  const tcSomeUnacked = tcAcceptedCount < tcEligible.length; // true for the all-unacked case too
-  const tcAcked = !!tcTopLevel.some(p => {
-    const st = _tcAckStatus(p.acks);
-    return st === 'accepted' || st === 'exec-ok';
-  });
-  const tmReceived = !!series?.length;
+  // At-a-glance pass health, in .pa-details: TM received (tmPacketsReceived,
+  // ebn0.js) and TC acknowledgment (tcPacketsAcked, tcPackets.js) — shared
+  // with passTooltip.js's hover-tooltip copy of the same two dots, so both
+  // views can't drift onto different criteria for the same claim.
+  const tcAcked = tcPacketsAcked(tcPackets ?? []);
+  const tmReceived = tmPacketsReceived(tmCounter);
   const tmDotEl = _body.querySelector('.pa-status-dot[data-status-dot="tm"]');
   if (tmDotEl) {
     tmDotEl.classList.toggle('pa-status-dot-ok', tmReceived);
-    tmDotEl.title = tmReceived ? 'TM Eb/N0 telemetry was received during this pass' : 'No TM Eb/N0 telemetry received during this pass';
+    tmDotEl.title = tmReceived ? 'At least one TM packet was received during this pass' : 'No TM packets were received during this pass';
   }
   const tcDotEl = _body.querySelector('.pa-status-dot[data-status-dot="tc"]');
   if (tcDotEl) {
-    // Red (all unacked) beats orange (some unacked) beats green (acked/
-    // executed) — each is strictly worse/more-actionable than the next, so
-    // whichever applies highest in that order is what the single dot shows.
-    tcDotEl.classList.remove('pa-status-dot-ok', 'pa-status-dot-warn', 'pa-status-dot-crit');
-    if (tcAllUnacked) {
-      tcDotEl.classList.add('pa-status-dot-crit');
-      tcDotEl.title = 'No TC in this pass received an acceptance report at all';
-    } else if (tcSomeUnacked) {
-      tcDotEl.classList.add('pa-status-dot-warn');
-      tcDotEl.title = 'Some TCs never received an acceptance report — no acknowledgment, regardless of execution outcome';
-    } else if (tcAcked) {
-      tcDotEl.classList.add('pa-status-dot-ok');
-      tcDotEl.title = 'At least one TC was acknowledged or executed';
-    } else {
-      tcDotEl.title = 'No TC was acknowledged or executed';
-    }
+    tcDotEl.classList.toggle('pa-status-dot-ok', tcAcked);
+    tcDotEl.title = tcAcked ? 'At least one TC was acknowledged or executed' : 'No TC was acknowledged or executed';
   }
 
   // Hovering a TC row drives the same hair cursor the polar plot / Eb/N0

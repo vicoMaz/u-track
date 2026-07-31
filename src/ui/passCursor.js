@@ -10,6 +10,12 @@
 import { POLAR_VIEWBOX } from './passPolar.js';
 import { CHART_W, CHART_H, PAD_L, PAD_R, ebn0Scales, syncEbn0DotSizes } from './ebn0.js';
 
+// Closest the Eb/N0 chart's scroll-to-zoom can ever get on the time axis —
+// TM/TC samples land a few seconds apart at best, so zooming in tighter than
+// this reveals no further detail, just wasted empty space either side of a
+// single point.
+const EBN0_MIN_SPAN_MS = 5_000;
+
 // A caller (e.g. PassAnalyzer.js) may build the Eb/N0 chart at a custom,
 // wider width/height than the CHART_W/CHART_H default — read the ACTUAL
 // dimensions off the live SVG's own viewBox rather than assuming the
@@ -58,16 +64,14 @@ function _hidePolarCursor(polarEl) {
   });
 }
 
-// Dots + the vertical crosshair line only — no floating "TM 5.85 dB"/
-// "TC 3.87 dB" text callout anymore (that used to live here, drawn next to
-// each dot). PassAnalyzer.js's .pa-ebn0-readout now shows those same two
-// values, plus each histogram's own bucket rate, in one fixed spot instead
-// of a label that had to dodge the chart edges and drifted around with the
-// mouse — dots stay as the actual on-curve position marker.
-function _showEbn0Cursor(ebn0El, tmSeries, tmPoint, procedures, tcSeries, cursorT, fallbackRange, spanMode) {
-  const line  = ebn0El.querySelector('.ebn0-cursor-line');
-  const dot   = ebn0El.querySelector('.ebn0-cursor-dot');
-  const dot2  = ebn0El.querySelector('.ebn0-cursor-dot2');
+// Vertical crosshair line only — no on-curve TM/TC dots and no floating
+// "TM 5.85 dB"/"TC 3.87 dB" text callout (both used to live here). Removed:
+// PassAnalyzer.js's .pa-ebn0-readout already shows both curves' exact values
+// (plus each histogram's own bucket rate) for the hovered moment in one
+// fixed spot, so the on-curve dots were a second, redundant readout of the
+// same numbers the line already marks the position of.
+function _showEbn0Cursor(ebn0El, tmSeries, tmPoint, procedures, tcSeries, cursorT, fallbackRange, spanMode, viewRange) {
+  const line = ebn0El.querySelector('.ebn0-cursor-line');
   if (!line) return;
 
   // The hovered time itself drives the line's position — not a nearby
@@ -79,35 +83,17 @@ function _showEbn0Cursor(ebn0El, tmSeries, tmPoint, procedures, tcSeries, cursor
   if (t == null) return;
 
   const { width, height } = _chartDims(ebn0El);
-  const { xScale, yScale } = ebn0Scales(tmSeries, procedures, fallbackRange, tcSeries, width, height, spanMode);
+  // viewRange: same scroll-to-zoom window the chart itself was just drawn
+  // against (see ebn0Scales' own comment) — without it, the line would track
+  // the FULL pass's time domain instead of whatever's currently zoomed in on.
+  const { xScale } = ebn0Scales(tmSeries, procedures, fallbackRange, tcSeries, width, height, spanMode, viewRange);
   const x = xScale(t);
   line.setAttribute('x1', x); line.setAttribute('x2', x);
   line.setAttribute('visibility', 'visible');
-
-  if (dot) {
-    if (tmPoint) {
-      dot.setAttribute('cx', xScale(tmPoint.t)); dot.setAttribute('cy', yScale(tmPoint.v));
-      dot.setAttribute('visibility', 'visible');
-    } else {
-      dot.setAttribute('visibility', 'hidden');
-    }
-  }
-
-  const tcPoint = tcSeries?.length ? _nearestByTime(tcSeries, t) : null;
-  if (dot2) {
-    if (tcPoint) {
-      dot2.setAttribute('cx', xScale(tcPoint.t)); dot2.setAttribute('cy', yScale(tcPoint.v));
-      dot2.setAttribute('visibility', 'visible');
-    } else {
-      dot2.setAttribute('visibility', 'hidden');
-    }
-  }
 }
 
 function _hideEbn0Cursor(ebn0El) {
-  ['ebn0-cursor-line', 'ebn0-cursor-dot', 'ebn0-cursor-dot2'].forEach(cls => {
-    ebn0El?.querySelector(`.${cls}`)?.setAttribute('visibility', 'hidden');
-  });
+  ebn0El?.querySelector('.ebn0-cursor-line')?.setAttribute('visibility', 'hidden');
 }
 
 // polarEl/ebn0El are the live <svg class="pass-polar">/<svg class="ebn0-chart">
@@ -121,8 +107,8 @@ function _hideEbn0Cursor(ebn0El) {
 // edge instead of tracking the actual hovered time.
 // Returns { driveFromTime, clear } so a caller outside this pair (e.g.
 // PassAnalyzer.js hovering a TC packet row) can drive the same cursor from
-// an arbitrary timestamp — existing callers that ignore the return value
-// (PassDetailPanel.js) are unaffected.
+// an arbitrary timestamp — a caller that ignores the return value is
+// unaffected.
 //
 // onCursor(t), optional: called with the hovered timestamp on every move
 // (polar OR Eb/N0, and externally via driveFromTime) and with null on
@@ -130,7 +116,22 @@ function _hideEbn0Cursor(ebn0El) {
 // already tracks (e.g. PassAnalyzer.js highlighting whichever TC packet was
 // sent closest to it) without this module needing to know anything about
 // what a "TC packet" is. Existing callers that don't pass it are unaffected.
-export function wireLinkedCursor(polarEl, polarPoints, ebn0El, ebn0Series, procedures, tcSeries, fallbackRange, onCursor, spanMode) {
+//
+// viewRange ({t0,t1} ms), optional: the Eb/N0 chart's CURRENT scroll-to-zoom
+// window (see ebn0Scales' own comment) — must be the exact same value the
+// caller just built this chart's SVG against, or hover math here would drift
+// out of sync with what's actually drawn.
+//
+// onZoom(viewRange), optional: called with a new {t0,t1} window (or null,
+// meaning "back to fully zoomed out") whenever the user scroll-wheels over
+// the Eb/N0 chart. This module only computes the new window and reports
+// it — it has no way to redraw the chart itself (that means rebuilding the
+// whole SVG string, which lives in ebn0.js/PassAnalyzer.js's own
+// _drawEbn0), so a caller that wants scroll-to-zoom to actually DO anything
+// must react to this the same way onCursor's own callers already react to
+// hover. A caller that omits it keeps the wheel inert (page scrolls as
+// normal instead).
+export function wireLinkedCursor(polarEl, polarPoints, ebn0El, ebn0Series, procedures, tcSeries, fallbackRange, onCursor, spanMode, viewRange, onZoom) {
   const hasPolar = !!(polarEl && polarPoints?.length);
   // Chart existing (not "has data") is the bar — buildEbn0SVG already draws
   // empty axes from fallbackRange alone, and the cursor line should track
@@ -144,7 +145,7 @@ export function wireLinkedCursor(polarEl, polarPoints, ebn0El, ebn0Series, proce
     if (hasPolar) _showPolarCursor(polarEl, _nearestByTime(polarPoints, t));
     if (hasEbn0) {
       const tmPoint = ebn0Series?.length ? _nearestByTime(ebn0Series, t) : null;
-      _showEbn0Cursor(ebn0El, ebn0Series, tmPoint, procedures, tcSeries, t, fallbackRange, spanMode);
+      _showEbn0Cursor(ebn0El, ebn0Series, tmPoint, procedures, tcSeries, t, fallbackRange, spanMode, viewRange);
     }
     onCursor?.(t);
   }
@@ -174,13 +175,45 @@ export function wireLinkedCursor(polarEl, polarPoints, ebn0El, ebn0Series, proce
     const hit = ebn0El.querySelector('.ebn0-hit');
     hit?.addEventListener('mousemove', ev => {
       const { width, height } = _chartDims(ebn0El);
-      const { t0, t1 } = ebn0Scales(ebn0Series, procedures, fallbackRange, tcSeries, width, height, spanMode);
+      const { t0, t1 } = ebn0Scales(ebn0Series, procedures, fallbackRange, tcSeries, width, height, spanMode, viewRange);
       const rect = ebn0El.getBoundingClientRect();
       const px = (ev.clientX - rect.left) / rect.width * width;
       const frac = Math.min(1, Math.max(0, (px - PAD_L) / (width - PAD_L - PAD_R)));
       driveFromTime(t0 + frac * (t1 - t0));
     });
     hit?.addEventListener('mouseleave', clearAll);
+
+    // Scroll-to-zoom the X (time) axis only — keeps the time under the
+    // cursor fixed while rescaling, same math as Scheduler.js's/
+    // TimePlayer.js's own gantt wheel-zoom. The Y (dB) axis never moves:
+    // ebn0Scales derives lo/hi from the full series regardless of viewRange
+    // (see its own comment), so onZoom narrowing/widening viewRange only
+    // ever touches xScale, never yScale.
+    if (onZoom) {
+      hit?.addEventListener('wheel', ev => {
+        ev.preventDefault();
+        const { width, height } = _chartDims(ebn0El);
+        const { t0, t1, fullT0, fullT1 } = ebn0Scales(ebn0Series, procedures, fallbackRange, tcSeries, width, height, spanMode, viewRange);
+        const rect  = ebn0El.getBoundingClientRect();
+        const px    = (ev.clientX - rect.left) / rect.width * width;
+        const frac  = Math.min(1, Math.max(0, (px - PAD_L) / (width - PAD_L - PAD_R)));
+        const pivot = t0 + frac * (t1 - t0);
+        const factor  = ev.deltaY < 0 ? 0.6 : 1 / 0.6;
+        const fullSpan = fullT1 - fullT0;
+        const minSpan  = Math.min(fullSpan, EBN0_MIN_SPAN_MS);
+        let newSpan = Math.max(minSpan, Math.min(fullSpan, (t1 - t0) * factor));
+        let newT0 = pivot - frac * newSpan;
+        let newT1 = newT0 + newSpan;
+        if (newT0 < fullT0) { newT0 = fullT0; newT1 = newT0 + newSpan; }
+        else if (newT1 > fullT1) { newT1 = fullT1; newT0 = newT1 - newSpan; }
+        // Snapping back to the full domain (rather than a viewRange that
+        // just happens to equal it) is what lets the caller tell "still
+        // zoomed, but zoomed all the way out" apart from "never zoomed" —
+        // immaterial to rendering either way, but keeps onZoom's own null
+        // meaning ("fully zoomed out") consistent for its caller.
+        onZoom(newSpan >= fullSpan ? null : { t0: newT0, t1: newT1 });
+      }, { passive: false });
+    }
   }
 
   return { driveFromTime, clear: clearAll };

@@ -1,17 +1,20 @@
 // Hover preview for a pass. Originally grew to hold a polar ground-track
 // plot, an Eb/N0 chart with a linked cursor, and an async procedure-execution
 // report all at once — heavy and slow to read on a routine hover. That full
-// visual/async detail now lives in PassDetailPanel.js's slide-in panel,
-// opened on click. This tooltip stays synchronous-feeling for everything that
-// doesn't need a network round trip (satellite, station, timing, the full
-// procedure list — all already on the `pass`/`sat` objects), and layers in
-// just the pass-geometry numbers (apogee, antenna-mask AOS/LOS) once the
+// visual/async detail now lives in PassAnalyzer.js's full-page view instead,
+// reached via this tooltip's own "Open with Pass Analyzer" button. This
+// tooltip stays synchronous-feeling for everything that doesn't need a
+// network round trip (satellite, station, timing, the full procedure list —
+// all already on the `pass`/`sat` objects), and layers in just the
+// pass-geometry numbers (apogee, antenna-mask AOS/LOS) once the
 // ground-station lookup resolves — real information, not a chart.
 import { store } from '../store.js';
 import { propagate } from '../tle.js';
 import { sunDirectionECI, isInEclipse } from '../sunVector.js';
 import { fetchPassGsCoords, computePolarPoints, computePolarMarkers, MARKER_COLORS } from './passPolar.js';
 import { fetchScheduledProcedures, scheduledProceduresHTML } from './scheduledProcedures.js';
+import { fetchTmPacketsCounterSeries, tmPacketsReceived } from './ebn0.js';
+import { fetchTcPackets, tcPacketsAcked } from '../tcPackets.js';
 import { satSubsystemHost } from '../satSubsystems.js';
 import './grafanaModal.js'; // side-effect import: registers the click-to-popup handler used by the co-tt-link anchors below
 
@@ -97,22 +100,21 @@ export function grafanaModalTitle(sat, pass, pr) {
 // is already resolved on the pass object, no fetch needed for this part.
 function _procedureListHTML(pass, grafanaHost, sat) {
   if (pass.future) {
-    // Same data-sch-* + delegated-listener shape as the microscope's own
-    // data-pda-* below — jumps to the Scheduler tab with this sat/pass
-    // pre-selected, ready to queue something onto it, rather than making
-    // the operator re-find both by hand over there. Hidden without a real
-    // `sat` for the same reason the microscope hides then (Scheduler needs
-    // one to select).
+    // Same data-sch-* + delegated-listener shape as the "Open with Pass
+    // Analyzer" button's own data-pda-* below — jumps to the Scheduler tab
+    // with this sat/pass pre-selected, ready to queue something onto it,
+    // rather than making the operator re-find both by hand over there.
+    // Hidden without a real `sat` for the same reason that button hides
+    // then (Scheduler needs one to select).
     const schedBtn = sat
-      ? `<button type="button" class="co-tt-sched-btn" data-sch-open data-sch-sat-id="${sat.id}" data-sch-pass-start="${pass.start.getTime()}">Schedule procedures</button>`
+      ? `<button type="button" class="co-tt-sched-btn" data-sch-open data-sch-sat-id="${sat.id}" data-sch-pass-start="${pass.start.getTime()}">📅 Schedule procedures</button>`
       : '';
     return `<div class="co-tt-future-status co-dot-future">○ SCHEDULED</div>
       <div class="pass-procs-slot"><div class="co-tt-note">Checking SCC for scheduled procedures…</div></div>
       ${schedBtn}`;
   }
   const procs = pass.procedures;
-  if (!procs?.length) return `<div class="co-tt-proc co-tt-ok">● PASS OCCURRED</div>`;
-  const rows = procs.map((pr, i) => {
+  const listHtml = !procs?.length ? `<div class="co-tt-proc co-tt-ok">● PASS OCCURRED</div>` : `<div class="co-tt-procs">${procs.map((pr, i) => {
     const num  = `<span class="co-tt-num">${i + 1}</span>`;
     const name = `<span class="co-tt-pname">${pr.name}</span>`;
     if (pr.notStarted) {
@@ -128,8 +130,16 @@ function _procedureListHTML(pass, grafanaHost, sat) {
       return `<a href="${url}" target="_blank" rel="noopener" data-grafana-modal data-loki-host="${grafanaHost}" data-loki-start="${fromMs}" data-loki-end="${toMs}" data-loki-nominal-start="${pr.startMs}" data-loki-nominal-end="${pr.endMs}" data-grafana-title="${grafanaModalTitle(sat, pass, pr)}" class="co-tt-proc co-tt-link ${cls}" title="${pr.name}">${num}${name}</a>`;
     }
     return `<div class="co-tt-proc ${cls}" title="${pr.name}">${num}${name}</div>`;
-  }).join('');
-  return `<div class="co-tt-procs">${rows}</div>`;
+  }).join('')}</div>`;
+  // Same entry point into Pass Analyzer the header's corner microscope icon
+  // used to be — moved down here as a full-width button (same treatment as
+  // the future-pass "Schedule procedures" button above) so it reads as an
+  // action rather than competing with the header's sat/station/network text
+  // for space. Hidden without a real `sat` (Analyzer needs one to look up).
+  const analyzerBtn = sat
+    ? `<button type="button" class="co-tt-sched-btn" data-pda-microscope data-pda-sat-id="${sat.id}" data-pda-pass-start="${pass.start.getTime()}">🔬 Open with Pass Analyzer</button>`
+    : '';
+  return listHtml + analyzerBtn;
 }
 
 // Shadow/sun split over the pass duration — moved here from PassDetailPanel.js
@@ -172,19 +182,20 @@ export function passSimpleTooltipContent(pass, sat) {
   const grafanaHost = sat ? (satSubsystemHost(sat.noradId, 'sccRo') || null) : null;
   const satName = sat ? `<span class="co-tt-sat-name" style="color:${sat.color}">${sat.name}</span> ` : '';
   const netTag = pass.network ? `<span class="co-tt-network">${pass.network}</span>` : '';
-  // Same entry point into Pass Analyzer as PassDetailPanel.js's microscope
-  // button — hidden for a future pass (nothing for the Analyzer to show yet,
-  // same gating PassDetailPanel.js uses there) and when there's no real
-  // satellite (Analyzer needs one). data-pda-* carries just enough to
-  // re-find the sat/pass in the store at click time (see the delegated
-  // listener below) rather than trying to serialize the actual objects.
-  const microscope = (sat && !pass.future)
-    ? `<span class="co-tt-microscope" data-pda-microscope data-pda-sat-id="${sat.id}" data-pda-pass-start="${pass.start.getTime()}" title="Open in Pass Analyzer">🔬</span>`
-    : '';
-  const hdr = `<div class="co-tt-header">${satName}${pass.station ?? '—'}${netTag}${microscope}</div>`;
+  const hdr = `<div class="co-tt-header">${satName}${pass.station ?? '—'}${netTag}</div>`;
   const eclBar = passEclipseBarHTML(sat?.satrec, pass.start, pass.end);
+  // TM/TC pass-health dots — same markup and criteria as PassAnalyzer.js's
+  // own DATA row, hydrated async below (hydratePassStatusDots) once the TM
+  // counter / TC packet fetches resolve, same "stays synchronous-feeling up
+  // front, layers in real data once it lands" pattern this tooltip already
+  // uses for pass geometry. Hidden for a future pass (nothing sent/received
+  // yet) and when there's no real satellite (both fetches need one).
+  const dataRow = (sat && !pass.future)
+    ? `<div class="co-tt-time-row"><span class="co-tt-time-lbl">DATA</span><span class="pa-status-dot" data-status-dot="tm" title="Loading…">● TM</span><span class="pa-status-dot" data-status-dot="tc" title="Loading…">● TC</span></div>`
+    : '';
   const details = `<div class="co-tt-time-row"><span class="co-tt-time-lbl">DATE</span>${fmtDateTimeShort(pass.start)}</div>
     <div class="co-tt-time-row"><span class="co-tt-time-lbl">DUR</span>${fmtDuration(pass.end - pass.start)}</div>
+    ${dataRow}
     ${eclBar}
     <div class="pass-geometry-slot"></div>`;
   return hdr + details + _procedureListHTML(pass, grafanaHost, sat);
@@ -271,6 +282,40 @@ export async function hydrateScheduledProcedures(el, pass, sat) {
   if (slot) slot.innerHTML = scheduledProceduresHTML(procs, fmtTimeOnly);
 }
 
+// Separate generation map from _hydrateGen/_procHydrateGen above — this runs
+// concurrently with both on the same element from the same hover, so sharing
+// either counter would have each call's increment spuriously supersede the
+// others. Fills the DATA row's TM/TC dots (passSimpleTooltipContent) once
+// the TM-packets-counter and TC-packets fetches resolve — same two fetches
+// and same criteria (tmPacketsReceived/tcPacketsAcked) PassAnalyzer.js's own
+// DATA row uses, so this can't drift onto a different answer for the same
+// pass.
+const _statusDotGen = new WeakMap();
+
+export async function hydratePassStatusDots(el, pass, sat) {
+  if (pass.future || !sat) return;
+  const myGen = (_statusDotGen.get(el) ?? 0) + 1;
+  _statusDotGen.set(el, myGen);
+  const startMs = pass.start.getTime(), endMs = pass.end.getTime();
+  const [tmCounter, tcPackets] = await Promise.all([
+    sat.noradId ? fetchTmPacketsCounterSeries(sat.noradId, startMs, endMs) : Promise.resolve(null),
+    fetchTcPackets(sat, startMs, endMs),
+  ]);
+  if (_statusDotGen.get(el) !== myGen || el.style.display === 'none') return; // superseded or closed
+  const tmDotEl = el.querySelector('.pa-status-dot[data-status-dot="tm"]');
+  if (tmDotEl) {
+    const tmReceived = tmPacketsReceived(tmCounter);
+    tmDotEl.classList.toggle('pa-status-dot-ok', tmReceived);
+    tmDotEl.title = tmReceived ? 'At least one TM packet was received during this pass' : 'No TM packets were received during this pass';
+  }
+  const tcDotEl = el.querySelector('.pa-status-dot[data-status-dot="tc"]');
+  if (tcDotEl) {
+    const tcAcked = tcPacketsAcked(tcPackets ?? []);
+    tcDotEl.classList.toggle('pa-status-dot-ok', tcAcked);
+    tcDotEl.title = tcAcked ? 'At least one TC was acknowledged or executed' : 'No TC was acknowledged or executed';
+  }
+}
+
 export function positionTooltip(e, el) {
   const pad = 14;
   let x = e.clientX + pad;
@@ -312,6 +357,7 @@ export function createPassTooltip() {
     positionTooltip(e, el);
     hydratePassGeometry(el, e, pass, sat);
     hydrateScheduledProcedures(el, pass, sat);
+    hydratePassStatusDots(el, pass, sat);
   }
 
   return { element: el, showForPass, cancelHide, scheduleHide };

@@ -10,7 +10,7 @@ import { fetchSatGroundEvents }   from './satGroundEvents.js';
 import { fetchSatGlobals }        from './satGlobals.js';
 import { fetchSatVersions }       from './satVersions.js';
 import { satSubsystemOrigin, satSubsystemPingOrigin, SUBSYSTEMS } from './satSubsystems.js';
-import { satIsSimulated, fetchSatTimeOffset } from './satSimu.js';
+import { satIsSimulated, fetchSatTimeOffset, hasSatTimeOffset } from './satSimu.js';
 
 const PING_TIMEOUT = 5_000;
 
@@ -186,6 +186,24 @@ async function _pingAndReschedule(sat, myGen) {
   try {
     await _ping(sat);
     if (store.pingStatus[sat.id] === 'ok') {
+      // A simulated satellite's very FIRST cycle needs its clock offset
+      // resolved BEFORE fetchSatPasses/fetchSatTelemetry compute their own
+      // query window from satEffectiveNow — racing it (as every LATER cycle
+      // still safely does, below) sent that first fetch against plain,
+      // uncorrected Date.now(), which can be months off from where this
+      // satellite's own data actually lives (see satSimu.js's own comment).
+      // passes' 2-minute cadence gate (CADENCE_MS.passes) then left it
+      // showing nothing/wrong for a full cycle before self-correcting —
+      // confirmed live as the ~1min-vs-~1s Fleet load gap between simulated
+      // and real satellites. Gated on hasSatTimeOffset (not just "is this
+      // cycle due"), so this awaited branch only ever fires once per
+      // satellite — once an offset lands, every later cycle falls through
+      // to the normal parallel race, whose staleness is fine.
+      if (satIsSimulated(sat.noradId) && !hasSatTimeOffset(sat.noradId) && _due(sat.id, 'timeOffset')) {
+        _markFetched(sat.id, 'timeOffset');
+        await fetchSatTimeOffset(sat);
+      }
+
       const fetches = [fetchSatTelemetry(sat), fetchSatGnss(sat)];
       if (_due(sat.id, 'passes'))        { _markFetched(sat.id, 'passes');        fetches.push(fetchSatPasses(sat)); }
       if (_due(sat.id, 'tle'))           { _markFetched(sat.id, 'tle');           fetches.push(fetchSatTle(sat)); }
@@ -195,11 +213,12 @@ async function _pingAndReschedule(sat, myGen) {
       if (_due(sat.id, 'globals'))       { _markFetched(sat.id, 'globals');       fetches.push(fetchSatGlobals(sat), fetchSatVersions(sat)); }
       if (_due(sat.id, 'gnssMitigation')) { _markFetched(sat.id, 'gnssMitigation'); fetches.push(fetchSatGnssMitigation(sat)); }
       if (_due(sat.id, 'subsystemProbe')) { _markFetched(sat.id, 'subsystemProbe'); fetches.push(_probeSubsystems(sat)); }
-      // Runs alongside (not before) the others below in the same
-      // Promise.all — on this satellite's very FIRST cycle, fetchSatPasses/
-      // fetchSatTelemetry may briefly race ahead of it and use no offset
-      // yet; self-corrects on the next cycle, 2 minutes later, same as any
-      // other cadence-gated fetch here would.
+      // Every cycle AFTER the first already has an offset cached (however
+      // slightly stale) — safe to race here like any other cadence-gated
+      // fetch, since passes/telemetry's own window only needs to be
+      // approximately right, not exactly current-to-the-second. _due is
+      // already false here on the very cycle the block above just ran
+      // (same _markFetched call), so this never double-fetches.
       if (satIsSimulated(sat.noradId) && _due(sat.id, 'timeOffset')) { _markFetched(sat.id, 'timeOffset'); fetches.push(fetchSatTimeOffset(sat)); }
       await Promise.all(fetches);
     }

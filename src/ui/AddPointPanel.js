@@ -1,10 +1,9 @@
 // Slide-in panel for adding a custom lat/lon point tied to a specific
 // satellite — opened via the small "+ Point" row under that satellite's
-// site list in the sat panel (see InputPanel.js's renderSatList). Reuses
-// PassDetailPanel's .pdp-panel slide-in chrome so it looks/behaves the same
-// as the existing pass detail panel, just docked with its own form content.
+// site list in the sat panel (see InputPanel.js's renderSatList). Reuses the
+// shared .pdp-panel slide-in chrome (style.css) so it looks/behaves like any
+// other slide-in panel in the app, just docked with its own form content.
 import { store } from '../store.js';
-import { closePassDetail } from './PassDetailPanel.js';
 
 let _panelEl = null, _satNameEl = null, _sat = null;
 
@@ -68,7 +67,7 @@ function _submit() {
     if (!Number.isFinite(mask) || mask < 0 || mask > 90) { _flash(maskInput); return; }
   }
 
-  store.addCustomPoint(name, lat, lon, mask, _sat.id);
+  store.addCustomPoint(name, lat, lon, mask, _sat.noradId);
   closeAddPointPanel();
 }
 
@@ -78,7 +77,6 @@ export function closeAddPointPanel() {
 
 export function openAddPointPanel(sat) {
   _ensurePanel();
-  closePassDetail(); // don't stack two slide-ins on top of each other
   _sat = sat;
   _satNameEl.textContent = sat.name;
   _satNameEl.style.color = sat.color;

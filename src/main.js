@@ -13,7 +13,6 @@ import { initNavClocks }        from './ui/NavClocks.js';
 import { initSatPing }          from './satPing.js';
 import { initVpnGuard }         from './ui/vpnGuard.js';
 import { initReadOnlyBadge }    from './ui/readOnlyBadge.js';
-import { closePassDetail }      from './ui/PassDetailPanel.js';
 import { closeAddPointPanel }   from './ui/AddPointPanel.js';
 import { store }                from './store.js';
 
@@ -41,13 +40,12 @@ function _applyTrackingVisibility(isTracking) {
 // Extracted out of the tab-button click handler so it can also be triggered
 // programmatically — the Pass Analyzer tab was removed from the nav bar (see
 // index.html; #analyzer-view is still there), reachable now only via the
-// microscope button in PassDetailPanel.js's slide-in, which has no
-// data-tab button of its own to click.
+// "Open with Pass Analyzer" button in passTooltip.js's hover tooltip, which
+// has no data-tab button of its own to click.
 function switchTab(target) {
   const hideSide    = target === 'fleet' || target === 'schedule' || target === 'settings' || target === 'analyzer' || target === 'scheduler';
   const isTracking  = target === 'tracking';
-  closePassDetail();   // slide-in shouldn't persist across a tab change — it's tied to whatever view opened it
-  closeAddPointPanel(); // same — tied to the sat panel, which just hid
+  closeAddPointPanel(); // slide-in shouldn't persist across a tab change — it's tied to the sat panel, which just hid
   tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === target));
   views.forEach(v   => v.classList.toggle('active', v.id === `${target}-view`));
   sidePanel.style.display = hideSide ? 'none' : '';
@@ -61,9 +59,10 @@ tabBtns.forEach(btn => {
   btn.addEventListener('click', () => switchTab(btn.dataset.tab));
 });
 
-// Dispatched by PassDetailPanel.js's microscope button (not an import from
-// there, to avoid a circular dependency — that module doesn't need to know
-// about main.js or PassAnalyzer.js at all, it just announces the intent).
+// Dispatched by passTooltip.js's own "Open with Pass Analyzer" button (not an
+// import from there, to avoid a circular dependency — that module doesn't
+// need to know about main.js or PassAnalyzer.js at all, it just announces
+// the intent).
 document.addEventListener('pda:open-pass', e => {
   switchTab('analyzer');
   setAnalyzerSelection(e.detail.sat, e.detail.pass);

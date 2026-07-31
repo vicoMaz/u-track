@@ -8,10 +8,12 @@ import { satSunExclDeg, satEarthExclDeg, MODEL_STAR_TRACKERS } from '../satStarT
 import { sampleAttitudeTable, DEFAULT_MAX_GAP_MS } from '../attitudeSample.js';
 import { resolveRealAttitudeEntries, scheduleAttitudeFetch, applyRealAttitudeModelCorrection } from '../satAttitudeReal.js';
 import { showActionToast }              from './actionToast.js';
-import { passSimpleTooltipContent, hydratePassGeometry, hydrateScheduledProcedures } from './passTooltip.js';
+import { passSimpleTooltipContent, hydratePassGeometry, hydrateScheduledProcedures, hydratePassStatusDots } from './passTooltip.js';
 import { invalidateAllScheduledProcedures } from './scheduledProcedures.js';
-import { openPassDetail }               from './PassDetailPanel.js';
 import { escapeHtml }                   from './logView.js';
+import { satSubsystemOrigin }           from '../satSubsystems.js';
+import { fetchTcPackets, matchScheduledTargets, collectArguments, argUnitLabel, TC_114_NAME_RE, tcAckStatus } from '../tcPackets.js';
+import { fetchTmPacket, extractTmParam } from '../satTelemetry.js';
 
 
 const EPOCH = new Date();
@@ -44,7 +46,11 @@ const sttPovOpenBtn = document.getElementById('stt-pov-open-btn'); // click hand
 const ganttTmr      = document.getElementById('gantt-tmr');
 const ganttTmrPay   = document.getElementById('gantt-tmr-pay');
 const ganttSlots    = document.getElementById('gantt-slots');
+const ganttTimetag  = document.getElementById('gantt-timetag');
+const ganttTimetagFilterBtn = document.getElementById('gantt-timetag-filter-btn');
 const ganttRuler    = document.getElementById('gantt-ruler');
+const ganttCrosshair      = document.getElementById('gantt-crosshair');
+const ganttCrosshairLabel = document.getElementById('gantt-crosshair-label');
 
 const ganttToggleBtn = document.getElementById('gantt-toggle');
 const trackingViewEl = document.getElementById('tracking-view');
@@ -323,18 +329,20 @@ function _posTooltipAt(clientX, clientY) {
 }
 
 // Fast, synchronous hover preview — see passTooltip.js. Full detail (polar
-// plot, Eb/N0 chart, procedure history/report) opens in PassDetailPanel.js
-// on click instead (see _renderGanttPasses).
+// plot, Eb/N0 chart, procedure history/report) lives in PassAnalyzer.js
+// instead, reached via this tooltip's own "Open with Pass Analyzer" button.
 function _showPassTooltip(e, pass) {
   _ttAnchorX = e.clientX;
   _ttAnchorY = e.clientY;
   clearTimeout(_ttHideTimer);
   _openGapTooltip = null; // this tooltip now shows a pass, not a gap
+  _ganttTooltip.className     = 'co-tooltip'; // reset — see _showTimetagTooltip's own wider variant
   _ganttTooltip.innerHTML     = passSimpleTooltipContent(pass, store.trackedSat);
   _ganttTooltip.style.display = 'block';
   _posTooltipAt(_ttAnchorX, _ttAnchorY);
   hydratePassGeometry(_ganttTooltip, e, pass, store.trackedSat);
   hydrateScheduledProcedures(_ganttTooltip, pass, store.trackedSat);
+  hydratePassStatusDots(_ganttTooltip, pass, store.trackedSat);
 }
 
 // `comments` is a JSON-encoded string (pass-geometry metadata) — parsed into
@@ -372,6 +380,7 @@ function _showPlanTooltip(e, plan) {
   _ttAnchorY = e.clientY;
   clearTimeout(_ttHideTimer);
   _openGapTooltip = null; // this tooltip now shows a plan, not a gap
+  _ganttTooltip.className     = 'co-tooltip'; // reset — see _showTimetagTooltip's own wider variant
   _ganttTooltip.innerHTML     = _planTooltipHTML(plan);
   _ganttTooltip.style.display = 'block';
   _posTooltipAt(_ttAnchorX, _ttAnchorY);
@@ -519,6 +528,7 @@ function _showGapTooltip(e, gap, sat, source) {
   _ttAnchorY = e.clientY;
   clearTimeout(_ttHideTimer);
   _openGapTooltip = { gap, sat, source };
+  _ganttTooltip.className = 'co-tooltip'; // reset — see _showTimetagTooltip's own wider variant
   _renderGapTooltip(gap, sat, source);
   _ganttTooltip.style.display = 'block';
   _posTooltipAt(_ttAnchorX, _ttAnchorY);
@@ -683,6 +693,30 @@ function _updateGanttCursor() {
   ganttCursor.style.left = `${(_ganttL + f * trackW).toFixed(1)}px`;
 }
 
+// Hover crosshair — follows the mouse (no click effect) across whichever row
+// is under the cursor and reads out the time there. Purely a hover aid, same
+// idea as Scheduler.js's own _updateCrosshair, but positioned in the same
+// px-based coordinate system #gantt-cursor already uses (_ganttL + f*trackW)
+// rather than that file's %-based overlay — this file already has that exact
+// math proven out for #gantt-cursor, so the crosshair just reuses it instead
+// of introducing a second, parallel positioning scheme.
+function _updateGanttCrosshair(clientX) {
+  if (!ganttCrosshair || !ganttEl) return;
+  const trackW = ganttEl.offsetWidth - _ganttL - _ganttR;
+  if (trackW <= 0) { _hideGanttCrosshair(); return; }
+  const rect = ganttEl.getBoundingClientRect();
+  const xInTrack = clientX - rect.left - _ganttL;
+  if (xInTrack < 0 || xInTrack > trackW) { _hideGanttCrosshair(); return; }
+  const f = xInTrack / trackW;
+  const t = _viewStartMs() + f * _viewRangeMs();
+  ganttCrosshair.style.display = 'block';
+  ganttCrosshair.style.left    = `${(_ganttL + xInTrack).toFixed(1)}px`;
+  if (ganttCrosshairLabel) ganttCrosshairLabel.textContent = _fmtDT(new Date(t));
+}
+function _hideGanttCrosshair() {
+  if (ganttCrosshair) ganttCrosshair.style.display = 'none';
+}
+
 // Render pass bars with per-bar tooltip events
 function _renderGanttPasses() {
   if (!ganttPasses) return;
@@ -704,11 +738,6 @@ function _renderGanttPasses() {
     if (pass) {
       bar.addEventListener('mouseenter', e => _showPassTooltip(e, pass));
       bar.addEventListener('mouseleave', _hidePassTooltipSoon);
-      bar.style.cursor = 'pointer';
-      bar.addEventListener('click', () => {
-        _ganttTooltip.style.display = 'none';
-        openPassDetail(pass, store.trackedSat, store.groundStations);
-      });
     }
     ganttPasses.appendChild(bar);
   }
@@ -770,6 +799,7 @@ function _showEclipseTooltip(e, win) {
   _ttAnchorY = e.clientY;
   clearTimeout(_ttHideTimer);
   _openGapTooltip = null; // this tooltip now shows an eclipse window, not a gap
+  _ganttTooltip.className     = 'co-tooltip'; // reset — see _showTimetagTooltip's own wider variant
   _ganttTooltip.innerHTML     = _eclipseTooltipHTML(win);
   _ganttTooltip.style.display = 'block';
   _posTooltipAt(_ttAnchorX, _ttAnchorY);
@@ -921,6 +951,308 @@ function _renderGanttTmr(container, source) {
       container.appendChild(bar);
     }
   }
+}
+
+// ── Timetag row ──────────────────────────────────────────────────
+//
+// Ported from Scheduler.js's own Timetag row (same underlying data/grouping
+// — see that file's header comment for the full rationale) — one tick per
+// PUS(11,4) "insert TC in subschedule" command found in the satellite's most
+// recent PAST pass, placed at the target TC's OWN scheduled execution time,
+// colored by SSID (OBSW_AR_S11_SUBSCHEDULE_ID), with the last-known
+// ENABLED/DISABLED status per SSID coming from the latest live HK_CCSW
+// packet. Rendered here via plain createElement (this file's own convention
+// — see _renderGanttEclipse/_renderGanttTmr above) rather than Scheduler.js's
+// innerHTML-string _barHTML, but the data layer underneath is otherwise the
+// same, duplicated rather than shared (same "not exported there either"
+// precedent every other row in this file already follows for its Scheduler.js
+// counterpart).
+
+// Same 8-hue dark-mode categorical steps as Scheduler.js's own _SSID_COLORS.
+const _SSID_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'];
+const _SSID_COLOR_FALLBACK = '#778';
+function _ssidColor(ssid) {
+  const n = Number(ssid);
+  return Number.isInteger(n) && n >= 1 && n <= _SSID_COLORS.length ? _SSID_COLORS[n - 1] : _SSID_COLOR_FALLBACK;
+}
+
+const HK_CCSW_PACKET   = 'TM_3_25_OBSW_HK_CCSW';
+const HK_CCSW_MAX_SSID = 10; // OBSW_AM_S11_STSUB_1..10 — confirmed live, 2026-07-30 sccRo sample
+
+// The satellite's most recent COMPLETED pass — same definition as
+// Scheduler.js's own _previousPass, just reading store.satPasses directly
+// (this file has no standing _passes() helper of its own to reuse).
+function _previousPass(sat) {
+  const passes = store.satPasses[sat.id] ?? [];
+  const past = passes.filter(p => !p.future);
+  return past.length ? past[past.length - 1] : null;
+}
+
+// Latest known per-SSID enable state, straight off HK_CCSW. Windowed off
+// plain Date.now() (not EPOCH/scrubOffsetSec) — same real-wall-clock
+// reasoning this file's own _gapAgeMs/_getSccPassCheck already use for "how
+// fresh is this": HK_CCSW's own last-known state doesn't depend on wherever
+// the timeline happens to be scrubbed to.
+async function _fetchCcswSubscheduleStatus(sat) {
+  const origin = satSubsystemOrigin(sat.noradId, 'sccRo');
+  if (!origin) return null;
+  const nowMs = Date.now();
+  const end   = new Date(nowMs + 10_000).toISOString();
+  const start = new Date(nowMs - 5 * 24 * 3_600_000).toISOString();
+  const ctrl  = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15_000);
+  try {
+    const pkt = await fetchTmPacket(origin, HK_CCSW_PACKET, { start, end }, ctrl.signal);
+    if (!pkt) return null;
+    const status = {};
+    for (let n = 1; n <= HK_CCSW_MAX_SSID; n++) {
+      const p = extractTmParam(pkt, `OBSW_AM_S11_STSUB_${n}`);
+      if (p?.value != null) status[n] = String(p.value).toUpperCase();
+    }
+    return status;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Same "name+args+exec-time" grouping key as Scheduler.js's own
+// _timetagGroupKey — collapses a command inserted into two SSIDs at the same
+// execution time into one entry carrying both SSIDs.
+function _timetagGroupKey(targetName, args, dateMs) {
+  const argsKey = args.map(a => `${a.name}=${a.value}`).sort().join(',');
+  return `${targetName ?? '?'}@${dateMs ?? '?'}::${argsKey}`;
+}
+
+// Same shape as Scheduler.js's own _buildTimetagEntries — see that file's
+// comment for why only a CONFIRMED ('exec-ok') insert counts.
+async function _buildTimetagEntries(sat, pass) {
+  const packets = await fetchTcPackets(sat, pass.start.getTime(), pass.end.getTime());
+  if (!packets) return null;
+  const { targetFor } = matchScheduledTargets(packets);
+  const groups = new Map(); // key -> entry
+  for (const p of packets) {
+    if (!TC_114_NAME_RE.test(p.name)) continue;
+    if (tcAckStatus(p.acks) !== 'exec-ok') continue;
+    const target = targetFor.get(p.id);
+    if (!target) continue;
+    const dateRaw = p.args114?.date;
+    const dateMs = typeof dateRaw === 'number' ? dateRaw : Date.parse(dateRaw);
+    if (!Number.isFinite(dateMs)) continue; // no scheduled time found to place this at — nothing to draw
+    const args = [];
+    collectArguments(target.raw?.spacePacket?.rootContainer, args);
+    const key = _timetagGroupKey(target.name, args, dateMs);
+    let entry = groups.get(key);
+    if (!entry) {
+      entry = { name: target.name, description: target.description, args, dateMs, ssids: [] };
+      groups.set(key, entry);
+    }
+    const ssid = p.args114?.ssid;
+    if (ssid != null && !entry.ssids.includes(ssid)) entry.ssids.push(ssid);
+  }
+  return [...groups.values()].sort((a, b) => a.dateMs - b.dateMs);
+}
+
+let _timetagEntries  = null; // grouped entries for _timetagFetchKey's pass, or null before the first fetch / on fetch failure
+let _timetagCcsw     = null; // {ssid: 'ENABLED'|'DISABLED'} from the latest HK_CCSW snapshot, or null
+let _timetagFetchKey = null; // `${satId}:${previousPass.start}` this data was actually fetched for — re-fetched only when it changes
+
+// Same "fetch once per selection, patch the row when it resolves" shape as
+// Scheduler.js's own _triggerTimetag — triggered on trackedSatId/satPasses
+// changes (see initTimePlayer's store.subscribe block) rather than a pass
+// selection, since this file has no pass-selection concept of its own.
+async function _triggerTimetag() {
+  const sat  = store.trackedSat;
+  const prev = sat ? _previousPass(sat) : null;
+  if (!sat || !prev) {
+    _timetagEntries = null; _timetagCcsw = null; _timetagFetchKey = null;
+    _renderGanttTimetag();
+    return;
+  }
+  const key = `${sat.id}:${prev.start.getTime()}`;
+  if (_timetagFetchKey === key) return; // already fetched (or in flight) for this exact satellite+pass
+  _timetagFetchKey = key;
+  const [entries, ccsw] = await Promise.all([
+    _buildTimetagEntries(sat, prev),
+    _fetchCcswSubscheduleStatus(sat),
+  ]);
+  if (_timetagFetchKey !== key) return; // superseded while in flight — a newer call already owns the row
+  _timetagEntries = entries;
+  _timetagCcsw    = ccsw;
+  _renderGanttTimetag();
+}
+
+// Same "colored by whichever SSID is currently ENABLED, else lowest SSID
+// number" rule as Scheduler.js's own _timetagLineColor.
+function _timetagLineColor(ssids) {
+  if (!ssids.length) return _SSID_COLOR_FALLBACK;
+  const enabled = ssids.find(s => _timetagCcsw?.[s] === 'ENABLED');
+  return _ssidColor(enabled ?? ssids.slice().sort((a, b) => a - b)[0]);
+}
+
+// Same 3dp-for-non-integers formatting as Scheduler.js's own _fmtArgValue.
+function _fmtArgValue(value) {
+  return typeof value === 'number' && Number.isFinite(value) && !Number.isInteger(value)
+    ? value.toFixed(3)
+    : String(value);
+}
+
+function _timetagTooltipHTML(entry) {
+  const hdr  = `<div class="co-tt-header">${escapeHtml(entry.name)}</div>`;
+  const date = `<div class="co-tt-time-row"><span class="co-tt-time-lbl">SCHED</span>${_fmtDT(new Date(entry.dateMs))}</div>`;
+  const ssidRows = entry.ssids.length
+    ? entry.ssids.slice().sort((a, b) => a - b).map(s => {
+        const status = _timetagCcsw?.[s] ?? 'UNKNOWN';
+        const cls = status === 'ENABLED' ? 'co-tt-ok' : status === 'DISABLED' ? 'co-tt-fail' : '';
+        return `<div class="co-tt-time-row"><span class="co-tt-time-lbl">SSID ${s}</span><span class="${cls}">${status}</span></div>`;
+      }).join('')
+    : `<div class="co-tt-time-row"><span class="co-tt-time-lbl">SSID</span>—</div>`;
+  const args = entry.args.length
+    ? entry.args.map(a => {
+        const unit = argUnitLabel(a.unit);
+        return `<div class="co-tt-time-row"><span class="co-tt-time-lbl">${escapeHtml(a.name)}</span><span class="co-tt-nowrap">${escapeHtml(_fmtArgValue(a.value))}${unit ? ` ${escapeHtml(unit)}` : ''}</span></div>`;
+      }).join('')
+    : `<div class="co-tt-note">No arguments</div>`;
+  return hdr + date + ssidRows + `<div class="co-tt-sep"></div>` + args;
+}
+
+function _showTimetagTooltip(e, entry) {
+  _ttAnchorX = e.clientX;
+  _ttAnchorY = e.clientY;
+  clearTimeout(_ttHideTimer);
+  _openGapTooltip = null; // this tooltip now shows a timetag entry, not a gap
+  _ganttTooltip.className   = 'co-tooltip sch-timetag-tooltip'; // wider — long OBSW_* labels wrap otherwise (see .sch-timetag-tooltip)
+  _ganttTooltip.innerHTML     = _timetagTooltipHTML(entry);
+  _ganttTooltip.style.display = 'block';
+  _posTooltipAt(_ttAnchorX, _ttAnchorY);
+}
+
+// SSID checkbox filter (the funnel icon next to the Timetag label) — same
+// persistent-viewing-preference reasoning as Scheduler.js's own
+// _timetagHiddenSsids: left as-is across a satellite switch, not reset.
+let _timetagHiddenSsids = new Set();
+
+function _timetagEntryVisible(entry) {
+  return !entry.ssids.length || entry.ssids.some(s => !_timetagHiddenSsids.has(s));
+}
+
+// Point events, not spans — same 0.3%-width floor Scheduler.js's own
+// _barHTML uses for the identical reason (a short window stays
+// visible/hoverable at any zoom), just built via createElement instead of an
+// HTML string, matching every other row in this file.
+function _renderGanttTimetag() {
+  if (!ganttTimetag) return;
+  _updateTimetagFilterBtn();
+  ganttTimetag.innerHTML = '';
+  if (!_timetagEntries?.length) return;
+  const tMin    = _viewStartMs();
+  const rangeMs = _viewRangeMs();
+  _timetagEntries.forEach(entry => {
+    if (!_timetagEntryVisible(entry)) return;
+    const l = (entry.dateMs - tMin) / rangeMs * 100;
+    if (l < -1 || l > 101) return; // well outside the view — nothing to draw
+    const lc = Math.max(0, Math.min(100, l));
+    const bar = document.createElement('div');
+    bar.className        = 'gantt-bar';
+    bar.style.left        = `${lc.toFixed(3)}%`;
+    bar.style.width       = `0.3%`;
+    bar.style.background  = _timetagLineColor(entry.ssids);
+    bar.style.cursor      = 'help'; // same hover-only (no click action) cursor the Eclipse row's own bars use
+    bar.addEventListener('mouseenter', e => _showTimetagTooltip(e, entry));
+    bar.addEventListener('mouseleave', _hidePassTooltipSoon);
+    ganttTimetag.appendChild(bar);
+  });
+}
+
+// Highlights the funnel icon whenever a filter is actually narrowing the row
+// — same reasoning as Scheduler.js's own _updateTimetagFilterBtn.
+function _updateTimetagFilterBtn() {
+  ganttTimetagFilterBtn?.classList.toggle('sch-timetag-filter-btn-active', _timetagHiddenSsids.size > 0);
+}
+
+// Every SSID actually present across the current entries — same as
+// Scheduler.js's own _timetagKnownSsids.
+function _timetagKnownSsids() {
+  const set = new Set();
+  for (const entry of _timetagEntries ?? []) for (const s of entry.ssids) set.add(s);
+  return [...set].sort((a, b) => a - b);
+}
+
+function _timetagFilterMenuHTML() {
+  const ssids = _timetagKnownSsids();
+  if (!ssids.length) return `<div class="sam-menu-section">Filter by SSID</div><div class="co-tt-note" style="padding:4px 8px 6px;">No SSIDs in the current pass</div>`;
+  const rows = ssids.map(s => {
+    const checked = !_timetagHiddenSsids.has(s);
+    const status    = _timetagCcsw?.[s] ?? 'UNKNOWN';
+    const statusCls = status === 'ENABLED' ? 'co-tt-ok' : status === 'DISABLED' ? 'co-tt-fail' : '';
+    return `<label class="sch-ssid-filter-row">
+      <input type="checkbox" data-ssid="${s}"${checked ? ' checked' : ''} />
+      <span class="sch-ssid-filter-swatch" style="background:${_ssidColor(s)}"></span>
+      SSID ${s}
+      <span class="sch-ssid-filter-status ${statusCls}">${status}</span>
+    </label>`;
+  }).join('');
+  const reset = _timetagHiddenSsids.size ? `<button type="button" class="sam-menu-item sch-ssid-filter-reset">Show all</button>` : '';
+  return `<div class="sam-menu-section">Filter by SSID</div>${rows}${reset}`;
+}
+
+let _timetagFilterMenuEl = null;
+
+function _ensureTimetagFilterMenu() {
+  if (_timetagFilterMenuEl) return _timetagFilterMenuEl;
+  const el = document.createElement('div');
+  el.className = 'sam-menu';
+  el.style.display = 'none';
+  document.body.appendChild(el);
+  document.addEventListener('click', e => {
+    if (el.style.display !== 'none' && !el.contains(e.target) && !e.target.closest('#gantt-timetag-filter-btn')) {
+      el.style.display = 'none';
+    }
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') el.style.display = 'none'; });
+  _timetagFilterMenuEl = el;
+  return el;
+}
+
+function _renderTimetagFilterMenu() {
+  const menu = _ensureTimetagFilterMenu();
+  menu.innerHTML = _timetagFilterMenuHTML();
+  menu.querySelectorAll('input[data-ssid]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const s = Number(cb.dataset.ssid);
+      if (cb.checked) _timetagHiddenSsids.delete(s); else _timetagHiddenSsids.add(s);
+      _renderTimetagFilterMenu(); // refresh (the "Show all" row appears/disappears with the count)
+      _renderGanttTimetag();
+    });
+  });
+  menu.querySelector('.sch-ssid-filter-reset')?.addEventListener('click', () => {
+    _timetagHiddenSsids.clear();
+    _renderTimetagFilterMenu();
+    _renderGanttTimetag();
+  });
+}
+
+// Click-to-open on the funnel icon, click-outside/Escape-to-close — same
+// shape as Scheduler.js's own _wireTimetagFilterBtn.
+function _wireTimetagFilterBtn() {
+  if (!ganttTimetagFilterBtn) return;
+  ganttTimetagFilterBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    const menu = _ensureTimetagFilterMenu();
+    const wasOpen = menu.style.display !== 'none';
+    if (wasOpen) { menu.style.display = 'none'; return; }
+    _renderTimetagFilterMenu();
+    menu.style.display = 'block';
+    const rect = ganttTimetagFilterBtn.getBoundingClientRect();
+    const w = menu.offsetWidth || 160;
+    let x = rect.left;
+    let y = rect.bottom + 4;
+    if (x + w > window.innerWidth - 8) x = window.innerWidth - w - 8;
+    if (y + menu.offsetHeight > window.innerHeight - 8) y = rect.top - menu.offsetHeight - 4;
+    menu.style.left = Math.max(8, x) + 'px';
+    menu.style.top  = Math.max(8, y) + 'px';
+  });
 }
 
 // ── Date ruler ───────────────────────────────────────────────────────────────
@@ -1096,6 +1428,7 @@ function _applyView() {
   _renderGanttTmrRows();
   _renderGanttPasses();
   _renderGanttPlans();
+  _renderGanttTimetag();
   _renderGanttEclipse();
   _renderGanttStt();
   _updateGanttRuler();
@@ -1122,6 +1455,8 @@ export function initTimePlayer() {
     _refreshSttRowVisibility();
     _syncLayout(); // row count changed → gantt height changed → resync offset
   });
+
+  _wireTimetagFilterBtn();
 
   playBtn.addEventListener('click', () => playing ? stopPlay() : startPlay());
 
@@ -1202,6 +1537,7 @@ export function initTimePlayer() {
     if (key === 'satPasses' || key === 'trackedSatId') {
       _updateGanttPasses();
       _triggerTmr();
+      _triggerTimetag(); // "previous pass" (what the row's built from) can change with either
     }
     if (key === 'trackedSatId') {
       if (ganttTmr)    ganttTmr.innerHTML    = '';
@@ -1210,6 +1546,7 @@ export function initTimePlayer() {
       if (ganttStt1) ganttStt1.innerHTML = '';
       if (ganttStt2) ganttStt2.innerHTML = '';
       if (ganttSlots) ganttSlots.innerHTML = '';
+      if (ganttTimetag) ganttTimetag.innerHTML = '';
       _planWindows = [];
       _eclipseJobSat = null;
       _refreshSttRowVisibility();
@@ -1265,7 +1602,8 @@ export function initTimePlayer() {
       scheduleTmrFetch(sat, past, source, windows => store.setTmrWindows(sat.id, source, windows));
     }
   };
-  _triggerTmr(); // also run on init in case passes are already loaded
+  _triggerTmr();      // also run on init in case passes are already loaded
+  _triggerTimetag();  // same — the "previous pass" it needs may already be loaded
 
   // Wheel zoom on scrubber or gantt
   scrub.addEventListener('wheel',   _onWheel, { passive: false });
@@ -1292,16 +1630,24 @@ export function initTimePlayer() {
     // (SatInfo.js) lives inside #gantt-sat-info, itself positioned inside
     // #timeline-gantt (same reasoning as the STT POV panel below) — exempted
     // by selector rather than an element reference for the same reason.
+    // Timetag row's own funnel icon (opens the SSID filter menu) needs the
+    // same exemption Scheduler.js's own pan-pointerdown handler already
+    // gives its .sch-timetag-filter-btn, for the identical reason.
     if (e.target === ganttToggleBtn || e.target === ganttSttCollapseBtn || sttPovOpenBtn?.contains(e.target)
-      || e.target.closest?.('.stt-pov-panel') || e.target.closest?.('#gsi-attitude-toggle')) return;
+      || e.target.closest?.('.stt-pov-panel') || e.target.closest?.('#gsi-attitude-toggle')
+      || e.target.closest?.('.sch-timetag-filter-btn')) return;
     e.preventDefault();
     ganttEl.setPointerCapture(e.pointerId);
     ganttEl.style.cursor = 'grabbing';
     _beginPan(e.clientX, ganttEl.offsetWidth - _ganttL - _ganttR);
   });
-  ganttEl?.addEventListener('pointermove', e => { if (_pan) _movePan(e.clientX); });
+  ganttEl?.addEventListener('pointermove', e => {
+    if (_pan) _movePan(e.clientX);
+    _updateGanttCrosshair(e.clientX);
+  });
   ganttEl?.addEventListener('pointerup',   () => { _endPan(); ganttEl.style.cursor = ''; });
   ganttEl?.addEventListener('pointercancel', () => { _endPan(); ganttEl.style.cursor = ''; });
+  ganttEl?.addEventListener('pointerleave', _hideGanttCrosshair);
 
   // Drag-to-pan on the time player scrub track
   const scrubWrap = scrub.parentElement;

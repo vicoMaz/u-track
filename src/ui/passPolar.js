@@ -175,17 +175,16 @@ const POLAR_RENDER_PX = 200; // <svg width="200"> below — the polar plot's fix
 const CX = 65, CY = 65, R = 54;
 const DOT_R = 2.5, APOGEE_DOT_R = 3, CURSOR_DOT_R = 3; // in viewBox units
 
-// Marker/cursor dot sizes as ACTUAL RENDERED PIXELS (not viewBox units) — the
-// polar plot renders at a fixed 200px regardless of viewBox, so this scale
-// factor is constant. Exported so ebn0.js can size its own dots to match:
-// the Eb/N0 chart stretches to fill variable flex space (width:100%, viewBox
-// 300 units), so its viewBox-unit-to-pixel ratio is different and changes
-// with layout — using the same *number* of viewBox units on both charts does
-// NOT produce the same *visual* size.
+// Marker dot sizes as ACTUAL RENDERED PIXELS (not viewBox units) — the polar
+// plot renders at a fixed 200px regardless of viewBox, so this scale factor
+// is constant. Exported so ebn0.js can size its own AOS/LOS/mask/apogee dots
+// to match: the Eb/N0 chart stretches to fill variable flex space
+// (width:100%, viewBox 300 units), so its viewBox-unit-to-pixel ratio is
+// different and changes with layout — using the same *number* of viewBox
+// units on both charts does NOT produce the same *visual* size.
 export const MARKER_PX_RADIUS = {
   standard: DOT_R * (POLAR_RENDER_PX / POLAR_VIEWBOX),
   apogee: APOGEE_DOT_R * (POLAR_RENDER_PX / POLAR_VIEWBOX),
-  cursor: CURSOR_DOT_R * (POLAR_RENDER_PX / POLAR_VIEWBOX),
 };
 
 function _toXY(az, el) {

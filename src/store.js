@@ -1,3 +1,5 @@
+import { satIsSimulated } from './satSimu.js';
+
 // Group raw /api/v1/data/antennas entries into one marker per (network, site_id),
 // averaging coordinates across antennas sharing a site. Virtual/database endpoints
 // (antenna_type !== 'rf') have no real location and are excluded.
@@ -58,7 +60,7 @@ export const store = {
   currentTime: new Date(),
   satellites: [],      // { id, noradId, name, color, satrec }
   groundStations: [],  // DERIVED — rebuilt by _rebuildGroundStations(). { id, name, lat, lon, color, network, satId, showFootprint }
-  customPoints: _loadCustomPoints(), // [{ id, name, lat, lon, mask, satId, visible }] — user-added markers, persisted to localStorage
+  customPoints: _loadCustomPoints(), // [{ id, name, lat, lon, mask, noradId, visible }] — user-added markers, persisted to localStorage
   satAntennas: {},     // satId → raw array from GET /api/v1/data/antennas
   antennaToggles: {},  // `${satId}:${network}` → bool (visible), default true when absent
   showFootprints: false,
@@ -122,12 +124,6 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
   satScale: 500,
   orbitAlt: 590,       // km — shared by night shadow + GS footprint
   trackedSatId: null,
-  // { satId, start: ms } | null — whichever pass currently has PassDetailPanel's
-  // slide-in open, regardless of which view (Fleet dots, Weekly Schedule, the
-  // gantt) opened it. `start` (not the pass object itself, which gets replaced
-  // wholesale on every satPasses refetch) identifies the pass so ChadOps.js can
-  // still match it against a freshly-fetched passes array.
-  selectedPass: null,
   // satId → [{ key, version, recipient, originator, description, comments,
   // start, end, status, statusInfo }] — MIC's Plan distribution service (see
   // planData.js), fills the gantt's "Plans" row. Per-satellite, same scoping
@@ -248,6 +244,14 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
   _rebuildGroundStations() {
     const out = [];
     for (const sat of this.satellites) {
+      // Same "not a real, currently-orbiting object" exclusion GlobeView.js/
+      // InputPanel.js's own _satPanelSats already apply to the satellite
+      // entity itself (see satSimu.js) — its ground station sites are
+      // exactly as fictional, so they shouldn't plot on the globe/map
+      // either, even though InputPanel.js's own per-network toggle row never
+      // exists for this satellite to turn them off with (a simulated
+      // satellite has no row there at all, see _satPanelSats' own comment).
+      if (satIsSimulated(sat.noradId)) continue;
       const raw = this.satAntennas[sat.id];
       if (!raw || !raw.length) continue;
       for (const site of _groupSites(raw)) {
@@ -290,13 +294,24 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
   // mask: optional elevation-mask angle in degrees. When set, a visibility
   // circle (ground coverage at that minimum elevation, given store.orbitAlt)
   // is drawn on the globe/map around this point; when null, no circle.
-  // satId: which satellite's site list this point was added from (see
+  // noradId: which satellite's site list this point was added from (see
   // InputPanel.js's "+ Point" row) — points are a per-satellite thing, this
-  // is how they're grouped/listed there and removed again.
-  addCustomPoint(name, lat, lon, mask = null, satId = null) {
+  // is how they're grouped/listed there and removed again. Deliberately the
+  // satellite's noradId, NOT its runtime `sat.id` — customPoints is the only
+  // thing in this store persisted across a reload (see _saveCustomPoints),
+  // and `sat.id` is only stable for the lifetime of one session: apiPoller.js
+  // assigns it as a plain incrementing counter over store.satellites'
+  // CURRENT order at load time, so reordering satellites (InputPanel.js's
+  // drag-to-reorder, persisted via saveSatOrder) changes which satellite
+  // gets which `sat.id` on the NEXT reload. A point saved against `sat.id`
+  // would silently reattach to whichever satellite happens to load into that
+  // same numeric slot next time — confirmed live: reorder, reload, a point
+  // added to satellite A shows up owned by satellite B. noradId is the one
+  // identifier that's actually stable across both a reorder and a reload.
+  addCustomPoint(name, lat, lon, mask = null, noradId = null) {
     const point = {
       id:  `pt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
-      name, lat, lon, mask, satId, visible: true,
+      name, lat, lon, mask, noradId, visible: true,
     };
     this.customPoints.push(point);
     _saveCustomPoints(this.customPoints);
@@ -479,17 +494,6 @@ setPingStatus(satId, status) {
   setTrackedSat(id) {
     this.trackedSatId = id;
     this.notify('trackedSatId');
-  },
-
-  setSelectedPass(satId, start) {
-    this.selectedPass = satId ? { satId, start } : null;
-    this.notify('selectedPass');
-  },
-
-  clearSelectedPass() {
-    if (!this.selectedPass) return;
-    this.selectedPass = null;
-    this.notify('selectedPass');
   },
 };
 

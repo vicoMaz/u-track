@@ -153,6 +153,26 @@ export async function fetchTmPacketsCounterSeries(noradId, startMs, endMs) {
   return result;
 }
 
+// Whether at least one real TM packet arrived during the pass — a positive
+// delta between two consecutive counter samples (same "cumulative counter,
+// diff consecutive samples" reading PassAnalyzer.js's own
+// _tmReceiveHistogram uses for its "received" bars; a negative delta means
+// the counter reset, e.g. a link drop/reconnect mid-pass, not a real
+// un-received packet, so it's skipped rather than counted). Deliberately
+// NOT "does the Eb/N0 carrier-quality series have samples" — that only means
+// the ground station stayed locked on the carrier, and says nothing about
+// whether any packet was actually decoded. Shared by PassAnalyzer.js's own
+// TM status dot and passTooltip.js's hover-tooltip copy of it, so the two
+// can't drift onto different criteria for the same claim.
+export function tmPacketsReceived(counterSamples) {
+  if (!counterSamples?.length) return false;
+  const sorted = counterSamples.slice().sort((a, b) => a.t - b.t);
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].v - sorted[i - 1].v > 0) return true;
+  }
+  return false;
+}
+
 // CHART_W is an internal viewBox unit, not a pixel size — the SVG renders at
 // width:100% (see buildEbn0SVG) so it stretches to fill whatever the flex
 // layout gives it, without hardcoding (and without growing) the tooltip.
@@ -229,7 +249,20 @@ const MARKER_RADIUS = {
 // behavior unchanged. Falls back to the 'procedures' computation whenever
 // 'pass' is requested without a fallbackRange to clamp to — nothing to
 // clamp against otherwise.
-export function ebn0Scales(series, procedures, fallbackRange, series2, width = CHART_W, height = CHART_H, spanMode = 'procedures') {
+//
+// `viewRange` ({t0,t1} ms), optional: overrides the X-axis domain alone —
+// scroll-to-zoom (PassAnalyzer.js's own wheel handler on the chart) narrows
+// this without touching anything else. Deliberately applied AFTER `lo`/`hi`
+// would be computed either way (see below): the Y (dB) domain is always
+// derived from the FULL series, never the current view window, so the
+// vertical scale stays fixed while zooming in/out on time — a curve zoomed
+// into a flat 5-minute slice reads at the same vertical scale as the whole
+// pass, rather than the axis rescaling to whatever that slice's own min/max
+// happens to be. `t0`/`t1` (the full, un-zoomed domain) are still returned
+// alongside the effective ones, so the wheel handler has real outer bounds
+// to clamp zoom-out against without recomputing this same domain logic
+// itself.
+export function ebn0Scales(series, procedures, fallbackRange, series2, width = CHART_W, height = CHART_H, spanMode = 'procedures', viewRange = null) {
   let t0, t1;
   if (spanMode === 'pass' && fallbackRange) {
     ({ t0, t1 } = fallbackRange);
@@ -256,6 +289,8 @@ export function ebn0Scales(series, procedures, fallbackRange, series2, width = C
       }
     }
   }
+  const fullT0 = t0, fullT1 = t1;
+  if (viewRange) { t0 = viewRange.t0; t1 = viewRange.t1; }
   const vals = [
     ...(series?.length  ? series.map(s => s.v)  : []),
     ...(series2?.length ? series2.map(s => s.v) : []),
@@ -266,7 +301,7 @@ export function ebn0Scales(series, procedures, fallbackRange, series2, width = C
   const lo = vMin - vPad, hi = vMax + vPad;
   const xScale = t => t1 === t0 ? PAD_L : PAD_L + (t - t0) / (t1 - t0) * (width - PAD_L - PAD_R);
   const yScale = v => height - PAD_B - (hi === lo ? 0 : (v - lo) / (hi - lo) * (height - PAD_T - PAD_B));
-  return { t0, t1, lo, hi, xScale, yScale };
+  return { t0, t1, lo, hi, xScale, yScale, fullT0, fullT1 };
 }
 
 // Exported so PassAnalyzer.js's fixed-position value readout (see
@@ -503,11 +538,11 @@ function _quantityAxisSVG(width, height) {
 // visible instead of disappearing along with the missing curve — and a faint
 // centered note in place of the data line, rather than replacing the whole
 // block with a one-line text note.
-export function buildEbn0SVG(series, markers, procedures, fallbackRange, series2, width = CHART_W, height = CHART_H, tcHistogram, tmHistogram, spanMode = 'procedures') {
+export function buildEbn0SVG(series, markers, procedures, fallbackRange, series2, width = CHART_W, height = CHART_H, tcHistogram, tmHistogram, spanMode = 'procedures', viewRange = null) {
   const hasSeries  = !!series?.length;
   const hasSeries2 = !!series2?.length;
   if (!hasSeries && !hasSeries2 && !procedures?.length && !fallbackRange) return '';
-  const { xScale, yScale, lo, hi, t0, t1 } = ebn0Scales(series, procedures, fallbackRange, series2, width, height, spanMode);
+  const { xScale, yScale, lo, hi, t0, t1 } = ebn0Scales(series, procedures, fallbackRange, series2, width, height, spanMode, viewRange);
   const pathD  = hasSeries  ? series.map( (p, i) => `${i ? 'L' : 'M'}${xScale(p.t).toFixed(1)},${yScale(p.v).toFixed(1)}`).join('') : '';
   const pathD2 = hasSeries2 ? series2.map((p, i) => `${i ? 'L' : 'M'}${xScale(p.t).toFixed(1)},${yScale(p.v).toFixed(1)}`).join('') : '';
   const hasBars = procedures?.some(pr => pr.startMs != null && pr.endMs != null);
@@ -530,8 +565,6 @@ export function buildEbn0SVG(series, markers, procedures, fallbackRange, series2
     ${!hasAny ? `<text x="${(PAD_L + width - PAD_R) / 2}" y="${(PAD_T + height - PAD_B) / 2}" text-anchor="middle" dominant-baseline="middle" fill="#4a4a6a" font-size="9" font-family="monospace" font-style="italic">(No Eb/N0 metric)</text>` : ''}
     ${hasBars ? _procedureBars(procedures, xScale, t0, t1, height) : ''}
     <line class="ebn0-cursor-line" x1="0" y1="${PAD_T}" x2="0" y2="${height - PAD_B}" stroke="#ffffff" stroke-opacity="0.5" stroke-width="0.7" stroke-dasharray="2,2" visibility="hidden"/>
-    <circle class="ebn0-cursor-dot"  r="${MARKER_PX_RADIUS.cursor}" fill="#fff" stroke="#a78bfa" stroke-width="0.8" visibility="hidden"/>
-    <circle class="ebn0-cursor-dot2" r="${MARKER_PX_RADIUS.cursor}" fill="#fff" stroke="#4ad4ff" stroke-width="0.8" visibility="hidden"/>
     <rect class="ebn0-hit" x="${PAD_L}" y="${PAD_T}" width="${width - PAD_L - PAD_R}" height="${height - PAD_T - PAD_B}" fill="transparent"/>
   </svg>`;
 }
@@ -679,9 +712,9 @@ export async function copyEbn0ChartPNG(el, background = '#12121e', passInfo = nu
   }
 }
 
-// Corrects marker/cursor dot sizes to an exact pixel match with the polar
-// plot's dots, once this chart is actually laid out (its rendered width isn't
-// known at HTML-string-build time — it stretches to fill variable flex space).
+// Corrects marker dot sizes to an exact pixel match with the polar plot's
+// dots, once this chart is actually laid out (its rendered width isn't known
+// at HTML-string-build time — it stretches to fill variable flex space).
 // Reads the viewBox straight off the live element rather than assuming
 // CHART_W, since a caller may have built this chart at a custom width.
 export function syncEbn0DotSizes(ebn0El) {
@@ -694,16 +727,12 @@ export function syncEbn0DotSizes(ebn0El) {
     const px = el.dataset.marker === 'apogee' ? MARKER_PX_RADIUS.apogee : MARKER_PX_RADIUS.standard;
     el.setAttribute('r', (px * scale).toFixed(2));
   });
-  const cursorDot = ebn0El.querySelector('.ebn0-cursor-dot');
-  if (cursorDot) cursorDot.setAttribute('r', (MARKER_PX_RADIUS.cursor * scale).toFixed(2));
-  const cursorDot2 = ebn0El.querySelector('.ebn0-cursor-dot2');
-  if (cursorDot2) cursorDot2.setAttribute('r', (MARKER_PX_RADIUS.cursor * scale).toFixed(2));
 }
 
-export function ebn0HTML(series, markers, procedures, fallbackRange, series2, width = CHART_W, height = CHART_H, tcHistogram, tmHistogram, spanMode = 'procedures') {
+export function ebn0HTML(series, markers, procedures, fallbackRange, series2, width = CHART_W, height = CHART_H, tcHistogram, tmHistogram, spanMode = 'procedures', viewRange = null) {
   const hasAny = series?.length || series2?.length;
   if (!hasAny) {
-    const svg = buildEbn0SVG(series, markers, procedures, fallbackRange, series2, width, height, tcHistogram, tmHistogram, spanMode);
+    const svg = buildEbn0SVG(series, markers, procedures, fallbackRange, series2, width, height, tcHistogram, tmHistogram, spanMode, viewRange);
     return svg
       ? `<div class="ebn0-block">${svg}</div>`
       : `<div class="ebn0-block"><div class="co-tt-note">No Eb/N0 data found</div></div>`;
@@ -763,7 +792,7 @@ export function ebn0HTML(series, markers, procedures, fallbackRange, series2, wi
   ].filter(Boolean);
 
   return `<div class="ebn0-block">
-    ${buildEbn0SVG(series, markers, procedures, fallbackRange, series2, width, height, tcHistogram, tmHistogram, spanMode)}
+    ${buildEbn0SVG(series, markers, procedures, fallbackRange, series2, width, height, tcHistogram, tmHistogram, spanMode, viewRange)}
     <div class="ebn0-legend">
       <div class="ebn0-legend-row">${legendGroups.join('<span class="ebn0-legend-sep">·</span>')}</div>
     </div>

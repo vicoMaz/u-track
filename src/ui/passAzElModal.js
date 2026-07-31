@@ -3,7 +3,7 @@
 // passPolar.js's buildAzElSVG). Deliberately simple: no linked cursor / Eb/N0
 // pairing like the polar plot itself has (passCursor.js) — just a one-shot
 // alternate read of the same pass geometry. One singleton overlay, shared by
-// every polar plot in the app (PassDetailPanel.js, PassAnalyzer.js).
+// every polar plot in the app (currently just PassAnalyzer.js).
 import { buildAzElSVG } from './passPolar.js';
 
 let _overlay = null, _bodyEl = null, _titleEl = null;

@@ -85,8 +85,8 @@ export function closeGrafanaModal() {
 // Global delegated handler, registered once as a side effect of importing
 // this module — any `<a data-grafana-modal data-loki-host=".." href="..">`
 // anywhere in the app gets pop-up behavior automatically. Procedure links
-// live in 2 independently re-built HTML strings (passTooltip.js,
-// PassDetailPanel.js), re-created on every hover/panel-open, so a single
+// live in independently re-built HTML strings (passTooltip.js,
+// PassAnalyzer.js), re-created on every hover/panel-open, so a single
 // delegated listener here is much simpler than wiring (and re-wiring) a
 // click handler at each call site.
 document.addEventListener('click', e => {

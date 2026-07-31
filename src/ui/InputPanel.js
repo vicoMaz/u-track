@@ -47,7 +47,7 @@ function renderSatList() {
     const hidden     = sat.visible === false;
     const stHidden   = !satStarTrackerConesVisible(sat.noradId);
     const networks   = store.getSatNetworks(sat.id);
-    const satPoints  = store.customPoints.filter(p => p.satId === sat.id);
+    const satPoints  = store.customPoints.filter(p => p.noradId === sat.noradId);
     const group = document.createElement('div');
     group.className = 'sat-group';
     group.dataset.itemId = sat.id;
@@ -83,6 +83,38 @@ function renderSatList() {
           </label>`;
         }).join('')}
         <button class="gs-pt-add-btn" data-sat="${sat.id}" title="Add custom point for ${sat.name}">+ Point</button>
+      </div>
+    `;
+    list.appendChild(group);
+  }
+  // Points whose noradId matches no currently-loaded satellite — chiefly
+  // points saved before customPoints switched from the ephemeral sat.id to
+  // noradId (see store.js's addCustomPoint comment): re-attaching those to
+  // whichever satellite now happens to hold their old sat.id would be
+  // exactly the silent-misattribution bug this switch fixed, just done once
+  // at migration time instead of continuously — so they're surfaced here
+  // instead, still visible and removable, rather than guessed at or
+  // silently dropped from the list entirely.
+  const orphaned = store.customPoints.filter(p => !store.satellites.some(s => s.noradId === p.noradId));
+  if (orphaned.length) {
+    const group = document.createElement('div');
+    group.className = 'sat-group';
+    group.style.setProperty('--sat-color', '#ffb84d'); // amber — flags "needs attention", distinct from any real satellite's own color
+    group.innerHTML = `
+      <div class="sat-item">
+        <span class="sat-name-unassigned" title="This point's original satellite isn't currently loaded">Unassigned points</span>
+      </div>
+      <div class="gs-net-rows">
+        ${orphaned.map(p => {
+          const ptVisible = p.visible !== false;
+          return `
+          <label class="gs-pt-row">
+            <input type="checkbox" class="gs-pt-toggle" data-id="${p.id}" ${ptVisible ? 'checked' : ''}>
+            <span class="gs-pt-name" title="${p.name}">${p.name}</span>
+            <span class="gs-pt-coords">${p.lat.toFixed(2)}, ${p.lon.toFixed(2)}${p.mask != null ? ` · ${p.mask}°` : ''}</span>
+            <button class="gs-pt-remove" data-id="${p.id}" title="Remove point">×</button>
+          </label>`;
+        }).join('')}
       </div>
     `;
     list.appendChild(group);

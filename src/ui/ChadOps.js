@@ -10,9 +10,9 @@ import {
   positionTooltip          as _positionTooltip,
   hydratePassGeometry,
   hydrateScheduledProcedures,
+  hydratePassStatusDots,
   fmtDateTimeShort,
 } from './passTooltip.js';
-import { openPassDetail } from './PassDetailPanel.js';
 import { MITIGATION_WINDOW_DAYS } from '../satGnssMitigation.js';
 import { wireSatActionsIcon } from './satActionsMenu.js';
 
@@ -168,21 +168,15 @@ function _linkBadge(label, url, version) {
 
 const _OUTCOME_CLS = { SUCCESS: 'co-dot-success', FAILURE: 'co-dot-fail', CANCELLED: 'co-dot-cancelled' };
 
-function _passDots(passes, satId) {
+function _passDots(passes) {
   if (!passes?.length) return '<span class="co-nil">—</span>';
-  const sel = store.selectedPass;
   const html = passes.map((p, i) => {
     // Each dot is now a plain CSS-drawn circle (background/border, no glyph
     // text) — see .co-dot in style.css for why: a ring can only align
     // reliably to an actual box, not to a ●/○ character's own ink, which
     // browsers don't center within their font box the way you'd expect.
     const cls = p.future ? 'co-dot-future' : (_OUTCOME_CLS[p.outcome] ?? 'co-dot-success');
-    // Marks whichever dot PassDetailPanel's slide-in is currently showing —
-    // set/cleared on open/close from any view, not just this one (see
-    // store.selectedPass) — matched by start time since the pass array is
-    // wholesale-replaced on every satPasses refetch.
-    const selected = sel && sel.satId === satId && sel.start === p.start.getTime();
-    return `<span class="co-dot ${cls}${selected ? ' co-dot-selected' : ''}" data-idx="${i}"></span>`;
+    return `<span class="co-dot ${cls}" data-idx="${i}"></span>`;
   }).join('');
   return `<div class="co-dots-grid">${html}</div>`;
 }
@@ -202,57 +196,6 @@ function _passProgress(pass, now) {
   if (!pass) return 0;
   const span = pass.end - pass.start;
   return span > 0 ? Math.min(1, Math.max(0, (now - pass.start) / span)) : 1;
-}
-
-// Anchors the tooltip to the hovered element's own edge instead of the
-// cursor's entry point — the battery cell is short and stacked (voltage +
-// SoC%), so a cursor-anchored tooltip (positionTooltip's usual +14px offset
-// from wherever the mouse happened to enter) landed right on top of the cell
-// it was describing, and often the row below it too. Flips to the left of
-// the element if the right side wouldn't fit.
-function _positionTooltipAtEl(el, tooltip) {
-  const rect = el.getBoundingClientRect();
-  const pad  = 10;
-  const w = tooltip.offsetWidth  || 200;
-  const h = tooltip.offsetHeight || 90;
-  let x = rect.right + pad;
-  if (x + w > window.innerWidth - 8) x = rect.left - w - pad;
-  let y = rect.top;
-  x = Math.max(8, Math.min(x, window.innerWidth  - w - 8));
-  y = Math.max(8, Math.min(y, window.innerHeight - h - 8));
-  tooltip.style.left = x + 'px';
-  tooltip.style.top  = y + 'px';
-}
-
-function _battMonTooltip(mon) {
-  const _SEV_ORDER = ['watchRange','warningRange','distressRange','severeRange','criticalRange'];
-  const _COND_ORDER = ['criticalCondition','severeCondition','distressCondition','warningCondition','watchCondition','nominalCondition'];
-  const _fmtBound = (v, inclusive, side) => {
-    if (v == null) return '';
-    return side === 'min' ? `${inclusive ? '≥' : '>'}${v}` : `${inclusive ? '≤' : '<'}${v}`;
-  };
-  let rows = '';
-  const ranges = _SEV_ORDER.map(k => mon[k]).filter(Boolean);
-  if (ranges.length) {
-    rows = '<div class="co-tt-header">Ground Monitorings</div>';
-    rows += '<div class="co-batt-mon-note">Outside band → alarm triggers</div>';
-    rows += '<div class="co-batt-mon-note">SoC estimate valid between 20% and 90%</div>';
-    for (const r of ranges) {
-      const lo = _fmtBound(r.minInclusive ?? r.minExclusive, r.minInclusive != null, 'min');
-      const hi = _fmtBound(r.maxInclusive ?? r.maxExclusive, r.maxInclusive != null, 'max');
-      const band = [lo, hi].filter(Boolean).join(' – ');
-      rows += `<div class="co-batt-mon-row"><span class="co-batt-mon-lvl co-mon-${r.criticality?.toLowerCase()}">${r.criticality}</span><span class="co-batt-mon-band">${band}</span></div>`;
-    }
-  } else {
-    const conds = _COND_ORDER.map(k => mon[k]).filter(Boolean);
-    if (conds.length) {
-      rows = '<div class="co-tt-header">Enum conditions</div>';
-      for (const c of conds) {
-        rows += `<div class="co-batt-mon-row"><span class="co-batt-mon-lvl co-mon-${c.criticality?.toLowerCase()}">${c.criticality}</span><span class="co-batt-mon-band">${c.condition}</span></div>`;
-      }
-    }
-  }
-  return rows || '<div class="co-nil">No monitoring defined</div>';
 }
 
 // ── Ping cell ────────────────────────────────────────────────────
@@ -419,14 +362,12 @@ function _rowHTML(sat, now, eclipse) {
 
   const battVal  = tm?.battVoltage?.value      ?? null;
   const battSts  = tm?.battVoltage?.status     ?? 'NOMINAL';
-  const battMon  = tm?.battVoltage?.monitoring ?? null;
   const battSoc  = tm?.battSoc?.value          ?? null;
   const _BATT_CLS = { NOMINAL: 'co-batt-ok', WATCH: 'co-batt-watch', WARNING: 'co-batt-warn', DISTRESS: 'co-batt-dist', SEVERE: 'co-batt-low', CRITICAL: 'co-batt-low' };
   const battCls  = _BATT_CLS[battSts] ?? 'co-batt-ok';
-  const battMonAttr = battMon ? ` data-batt-mon='${JSON.stringify(battMon)}'` : '';
   const socHtml  = battSoc != null ? `<span class="co-soc" title="SoC estimate — valid between 20% and 90%">${battSoc}%</span>` : '';
   const battCell = battVal != null
-    ? `<span class="${battCls} co-batt-hover"${battMonAttr}>${Number(battVal).toFixed(1)} V${socHtml}</span>`
+    ? `<span class="${battCls}">${Number(battVal).toFixed(1)} V${socHtml}</span>`
     : '<span class="co-nil">—</span>';
 
   // Eclipse + Altitude + TLE freshness cell
@@ -519,7 +460,7 @@ function _rowHTML(sat, now, eclipse) {
     <td class="co-batt-cell">${battCell}</td>
     <td class="co-rw-cell">${_rwCell(tm?.rw)}</td>
     <td class="co-gnss-cell">${_gnssCell(store.satGnss[sat.id], store.satGnssMitigation[sat.id])}</td>
-    <td class="co-passes-cell" data-sat-id="${sat.id}">${_passDots(store.satPasses[sat.id], sat.id)}</td>
+    <td class="co-passes-cell" data-sat-id="${sat.id}">${_passDots(store.satPasses[sat.id])}</td>
     <td>${orbitCell}</td>
     <td class="co-alerts-cell">${_groundEvtBadge(store.satGroundEvents[sat.id])}</td>
     <td class="co-alerts-cell">${_evtBadge(tm?.events, store.satEventBaseline[sat.id])}</td>
@@ -676,28 +617,9 @@ export function initChadOps() {
         _positionTooltip(e, tooltip);
         hydratePassGeometry(tooltip, e, pass, sat);
         hydrateScheduledProcedures(tooltip, pass, sat);
+        hydratePassStatusDots(tooltip, pass, sat);
       });
       dot.addEventListener('mouseleave', _scheduleHide);
-      dot.addEventListener('click', () => {
-        const { sat, pass } = _passFor();
-        if (!pass) return;
-        _hideNow();
-        openPassDetail(pass, sat, store.groundStations);
-      });
-    });
-
-    // Battery monitoring tooltip
-    tbody.querySelectorAll('.co-batt-hover[data-batt-mon]').forEach(el => {
-      el.addEventListener('mouseenter', () => {
-        try {
-          const mon = JSON.parse(el.dataset.battMon);
-          _cancelHide();
-          tooltip.innerHTML     = _battMonTooltip(mon);
-          tooltip.style.display = 'block';
-          _positionTooltipAtEl(el, tooltip);
-        } catch { /* bad JSON, ignore */ }
-      });
-      el.addEventListener('mouseleave', _scheduleHide);
     });
 
     // Links detail tooltip — full subsystem link + version breakdown
@@ -750,6 +672,16 @@ export function initChadOps() {
     // add order, so it's found without reading every row on a large fleet.
     const sorted = [...fleet].sort((a, b) => worstSev(b) - worstSev(a));
 
+    // Snapshot each currently-live row's OWN --pass-progress (whatever _tick's
+    // last update, or this same function's own previous call, set it to)
+    // BEFORE the innerHTML rebuild below throws that <tr> away — see the
+    // restore loop after the rebuild for why.
+    const prevProgress = new Map(); // satId -> its --pass-progress value, as a string
+    tbody.querySelectorAll('tr.co-row-live[data-sat-id]').forEach(row => {
+      const v = row.style.getPropertyValue('--pass-progress');
+      if (v) prevProgress.set(row.dataset.satId, v);
+    });
+
     tbody.innerHTML = sorted.map(sat => {
       let eclipse = null;
       if (sat.satrec) {
@@ -767,6 +699,32 @@ export function initChadOps() {
       // detection inside _rowHTML all key off this one value.
       return _rowHTML(sat, satEffectiveNow(sat.noradId), eclipse);
     }).join('');
+
+    // Resume each live row's progress-sweep transition (style.css's
+    // .co-row-live) from where it left off, instead of letting it just snap
+    // straight to the fresh target _rowHTML above already painted it at. A
+    // brand-new <tr> has no previous value of its own for that CSS
+    // transition to animate FROM — and since satTelemetry/satGnss updates
+    // alone trigger this whole render() (via _scheduleRender's 150ms-
+    // debounced burst) roughly every ~20s PER satellite, several times a
+    // minute across a real fleet, that made the sweep visibly sit still and
+    // then jump on every rebuild rather than glide continuously. Fix: force
+    // the OLD value back on with transitions suppressed, flush layout so the
+    // browser commits that as a genuine "previous" state, then hand back to
+    // the fresh target with transitions restored — read as a real value
+    // change on an already-painted property, so it animates between them
+    // exactly as if the row had never been recreated.
+    for (const [satId, fromValue] of prevProgress) {
+      const row = tbody.querySelector(`tr.co-row-live[data-sat-id="${satId}"]`);
+      if (!row) continue;
+      const target = row.style.getPropertyValue('--pass-progress');
+      if (!target) continue;
+      row.style.transition = 'none';
+      row.style.setProperty('--pass-progress', fromValue);
+      void row.offsetHeight; // forces the browser to commit the line above before transitions come back below
+      row.style.transition = '';
+      row.style.setProperty('--pass-progress', target);
+    }
 
     _wireDots();
   }
@@ -908,7 +866,7 @@ export function initChadOps() {
   });
 
   store.subscribe(key => {
-    if ((key === 'satellites' || key === 'satAccessible' || key === 'satTelemetry' || key === 'satPasses' || key === 'satGnss' || key === 'satGnssMitigation' || key === 'satGlobals' || key === 'satVersions' || key === 'satGroundEvents' || key === 'selectedPass') && _active) _scheduleRender();
+    if ((key === 'satellites' || key === 'satAccessible' || key === 'satTelemetry' || key === 'satPasses' || key === 'satGnss' || key === 'satGnssMitigation' || key === 'satGlobals' || key === 'satVersions' || key === 'satGroundEvents') && _active) _scheduleRender();
     if (key === 'pingStatus' && _active) _updatePingDots();
   });
 }
