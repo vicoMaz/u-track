@@ -59,9 +59,19 @@ async function _fetchSccParam(noradId, packet, param, startMs, endMs) {
 
 const _tcCache = new Map();
 
-export async function fetchTcEbn0Series(noradId, startMs, endMs) {
+// `fresh` (default false, every existing caller) skips the cache READ so a
+// still-open window (same noradId/startMs/endMs as an earlier call) forces
+// an actual re-fetch instead of replaying whatever was cached the first
+// time — PassAnalyzer.js's live-pass poll needs this: it re-queries the
+// SAME [pass.start, pass.end] window every 5s while the pass is still in
+// progress, and the server itself already clamps that to whatever samples
+// actually exist "so far", so there's no need to vary the window per tick.
+// Still WRITES the cache afterward either way, so a later non-live caller
+// asking for this exact window (e.g. re-opening the same completed pass)
+// still benefits from it.
+export async function fetchTcEbn0Series(noradId, startMs, endMs, { fresh = false } = {}) {
   const key = `tc|${noradId}|${startMs}|${endMs}`;
-  if (_tcCache.has(key)) return _tcCache.get(key);
+  if (!fresh && _tcCache.has(key)) return _tcCache.get(key);
 
   const [ebRows, n0Rows] = await Promise.all([
     _fetchSccParam(noradId, SBT_PACKET, 'SBT_AM_RX_DEMOD_EB', startMs, endMs),
@@ -117,11 +127,13 @@ const EBN0_METRIC_BY_NETWORK = {
 
 const _cache = new Map(); // `${noradId}|${startMs}|${endMs}|${network}` → [{t,v}] | null
 
-export async function fetchEbn0Series(noradId, startMs, endMs, network) {
+// `fresh` — see fetchTcEbn0Series's own comment above, same reasoning,
+// same live-poll caller.
+export async function fetchEbn0Series(noradId, startMs, endMs, network, { fresh = false } = {}) {
   const metricName = EBN0_METRIC_BY_NETWORK[network];
   if (!metricName) return null;
   const key = `${noradId}|${startMs}|${endMs}|${network}`;
-  if (_cache.has(key)) return _cache.get(key);
+  if (!fresh && _cache.has(key)) return _cache.get(key);
   const rows = await _fetchMetric(noradId, metricName, startMs, endMs, 8000);
   const series = rows
     ? rows.map(r => ({ t: new Date(r.timestamp).getTime(), v: r.value })).sort((a, b) => a.t - b.t)

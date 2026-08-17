@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>chadOps — Manual</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <script src="https://unpkg.com/marked@12/marked.min.js"></script>
+  <script src="https://unpkg.com/mermaid@10/dist/mermaid.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/katex@0.16/dist/katex.min.css" />
+  <script src="https://unpkg.com/katex@0.16/dist/katex.min.js"></script>
+  <script src="https://unpkg.com/katex@0.16/dist/contrib/auto-render.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; background: #0a0a0f; color: #e0e0e0; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; }
+
+    #man-topbar {
+      position: fixed; top: 0; left: 0; right: 0; height: 48px; z-index: 10;
+      background: #12121a; border-bottom: 1px solid #2a2a3a;
+      display: flex; align-items: center; gap: 8px; padding: 0 14px;
+    }
+    #man-topbar img { height: 20px; width: auto; }
+    #man-topbar .man-title { font-size: 13px; font-weight: 700; letter-spacing: 0.04em; color: #c0ccee; }
+    #man-topbar a.man-back { margin-left: auto; color: #666; text-decoration: none; font-size: 12px; border: 1px solid #2a2a3a; border-radius: 4px; padding: 5px 10px; transition: color .15s, border-color .15s; }
+    #man-topbar a.man-back:hover { color: #00d4ff; border-color: #00d4ff44; }
+
+    #man-shell { position: absolute; top: 48px; left: 0; right: 0; bottom: 0; display: flex; }
+
+    #man-nav { width: 260px; flex-shrink: 0; overflow-y: auto; background: #0d0d14; border-right: 1px solid #2a2a3a; padding: 14px 0; }
+    .man-nav-section { margin-bottom: 14px; }
+    .man-nav-section-title { font-size: 10px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: #445566; padding: 4px 16px; }
+    .man-nav-link { display: block; padding: 6px 16px; font-size: 12.5px; color: #99a; text-decoration: none; border-left: 2px solid transparent; line-height: 1.4; }
+    .man-nav-link:hover { background: #16161f; color: #ddd; }
+    .man-nav-link.active { background: #16161f; color: #00d4ff; border-left-color: #00d4ff; font-weight: 600; }
+
+    #man-content { flex: 1; overflow-y: auto; display: flex; justify-content: center; }
+    #man-article { max-width: 820px; width: 100%; padding: 40px 48px 120px; line-height: 1.65; }
+
+    #man-article h1 { font-size: 26px; color: #fff; margin: 0 0 16px; padding-bottom: 12px; border-bottom: 1px solid #2a2a3a; }
+    #man-article h2 { font-size: 20px; color: #e4eeff; margin: 34px 0 12px; }
+    #man-article h3 { font-size: 16px; color: #c0ccee; margin: 24px 0 10px; }
+    #man-article h4 { font-size: 14px; color: #a8b6dd; margin: 18px 0 8px; }
+    #man-article p, #man-article ul, #man-article ol, #man-article table, #man-article blockquote, #man-article .mermaid, #man-article pre {
+      margin-bottom: 14px;
+    }
+    #man-article ul, #man-article ol { padding-left: 24px; }
+    #man-article li { margin-bottom: 4px; }
+    #man-article li > ul, #man-article li > ol { margin-top: 4px; margin-bottom: 0; }
+    #man-article a { color: #4fc3f7; text-decoration: none; border-bottom: 1px solid #4fc3f755; }
+    #man-article a:hover { color: #00d4ff; border-bottom-color: #00d4ff; }
+    #man-article code { font-family: 'Courier New', monospace; background: #1a1a28; color: #ffc880; padding: 1px 5px; border-radius: 3px; font-size: 12.5px; }
+    #man-article pre { background: #12121a; border: 1px solid #2a2a3a; border-radius: 6px; padding: 12px 14px; overflow-x: auto; }
+    #man-article pre code { background: none; padding: 0; color: #d0d6e6; }
+    #man-article blockquote { border-left: 3px solid #00d4ff55; padding: 4px 14px; color: #aab; background: #12121a; border-radius: 0 4px 4px 0; }
+    #man-article table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+    #man-article th, #man-article td { border: 1px solid #2a2a3a; padding: 6px 10px; text-align: left; }
+    #man-article th { background: #16161f; color: #c0ccee; }
+    #man-article img { max-width: 100%; border-radius: 4px; border: 1px solid #2a2a3a; }
+    #man-article hr { border: none; border-top: 1px solid #2a2a3a; margin: 24px 0; }
+    #man-article abbr { text-decoration: underline dotted #6677aa; cursor: help; }
+    #man-article .mermaid { background: #0d0d14; border: 1px solid #2a2a3a; border-radius: 6px; padding: 14px; display: flex; justify-content: center; }
+    #man-article .katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
+    #man-article .man-error { color: #ff6b7a; background: rgba(255,68,85,0.1); border: 1px solid #ff445544; border-radius: 6px; padding: 12px 14px; }
+
+    #man-nav::-webkit-scrollbar, #man-content::-webkit-scrollbar { width: 9px; }
+    #man-nav::-webkit-scrollbar-thumb, #man-content::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 5px; }
+  </style>
+</head>
+<body>
+  <div id="man-topbar">
+    <img src="/favicon.svg" alt="" />
+    <span class="man-title">chadOps Manual</span>
+    <a class="man-back" href="/">← Back to app</a>
+  </div>
+  <div id="man-shell">
+    <nav id="man-nav"></nav>
+    <div id="man-content"><article id="man-article"></article></div>
+  </div>
+
+  <script>
+    const BASE = '/manual/';
+    const navEl = document.getElementById('man-nav');
+    const articleEl = document.getElementById('man-article');
+    let manifest = null;
+    let currentPath = null;
+
+    // Mirrors GitHub's own heading-slug algorithm closely enough to match
+    // the anchors already hand-written into the source docs (e.g. "Step 1
+    // — Establish TMTC connection" -> "step-1--establish-tmtc-connection"):
+    // lowercase, drop punctuation (keeping word chars/spaces/hyphens), then
+    // turn spaces into hyphens. Applied via DOM post-processing (not a
+    // marked.Renderer override) so this stays independent of whichever
+    // marked version the CDN major-version pin resolves to.
+    function slugify(text) {
+      return text.toLowerCase().trim()
+        .replace(/[^\w\- ]+/g, '')
+        .replace(/ /g, '-');
+    }
+
+    function resolvePath(href, currentDir) {
+      const stack = currentDir ? currentDir.split('/') : [];
+      for (const seg of href.split('/')) {
+        if (seg === '' || seg === '.') continue;
+        if (seg === '..') stack.pop();
+        else stack.push(seg);
+      }
+      return stack.join('/');
+    }
+
+    function buildNav() {
+      navEl.innerHTML = '';
+      for (const section of manifest.sections) {
+        const secEl = document.createElement('div');
+        secEl.className = 'man-nav-section';
+        const h = document.createElement('div');
+        h.className = 'man-nav-section-title';
+        h.textContent = section.title;
+        secEl.appendChild(h);
+        for (const item of section.items) {
+          const a = document.createElement('a');
+          a.className = 'man-nav-link';
+          a.href = '#' + encodeURIComponent(item.path);
+          a.textContent = item.title;
+          a.dataset.path = item.path;
+          a.addEventListener('click', e => { e.preventDefault(); navigateTo(item.path); });
+          secEl.appendChild(a);
+        }
+        navEl.appendChild(secEl);
+      }
+    }
+
+    function setActiveNav(path) {
+      navEl.querySelectorAll('.man-nav-link').forEach(a => {
+        a.classList.toggle('active', a.dataset.path === path);
+      });
+    }
+
+    // Resolves every relative <img src> / internal <a href> in the just-
+    // rendered doc against the directory it lives in, assigns GitHub-style
+    // ids to headings for in-page anchors, and converts fenced ```mermaid
+    // blocks (which marked emits as escaped text inside <pre><code>) into
+    // live diagrams.
+    function postProcess(dir) {
+      const seenSlugs = new Map();
+      articleEl.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(h => {
+        let slug = slugify(h.textContent);
+        const n = seenSlugs.get(slug) || 0;
+        seenSlugs.set(slug, n + 1);
+        if (n > 0) slug = `${slug}-${n}`;
+        h.id = slug;
+      });
+
+      articleEl.querySelectorAll('img[src]').forEach(img => {
+        const src = img.getAttribute('src');
+        if (/^(https?:)?\/\//.test(src) || src.startsWith('/')) return;
+        img.src = BASE + encodeURI(resolvePath(src, dir));
+      });
+
+      articleEl.querySelectorAll('a[href]').forEach(a => {
+        const href = a.getAttribute('href');
+        if (/^(https?:)?\/\//.test(href)) {
+          a.target = '_blank';
+          a.rel = 'noopener';
+          return;
+        }
+        if (href.startsWith('#')) {
+          a.addEventListener('click', e => {
+            e.preventDefault();
+            const target = articleEl.querySelector(href);
+            if (target) target.scrollIntoView({ block: 'start' });
+          });
+          return;
+        }
+        const [rawPath, fragment] = href.split('#');
+        if (!/\.md$/i.test(rawPath)) return; // leave any other relative link (e.g. an image link) alone
+        const resolved = resolvePath(rawPath, dir);
+        a.href = '#' + encodeURIComponent(resolved);
+        a.addEventListener('click', e => {
+          e.preventDefault();
+          navigateTo(resolved, fragment);
+        });
+      });
+
+      const pending = [];
+      articleEl.querySelectorAll('pre > code.language-mermaid').forEach(code => {
+        const div = document.createElement('div');
+        div.className = 'mermaid';
+        div.textContent = code.textContent;
+        code.parentElement.replaceWith(div);
+        pending.push(div);
+      });
+      if (pending.length && window.mermaid) {
+        mermaid.run({ nodes: pending, suppressErrors: true }).catch(() => {});
+      }
+
+      if (window.renderMathInElement) {
+        renderMathInElement(articleEl, {
+          delimiters: [
+            { left: '$$', right: '$$', display: true },
+            { left: '$', right: '$', display: false },
+            { left: '\\(', right: '\\)', display: false },
+            { left: '\\[', right: '\\]', display: true },
+          ],
+          throwOnError: false,
+        });
+      }
+    }
+
+    async function navigateTo(path, fragment) {
+      try {
+        const res = await fetch(BASE + encodeURI(path));
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        const text = await res.text();
+        articleEl.innerHTML = marked.parse(text);
+        const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+        postProcess(dir);
+        currentPath = path;
+        setActiveNav(path);
+        history.pushState(null, '', '#' + encodeURIComponent(path));
+        const heading = articleEl.querySelector('h1');
+        document.title = heading ? `chadOps — ${heading.textContent}` : 'chadOps — Manual';
+        if (fragment) {
+          const target = articleEl.querySelector('#' + CSS.escape(fragment));
+          if (target) { target.scrollIntoView({ block: 'start' }); return; }
+        }
+        document.getElementById('man-content').scrollTop = 0;
+      } catch (err) {
+        articleEl.innerHTML = `<div class="man-error">Could not load <code>${path}</code> — ${err.message}</div>`;
+      }
+    }
+
+    window.addEventListener('popstate', () => {
+      const path = decodeURIComponent(location.hash.slice(1)) || manifest.root;
+      navigateTo(path);
+    });
+
+    (async function init() {
+      mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
+      manifest = await (await fetch(BASE + 'manifest.json')).json();
+      buildNav();
+      const initial = decodeURIComponent(location.hash.slice(1)) || manifest.root;
+      navigateTo(initial);
+    })();
+  </script>
+</body>
+</html>

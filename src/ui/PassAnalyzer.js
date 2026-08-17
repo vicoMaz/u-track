@@ -15,6 +15,7 @@
 // reason — see TC_MAX_LIMIT below.
 import { store } from '../store.js';
 import { satSubsystemHost, satSubsystemOrigin } from '../satSubsystems.js';
+import { satEffectiveNow } from '../satSimu.js';
 import { TC_MAX_LIMIT, TC_114_NAME_RE, fetchTcPackets, matchScheduledTargets, collectArguments, argUnitLabel, tcAckStatus as _tcAckStatus, tcPacketsAcked } from '../tcPackets.js';
 import { fetchPassGsCoords, buildPolarSVG, computePolarPoints, computePolarMarkers } from './passPolar.js';
 import { fetchProcedureReport, procedureReportHTML } from './procedureReport.js';
@@ -829,6 +830,13 @@ let _body;
 let _currentSat = null;
 let _selectedPass = null;
 let _gen = 0; // guards a slower in-flight render from clobbering a newer selection
+// Polls fresh Eb/N0 samples while the OPEN pass is the satellite's current
+// live one (see _isPassLive) — cleared at the top of every _render() call
+// (a new pass/satellite selection, or a satPasses/satellites resync) so a
+// stale timer from a previous selection can never fire against the wrong
+// pass. Only ever one live at a time; not per-generation since clearing it
+// unconditionally on every _render() already makes that unnecessary.
+let _liveEbn0Timer = null;
 let _lastTcPackets = null; // stashed so a row click (detail expand) or a later redraw can find/re-render packets without re-fetching
 let _tcCursor = null;      // stashed so a redraw can re-wire the hover-drives-chart listeners on the new rows
 let _lastFullLogLines = null; // stashed so a later procedure click can jump the log panel without re-fetching
@@ -1099,6 +1107,27 @@ function _sortedCompletedPasses(satId) {
   return (store.satPasses[satId] ?? []).filter(p => !p.future).slice().sort((a, b) => a.start - b.start);
 }
 
+// Whether `pass` is the satellite's own current pass RIGHT NOW (aos0→los0)
+// — NOT pass.future, which is a snapshot fixed at fetch time (satPasses.js)
+// and never re-evaluated, so a pass already well underway (or already over)
+// when this panel was opened can still read future:false without meaning
+// "live this instant". Same fresh re-check ChadOps.js's own _currentPass
+// does for the Fleet table's LIVE badge — duplicated here rather than
+// imported since it's a two-line pure check, not worth coupling the Fleet
+// and Analyzer pages over. `now` should be satEffectiveNow(sat.noradId) for
+// a simulated satellite (see _startLiveEbn0Refresh), same as ChadOps.js.
+function _isPassLive(pass, now) {
+  return pass.start.getTime() <= now && now <= pass.end.getTime();
+}
+
+// Stops whatever _startLiveEbn0Refresh (in _render(), below) last started —
+// called at the top of every _render() (a new pass/satellite selection
+// invalidates whatever the previous one was polling for) and from inside
+// the poll itself once the pass it's polling stops being live.
+function _stopLiveEbn0Refresh() {
+  if (_liveEbn0Timer) { clearInterval(_liveEbn0Timer); _liveEbn0Timer = null; }
+}
+
 // The < / > buttons in .pa-details — steps to the adjacent completed pass
 // for the SAME satellite, by exact start-time match rather than assuming
 // the current pass is still at whatever index it was found at last render
@@ -1170,11 +1199,20 @@ function _copyPassDetails(btn, fields) {
 
 async function _render() {
   const myGen = ++_gen;
+  _stopLiveEbn0Refresh(); // a fresh selection invalidates whatever the previous one was polling
   const { sat, pass } = _currentSelection();
   if (!sat || !pass) {
     _body.innerHTML = `<div class="pa-empty">Select a satellite and a completed pass to inspect.</div>`;
     return;
   }
+  // Soonest future pass for THIS satellite — reviewing a completed pass is
+  // exactly when an operator most often wants to queue something for the
+  // next one, and PassAnalyzer otherwise has zero way out to Scheduler (see
+  // the "Schedule next pass" button below).
+  const _futurePasses = (store.satPasses[sat.id] ?? []).filter(p => p.future);
+  const nextFuturePass = _futurePasses.length
+    ? _futurePasses.reduce((a, b) => a.start.getTime() < b.start.getTime() ? a : b)
+    : null;
   const grafanaHost = satSubsystemHost(sat.noradId, 'sccRo') || null;
   // Same time window _fetchFullPassLog queries below — this link should
   // always point at exactly what the panel itself is showing.
@@ -1186,6 +1224,21 @@ async function _render() {
   // landed by click time.
   let copyApogee = '—';
 
+  // Decided once, up front — both the header badge below and the "start
+  // polling" check further down (once the async fetches resolve) read this
+  // SAME boolean, rather than each re-deriving it moments apart against a
+  // slightly different `now`.
+  const isLiveAtOpen = !!(sat.noradId && _isPassLive(pass, satEffectiveNow(sat.noradId)));
+  // Same badge/markup as the Fleet table's own LIVE tag (ChadOps.js's
+  // _rowHTML) — one visual vocabulary for "this pass is happening right
+  // now" across both pages. .pa-pass-live-badge is the extra hook
+  // _startLiveEbn0Refresh's own poll (below) removes once the pass ends;
+  // .co-pass-live-badge alone is ambiguous (nothing else in this panel uses
+  // it, but Fleet's own instances live in a different document entirely).
+  const liveBadge = isLiveAtOpen
+    ? `<span class="co-pass-live-badge pa-pass-live-badge"><span class="co-pass-live-text">● LIVE</span></span>`
+    : '';
+
   _body.innerHTML = `
     <div class="pa-main-row" style="--pa-col1-w:${_paCol1Width}px">
       <div class="pa-left-top">
@@ -1195,8 +1248,11 @@ async function _render() {
             <button type="button" class="pa-copy-details" title="Copy pass details">⧉</button>
             <button type="button" class="pa-pass-prev" title="Previous pass (same satellite)">‹</button>
             <button type="button" class="pa-pass-next" title="Next pass (same satellite)">›</button>
+            <button type="button" class="pa-sched-next-btn"${nextFuturePass ? '' : ' disabled'}
+              ${nextFuturePass ? `data-sch-open data-sch-sat-id="${sat.id}" data-sch-pass-start="${nextFuturePass.start.getTime()}"` : ''}
+              title="${nextFuturePass ? `Schedule procedures for ${sat.name}'s next pass — ${fmtDateTimeShort(nextFuturePass.start)}, ${nextFuturePass.station ?? '—'}` : 'No upcoming pass to schedule for'}">📅</button>
           </div>
-          <div class="co-tt-header"><span class="co-tt-sat-name" style="color:${sat.color}">${sat.name}</span> ${pass.station ?? '—'}${pass.network ? `<span class="co-tt-network">${pass.network}</span>` : ''}</div>
+          <div class="co-tt-header"><span class="co-tt-sat-name" style="color:${sat.color}">${sat.name}</span> ${pass.station ?? '—'}${pass.network ? `<span class="co-tt-network">${pass.network}</span>` : ''}${liveBadge}</div>
           <div class="co-tt-time-row"><span class="co-tt-time-lbl">DATE</span>${fmtDateTimeShort(pass.start)}</div>
           <div class="co-tt-time-row"><span class="co-tt-time-lbl">DUR</span>${fmtDuration(pass.end - pass.start)}</div>
           <div class="co-tt-time-row"><span class="co-tt-time-lbl">DATA</span><span class="pa-status-dot" data-status-dot="tm" title="Loading…">● TM</span><span class="pa-status-dot" data-status-dot="tc" title="Loading…">● TC</span></div>
@@ -1312,7 +1368,11 @@ async function _render() {
   const tmCounterPromise = sat.noradId ? fetchTmPacketsCounterSeries(sat.noradId, pass.start.getTime(), pass.end.getTime()) : Promise.resolve(null);
   const fullLogPromise   = _fetchFullPassLog(grafanaHost, pass);
 
-  const [{ polarPoints, markers }, series, tcSeries, tcPackets, tmCounter, fullLogLinesAsc] =
+  // series/tcSeries (not const, unlike everything else destructured here) —
+  // reassigned by _startLiveEbn0Refresh's own poll further down, once per
+  // tick, while this pass is live; every other value here is a one-time
+  // snapshot for the life of this _render() call.
+  let [{ polarPoints, markers }, series, tcSeries, tcPackets, tmCounter, fullLogLinesAsc] =
     await Promise.all([polarReadyPromise, ebn0Promise, tcEbn0Promise, tcPacketsPromise, tmCounterPromise, fullLogPromise]);
   if (myGen !== _gen) return;
   // queryLoki (lokiQuery.js) always returns oldest-first — flipped here,
@@ -1461,6 +1521,43 @@ async function _render() {
       });
   }
   _drawEbn0();
+
+  // Polls fresh Eb/N0 samples every 5s while this pass is the satellite's
+  // current one (aos0→los0 right now) — otherwise the curve just freezes at
+  // whatever existed the instant this panel happened to be opened, even
+  // though the satellite is still overhead and GNM/SCC keep collecting more.
+  // Only the two curves themselves (TM series/TC tcSeries) — NOT
+  // tcHistogram/tmHistogram: tcHistogram comes from fetchTcPackets, which
+  // echoes each packet's FULL field/container schema (confirmed live: ~10MB
+  // for one 392-packet pass — see tcPackets.js's own import comment above),
+  // fine once per pass but not something to re-pull every 5s; tmHistogram's
+  // own "lost" half depends on the same Loki full-log query the separate
+  // log panel below uses, no cheaper to repeat on a timer. Both stay frozen
+  // at whatever they were when this pass was first opened.
+  function _startLiveEbn0Refresh() {
+    _liveEbn0Timer = setInterval(async () => {
+      if (myGen !== _gen) { _stopLiveEbn0Refresh(); return; } // this render's been superseded — nothing left to poll for
+      // { fresh: true } bypasses ebn0.js's own cache — this asks for the
+      // SAME [pass.start, pass.end] window every tick (the server itself
+      // clamps that to whatever samples exist "so far"), and the plain
+      // cache would otherwise just replay the very first tick's result
+      // forever, including on the last tick once the pass has ended, which
+      // is exactly when a real final fetch matters most.
+      const [newSeries, newTcSeries] = await Promise.all([
+        fetchEbn0Series(sat.noradId, pass.start.getTime(), pass.end.getTime(), pass.network, { fresh: true }),
+        fetchTcEbn0Series(sat.noradId, pass.start.getTime(), pass.end.getTime(), { fresh: true }),
+      ]);
+      if (myGen !== _gen) return; // superseded while the fetch was in flight
+      series = newSeries;
+      tcSeries = newTcSeries;
+      _drawEbn0();
+      if (!_isPassLive(pass, satEffectiveNow(sat.noradId))) {
+        _body.querySelector('.pa-pass-live-badge')?.remove(); // LOS just passed — stop claiming this pass is still live
+        _stopLiveEbn0Refresh(); // this tick's fetch already got the final samples
+      }
+    }, 5000);
+  }
+  if (isLiveAtOpen) _startLiveEbn0Refresh();
 
   const ebn0SpanBtn = _body.querySelector('.pa-ebn0-span-btn');
   if (ebn0SpanBtn) {

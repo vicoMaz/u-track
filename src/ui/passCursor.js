@@ -213,6 +213,44 @@ export function wireLinkedCursor(polarEl, polarPoints, ebn0El, ebn0Series, proce
         // meaning ("fully zoomed out") consistent for its caller.
         onZoom(newSpan >= fullSpan ? null : { t0: newT0, t1: newT1 });
       }, { passive: false });
+
+      // Click-drag to pan the current zoom window left/right — only once
+      // scroll-to-zoom above has actually narrowed the view; the fully
+      // zoomed-out chart already shows the whole domain, nowhere left to pan
+      // to. Same mousedown → document-mousemove/mouseup → cleanup shape as
+      // PassAnalyzer.js's own .pa-col-resizer drag handle.
+      if (viewRange) hit.classList.add('ebn0-hit-pannable');
+      hit?.addEventListener('mousedown', ev => {
+        if (ev.button !== 0 || !viewRange) return;
+        ev.preventDefault();
+        const { width, height } = _chartDims(ebn0El);
+        const { t0: startT0, t1: startT1, fullT0, fullT1 } =
+          ebn0Scales(ebn0Series, procedures, fallbackRange, tcSeries, width, height, spanMode, viewRange);
+        const plotW  = width - PAD_L - PAD_R;
+        const span   = startT1 - startT0;
+        const startX = ev.clientX;
+        // On document.body, not `hit` — every onMove below rebuilds the
+        // chart (onZoom → PassAnalyzer.js's _drawEbn0 tears down and
+        // redraws the whole SVG), which replaces `hit` itself mid-drag. A
+        // class on the now-detached old element wouldn't show; the body
+        // override survives that swap untouched.
+        document.body.style.cursor = 'grabbing';
+        const onMove = e => {
+          const deltaT = ((e.clientX - startX) / plotW) * span;
+          let newT0 = startT0 - deltaT;
+          let newT1 = startT1 - deltaT;
+          if (newT0 < fullT0) { newT0 = fullT0; newT1 = newT0 + span; }
+          else if (newT1 > fullT1) { newT1 = fullT1; newT0 = newT1 - span; }
+          onZoom({ t0: newT0, t1: newT1 });
+        };
+        const onUp = () => {
+          document.body.style.cursor = '';
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
     }
   }
 

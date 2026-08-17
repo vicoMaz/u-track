@@ -5,14 +5,15 @@ import { initGlobe, setGlobeVisible } from './globe/GlobeView.js';
 import { initMap, invalidateMapSize, setMapVisible } from './planisphere/MapView.js';
 import { loadInitialState, startApiPoller } from './apiPoller.js';
 import { initSatInfo } from './ui/SatInfo.js';
-import { initChadOps }          from './ui/ChadOps.js';
+import { initChadOps, focusSatRow } from './ui/ChadOps.js';
 import { initWeeklySchedule }   from './ui/WeeklySchedule.js';
 import { initPassAnalyzer, setSelection as setAnalyzerSelection } from './ui/PassAnalyzer.js';
-import { initScheduler, setSchedulerSelection } from './ui/Scheduler.js';
+import { initScheduler, setSchedulerSelection, restoreSchedulerSelection } from './ui/Scheduler.js';
 import { initNavClocks }        from './ui/NavClocks.js';
 import { initSatPing }          from './satPing.js';
 import { initVpnGuard }         from './ui/vpnGuard.js';
-import { initReadOnlyBadge }    from './ui/readOnlyBadge.js';
+import { initTopSummary }       from './ui/TopSummary.js';
+import { initProfileMenu }      from './ui/ProfileMenu.js';
 import { closeAddPointPanel }   from './ui/AddPointPanel.js';
 import { store }                from './store.js';
 
@@ -38,10 +39,9 @@ function _applyTrackingVisibility(isTracking) {
 }
 
 // Extracted out of the tab-button click handler so it can also be triggered
-// programmatically — the Pass Analyzer tab was removed from the nav bar (see
-// index.html; #analyzer-view is still there), reachable now only via the
-// "Open with Pass Analyzer" button in passTooltip.js's hover tooltip, which
-// has no data-tab button of its own to click.
+// programmatically — pda:open-pass/sch:open-pass/fleet:focus-sat below and
+// the startup hash-restore all need to land on a specific pass/satellite,
+// not just flip the tab to its empty state the way a plain button click does.
 function switchTab(target) {
   const hideSide    = target === 'fleet' || target === 'schedule' || target === 'settings' || target === 'analyzer' || target === 'scheduler';
   const isTracking  = target === 'tracking';
@@ -75,6 +75,20 @@ document.addEventListener('sch:open-pass', e => {
   setSchedulerSelection(e.detail.sat, e.detail.pass);
 });
 
+// Dispatched by passTooltip.js's own "View in Fleet" button — same
+// announce-the-intent shape as the two above. Uses the actual tab button's
+// own .click() rather than switchTab() directly: ChadOps.js listens for a
+// real click on that SAME button to know when to start rendering the Fleet
+// table (see its own start()/stop(), gated on _active) — calling
+// switchTab() here would flip the view visible without ChadOps.js ever
+// having populated #co-tbody, so focusSatRow below would find nothing to
+// scroll to.
+document.addEventListener('fleet:focus-sat', e => {
+  const fleetBtn = [...tabBtns].find(b => b.dataset.tab === 'fleet');
+  fleetBtn?.click();
+  focusSatRow(e.detail.satId);
+});
+
 // Tracking internal subtabs (3D / 2D)
 const trackSubtabBtns = document.querySelectorAll('[data-tracksubtab]');
 const trackContents    = document.querySelectorAll('.track-subtab-content');
@@ -101,6 +115,22 @@ initWeeklySchedule();
 initPassAnalyzer();
 initScheduler();
 initNavClocks();
+initTopSummary();
+initProfileMenu();
+
+// Left-rail collapse toggle (icon-only mode) — persisted across reloads.
+// Purely a body class + CSS var (see style.css's body.left-rail-collapsed);
+// every rail-adjacent fixed element (side panel, time player, gantt) reads
+// --left-rail-w itself, so no other JS needs to know this happened.
+const RAIL_COLLAPSED_KEY = 'chadops.leftRailCollapsed';
+const railCollapseBtn = document.getElementById('rail-collapse-btn');
+if (localStorage.getItem(RAIL_COLLAPSED_KEY) === '1') {
+  document.body.classList.add('left-rail-collapsed');
+}
+railCollapseBtn?.addEventListener('click', () => {
+  const collapsed = document.body.classList.toggle('left-rail-collapsed');
+  localStorage.setItem(RAIL_COLLAPSED_KEY, collapsed ? '1' : '0');
+});
 
 // Satellites and their passes each load asynchronously (loadInitialState()
 // only guarantees the satellite LIST; satPasses arrives per-satellite,
@@ -114,7 +144,7 @@ initNavClocks();
 // re-triggering (and yanking the user back into the Analyzer) on some
 // LATER unrelated satPasses refresh.
 const RESTORE_TIMEOUT_MS = 20_000;
-function _restoreAnalyzerPass(satNameSlug, passStartMs) {
+function _restorePassSelection(tab, satNameSlug, passStartMs) {
   const deadline = Date.now() + RESTORE_TIMEOUT_MS;
   let done = false;
   const tryNow = () => {
@@ -123,8 +153,9 @@ function _restoreAnalyzerPass(satNameSlug, passStartMs) {
     const pass = sat ? (store.satPasses[sat.id] ?? []).find(p => p.start.getTime() === passStartMs) : null;
     if (sat && pass) {
       done = true;
-      switchTab('analyzer');
-      setAnalyzerSelection(sat, pass);
+      switchTab(tab);
+      if (tab === 'analyzer') setAnalyzerSelection(sat, pass);
+      else restoreSchedulerSelection(sat, pass);
       return true;
     }
     if (Date.now() > deadline) { done = true; return true; }
@@ -136,23 +167,31 @@ function _restoreAnalyzerPass(satNameSlug, passStartMs) {
   });
 }
 
-// Restore tab (+, for the Analyzer, the exact pass — see PassAnalyzer.js's
-// setSelection/_stepPass, which keep the hash in this "<sat name>/pass/
-// <passStartMs>" shape while a pass is open) from the URL hash — must run
-// after all initX() so their listeners are registered. Plain tabs restore
-// synchronously below (their nav buttons already exist); the Analyzer half
-// is handled by _restoreAnalyzerPass above instead, since it needs
-// satellites/satPasses to actually be loaded first. The 3-segment shape
-// (vs. a plain tab's single word) is what tells the two apart — a
+// Restore tab (+, for the Analyzer/Scheduler, the exact pass — see
+// PassAnalyzer.js's setSelection/_stepPass and Scheduler.js's own
+// _updateHash, which keep the hash in this "<sat name>/pass/<passStartMs>"
+// (Analyzer) or "scheduler/<sat name>/pass/<passStartMs>" (Scheduler) shape
+// while a pass is open) from the URL hash — must run after all initX() so
+// their listeners are registered. Plain tabs restore synchronously below
+// (their nav buttons already exist); both pass-selection shapes are handled
+// by _restorePassSelection above instead, since they need satellites/
+// satPasses to actually be loaded first. The "scheduler/" prefix is what
+// tells the two shapes apart — Analyzer's own format is left bare (no tab
+// name in it) for backward compatibility with links saved before Scheduler
+// grew this same persistence, so a plain 3-segment hash always means
+// Analyzer and a "scheduler/…" 4-segment one always means Scheduler. A
 // satellite literally named "fleet"/"tracking"/etc. would collide with a
 // real tab, but isn't a real case worth guarding against.
 const _initHash = location.hash.slice(1);
-const _analyzerHash = _initHash.match(/^([^/]+)\/pass\/(\d+)$/);
-if (_analyzerHash) {
-  _restoreAnalyzerPass(decodeURIComponent(_analyzerHash[1]), Number(_analyzerHash[2]));
+const _schedulerHash = _initHash.match(/^scheduler\/([^/]+)\/pass\/(\d+)$/);
+const _analyzerHash  = !_schedulerHash && _initHash.match(/^([^/]+)\/pass\/(\d+)$/);
+if (_schedulerHash) {
+  _restorePassSelection('scheduler', decodeURIComponent(_schedulerHash[1]), Number(_schedulerHash[2]));
+} else if (_analyzerHash) {
+  _restorePassSelection('analyzer', decodeURIComponent(_analyzerHash[1]), Number(_analyzerHash[2]));
 } else {
   const _initBtn = [...tabBtns].find(b => b.dataset.tab === _initHash);
   if (_initBtn) _initBtn.click();
 }
 
-loadInitialState().then(() => { startApiPoller(); initSatPing(); initVpnGuard(); initReadOnlyBadge(); });
+loadInitialState().then(() => { startApiPoller(); initSatPing(); initVpnGuard(); });

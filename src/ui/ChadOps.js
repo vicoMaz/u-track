@@ -95,6 +95,15 @@ function _monPillCls(status) {
   return 'co-pill-crit';
 }
 
+// SYS/GNC mode pills (below) share this instead of calling _monPillCls
+// directly — SAFE is a commanded fallback mode, not a telemetry alarm, so
+// it stays amber (like WATCH/WARNING) even though its own status usually
+// comes back DISTRESS/CRITICAL, which would otherwise paint it red.
+function _modePillCls(status, value) {
+  if (value && /SAFE/i.test(value)) return 'co-pill-warn';
+  return _monPillCls(status);
+}
+
 // Real on-board event counts from TM; baseline = counts 24 h ago for delta display
 function _evtBadge(events, baseline) {
   if (!events) return '<span class="co-nil">—</span>';
@@ -150,6 +159,34 @@ function _groundEvtBadge(counts) {
   return `<div class="co-evt-stack">${rows.map(r =>
     `<span class="co-mode-label">${r.label}</span><span class="co-pill ${_GROUND_SEV_CLS[r.sev]}">${r.v}</span><span></span>`
   ).join('')}</div>`;
+}
+
+// Ground (station-side alarms) and board (on-board event counters) are two
+// independent sources with their own severity vocabularies — not just two
+// views of the same thing — so they're kept as separate mini-stacks (own
+// label, own palette) side by side rather than merged row-by-row into one
+// set of pills, which would wrongly imply e.g. CRIT and HIGH are the same
+// tier. Fused under one <td>/<th> instead of two so the fleet table doesn't
+// spend two full columns on what's conceptually one "alerts" glance.
+function _alertsCell(groundCounts, events, baseline) {
+  return `<div class="co-alerts-fused">
+    <div class="co-alerts-group">
+      <span class="co-alerts-group-label co-alerts-group-ground">GRD</span>
+      ${_groundEvtBadge(groundCounts)}
+    </div>
+    <div class="co-alerts-group">
+      <span class="co-alerts-group-label co-alerts-group-board">BRD</span>
+      ${_evtBadge(events, baseline)}
+    </div>
+  </div>`;
+}
+
+// GET /api/v1/events/mission — { enabled: bool } — the read-only counterpart
+// to satActionsMenu.js's Enable/Disable actions on the same satellite.
+function _missionModeCell(data) {
+  if (!data) return '<span class="co-nil">—</span>';
+  const on = !!data.enabled;
+  return `<span class="co-pill ${on ? 'co-pill-mission-on' : 'co-pill-mission-off'}">${on ? 'ON' : 'OFF'}</span>`;
 }
 
 // ── External links ────────────────────────────────────────────────
@@ -334,8 +371,11 @@ function _rowHTML(sat, now, eclipse) {
     ? '<span class="co-nil">—</span>'
     : `<span class="co-contact-time">${_fmtAgo(elapsed)}</span>`;
   const nextPass = (store.satPasses[sat.id] ?? []).find(p => p.future);
+  // Real button (data-sch-open — same delegated listener passTooltip.js's
+  // own "Schedule procedures" button uses), not just informational text —
+  // jumps to Scheduler with this exact sat/pass pre-selected.
   const nextLine = nextPass
-    ? `<span class="co-next-contact">Next ${_fmtIn(nextPass.start - now)}</span>`
+    ? `<button type="button" class="co-next-contact co-next-link" data-sch-open data-sch-sat-id="${sat.id}" data-sch-pass-start="${nextPass.start.getTime()}" title="Schedule procedures for this pass">Next ${_fmtIn(nextPass.start - now)}</button>`
     : '<span class="co-next-contact co-nil">—</span>';
   const contactCell = `<div class="co-contact-stack">${lastLine}${nextLine}</div>`;
 
@@ -343,8 +383,8 @@ function _rowHTML(sat, now, eclipse) {
   const sysSts  = tm?.sysMode?.status ?? 'NOMINAL';
   const gncVal  = tm?.gncMode?.value  ?? null;
   const gncSts  = tm?.gncMode?.status ?? 'NOMINAL';
-  const safetyPill  = sysVal ? `<span class="co-pill ${_monPillCls(sysSts)}">${sysVal}</span>` : '<span class="co-nil">—</span>';
-  const missionPill = gncVal ? `<span class="co-pill ${_monPillCls(gncSts)}">${gncVal}</span>` : '<span class="co-nil">—</span>';
+  const safetyPill  = sysVal ? `<span class="co-pill ${_modePillCls(sysSts, sysVal)}">${sysVal}</span>` : '<span class="co-nil">—</span>';
+  const missionPill = gncVal ? `<span class="co-pill ${_modePillCls(gncSts, gncVal)}">${gncVal}</span>` : '<span class="co-nil">—</span>';
   const uptimeRaw = tm?.uptime?.value ?? null;
   const uptimeHtml = uptimeRaw != null
     ? `<span class="co-uptime">${_fmtUptime(uptimeRaw)} <span class="co-uptime-raw">${uptimeRaw}</span></span>`
@@ -357,7 +397,7 @@ function _rowHTML(sat, now, eclipse) {
 
   let eclHtml;
   if (eclipse === null)  eclHtml = '<span data-field="ecl" class="co-nil">—</span>';
-  else if (eclipse)      eclHtml = '<span data-field="ecl" class="co-ecl-shadow">● SHADOW</span>';
+  else if (eclipse)      eclHtml = '<span data-field="ecl" class="co-ecl-umbra">● UMBRA</span>';
   else                   eclHtml = '<span data-field="ecl" class="co-ecl-sun">☀ SUN</span>';
 
   const battVal  = tm?.battVoltage?.value      ?? null;
@@ -411,47 +451,85 @@ function _rowHTML(sat, now, eclipse) {
   // Just a static glowing tag now — no more internal progress fill (that
   // moved to the row itself, above); the text sits in its own inner span
   // (co-pass-live-text) purely so the glow's ::after can bleed past the
-  // badge's own edges without also covering the text.
+  // badge's own edges without also covering the text. Inline, on the same
+  // line as the name (margin-left in style.css spaces it from the name
+  // text) — not its own row above, the way SIM/the simulated clock are
+  // below (see simuBadgeLine/simuTimeLine) — a transient in-pass status
+  // reads fine right next to the name it's describing.
   const liveBadge = currentPass
     ? `<span class="co-pass-live-badge"><span class="co-pass-live-text">● LIVE</span></span>`
     : '';
 
+  // Invisible stand-ins for the ⊕/⋮ icon buttons the real name row starts
+  // with (see .co-icon-spacer in style.css) — shared by every extra
+  // .co-name-row line in this cell (simuBadgeLine, simuTimeLine below) so
+  // they line up with the NAME text rather than the icons. <span>, not
+  // <button> — inert layout filler, not a real (if invisible) tab stop.
+  const _iconSpacers = `<span class="co-track-btn co-icon-spacer" aria-hidden="true"></span><span class="co-actions-btn co-icon-spacer" aria-hidden="true"></span>`;
+
   // Set once at add-time (InputPanel.js's addSatellite), not auto-detected —
   // see satSimu.js. Not real-time, so kept out of the Visualizer (GlobeView.js/
   // MapView.js), but ops still cares about its telemetry/procedures, so it
-  // still gets a normal Fleet row, just clearly labeled.
+  // still gets a normal Fleet row, just clearly labeled. Rendered in its own
+  // row below the name (see simuBadgeLine below) rather than inline with it
+  // like LIVE — this is a static per-satellite property, not a transient
+  // in-pass status, so it doesn't need to share the name's own line.
   const isSimu = satIsSimulated(sat.noradId);
   const simuBadge = isSimu
     ? `<span class="co-simu-badge" title="Simulated satellite — not real-time, kept out of the Visualizer">🧪 SIM</span>`
     : '';
+
+  // Own row directly below the name (see .co-simu-badge's own comment in
+  // style.css) — margin-top on the badge itself spaces it from the name
+  // above. Not sharing a row with simuTimeLine below (its own line, own
+  // comment) — cramming both onto one row overflowed this already-narrow
+  // column's fixed width, since .co-table's own white-space:nowrap never
+  // lets that line wrap instead.
+  const simuBadgeLine = isSimu
+    ? `<div class="co-name-row">${_iconSpacers}${simuBadge}</div>`
+    : '';
+
   // `now` here is already satEffectiveNow(sat.noradId) (see render()'s own
   // call site) — every "ago"/"next"/TLE-age label in this row is already
   // silently anchored to it; this just makes that anchor itself visible,
-  // since without it those labels read as if they were real-time.
+  // since without it those labels read as if they were real-time. Its own
+  // line below the SIM badge (not sharing a line with it — see
+  // simuBadgeLine's own comment above); margin-top on .co-simu-time-row
+  // spaces it from whatever's above.
   const simuTimeLine = isSimu
-    ? `<div class="co-simu-time" title="This satellite's own current time — from its SCC's own clock (satSimu.js), not real time. Contact/next-pass/TLE-age above are all anchored to it.">🕐 ${fmtDateTimeShort(new Date(now))}</div>`
+    ? `<div class="co-name-row co-simu-time-row">${_iconSpacers}<span class="co-simu-time" title="This satellite's own current time — from its SCC's own clock (satSimu.js), not real time. Contact/next-pass/TLE-age above are all anchored to it.">🕐 ${fmtDateTimeShort(new Date(now))}</span></div>`
     : '';
 
-  // One click to the Visualizer, already tracking this satellite — instead
-  // of switching tabs yourself and then hunting it in the satellite list.
-  // Omitted for a simulated satellite: GlobeView.js/MapView.js already keep
-  // those out of the Visualizer entirely (see simuBadge's own comment
-  // above), so tracking one here would just be a dead end.
-  const trackBtn = !isSimu
-    ? `<button type="button" class="co-track-btn" data-sat-id="${sat.id}" title="Track ${sat.name} in the Visualizer"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></button>`
-    : '';
+  // One click to the Visualizer, already tracking this satellite. Disabled
+  // (not omitted) for a simulated satellite — GlobeView.js/MapView.js
+  // already keep those out of the Visualizer entirely (see simuBadge's own
+  // comment above), so tracking one here would be a dead end — but the icon
+  // still RENDERS, just greyed out and inert, so every row's icon cluster
+  // stays the same width/position instead of the ⋮ button jumping left onto
+  // where this one would have been.
+  // Same glyph as the left nav rail's own Visualizer link (index.html,
+  // data-tab="tracking") — this button goes to the same place, so it should
+  // look like it does rather than using its own distinct globe variant.
+  const trackIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M21.54 15H17a2 2 0 0 0-2 2v4.54"/><path d="M7 3.34V5a3 3 0 0 0 3 3a2 2 0 0 1 2 2c0 1.1.9 2 2 2a2 2 0 0 0 2-2c0-1.1.9-2 2-2h3.17"/><path d="M11 21.95V18a2 2 0 0 0-2-2a2 2 0 0 1-2-2v-1a2 2 0 0 0-2-2H2.05"/></svg>`;
+  const trackBtn = isSimu
+    ? `<button type="button" class="co-track-btn" disabled title="Simulated satellite — not tracked in the Visualizer">${trackIcon}</button>`
+    : `<button type="button" class="co-track-btn" data-sat-id="${sat.id}" title="Track ${sat.name} in the Visualizer">${trackIcon}</button>`;
 
   // Links to SCC's synoptic view (SCC RO's instead under a read-only VPN —
   // see _synopticUrl) — plain text, no dead link, when neither subsystem's
-  // IP is configured for this satellite at all.
+  // IP is configured for this satellite at all. The ↗ is inline (not just
+  // the title tooltip) so this reads as "leaves the app" at a glance next to
+  // the in-app track button just to its left — same glyph .co-link uses for
+  // the same reason elsewhere in this row.
   const synopticUrl = _synopticUrl(sat.noradId);
   const nameHTML = synopticUrl
-    ? `<a class="co-sat-name-link" href="${synopticUrl}" target="_blank" rel="noopener" title="Open ${sat.name}'s synoptic view">${sat.name}</a>`
+    ? `<a class="co-sat-name-link" href="${synopticUrl}" target="_blank" rel="noopener" title="Open ${sat.name}'s synoptic view">${sat.name}<span class="co-sat-name-ext">↗</span></a>`
     : sat.name;
 
   return `<tr class="co-row${inPass ? ' co-row-live' : ''}" data-sat-id="${sat.id}"${rowStyle}>
     <td class="co-name-cell">
-      <div class="co-name-row">${trackBtn}<button type="button" class="co-actions-btn" data-sat-id="${sat.id}" title="More actions">⋮</button>${nameHTML}${simuBadge}${liveBadge}</div>
+      <div class="co-name-row co-name-main-row">${trackBtn}<button type="button" class="co-actions-btn" data-sat-id="${sat.id}" title="More actions">⋮</button>${nameHTML}${liveBadge}</div>
+      ${simuBadgeLine}
       ${simuTimeLine}
     </td>
     <td class="co-ping-cell" data-field="ping-cell">${_buildPingCell(sat.id)}</td>
@@ -462,10 +540,25 @@ function _rowHTML(sat, now, eclipse) {
     <td class="co-gnss-cell">${_gnssCell(store.satGnss[sat.id], store.satGnssMitigation[sat.id])}</td>
     <td class="co-passes-cell" data-sat-id="${sat.id}">${_passDots(store.satPasses[sat.id])}</td>
     <td>${orbitCell}</td>
-    <td class="co-alerts-cell">${_groundEvtBadge(store.satGroundEvents[sat.id])}</td>
-    <td class="co-alerts-cell">${_evtBadge(tm?.events, store.satEventBaseline[sat.id])}</td>
+    <td class="co-alerts-cell">${_alertsCell(store.satGroundEvents[sat.id], tm?.events, store.satEventBaseline[sat.id])}</td>
+    <td class="co-mission-cell">${_missionModeCell(store.satMissionMode[sat.id])}</td>
     <td class="co-links-cell">${_linkBadge('Dashboard', _dashboardUrl(satBaseUrl(sat.noradId)))}<span class="co-links-info" data-sat-id="${sat.id}">ⓘ</span></td>
   </tr>`;
+}
+
+// Entry point for the shared pass tooltip's "View in Fleet" button
+// (passTooltip.js, dispatched as fleet:focus-sat, wired centrally in
+// main.js) — scrolls that satellite's row into view and briefly flashes it,
+// same "jump with context, don't just switch tabs blind" shape as
+// pda:open-pass/sch:open-pass. The row must already be in the DOM (main.js
+// clicks the Fleet tab button itself first, which runs initChadOps's own
+// start()/render() synchronously) before this runs.
+export function focusSatRow(satId) {
+  const row = document.querySelector(`.co-row[data-sat-id="${satId}"]`);
+  if (!row) return;
+  row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  row.classList.add('co-row-focus-flash');
+  setTimeout(() => row.classList.remove('co-row-focus-flash'), 1600);
 }
 
 // ── Init ──────────────────────────────────────────────────────────
@@ -556,47 +649,34 @@ export function initChadOps() {
     gnssHeader.addEventListener('mouseleave', _scheduleHide);
   }
 
-  const BOARD_ALERTS_HTML = `
-    <div class="co-legend-title">Packet: TM_3_25_OBSW_HK_PLT</div>
+  // Ground and board legends stacked in one tooltip (co-legend-gap divides
+  // them) since the two mini-stacks they document now live under a single
+  // "Alerts" header instead of two.
+  const ALERTS_LEGEND_HTML = `
+    <div class="co-legend-title">Ground · /api/v1/events (category = GROUND)</div>
+    <div class="co-legend-sub">Ground-side monitoring alarms — SCC watches telemetry parameters against configured thresholds and raises one of these when a value deviates from nominal. Counts are over the last 24 h.</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.NOMINAL}">●</span> Nominal</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.WATCH}">●</span> Watch</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.WARNING}">●</span> Warning</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.DISTRESS}">●</span> Distress</div>
+    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.CRITICAL}">●</span> Critical</div>
+    <div class="co-legend-title co-legend-gap">Board · Packet: TM_3_25_OBSW_HK_PLT</div>
     <div class="co-legend-sub">Cumulative on-board event counters since last OBC boot. The <span style="color:#ffcc00;font-weight:600">+N</span> delta shows how many new events occurred in the last 24 h.</div>
-    <div class="co-legend-title co-legend-gap">Severity levels</div>
     <div class="co-legend-row"><span class="co-mode-label">HIGH</span> OBSW_AM_NB_HIGH_SEV_EVT</div>
     <div class="co-legend-row"><span class="co-mode-label">MED</span> OBSW_AM_NB_MED_SEV_EVT</div>
     <div class="co-legend-row"><span class="co-mode-label">LOW</span> OBSW_AM_NB_LOW_SEV_EVT</div>
     <div class="co-legend-row"><span class="co-mode-label">NOM</span> OBSW_AM_NB_NORMAL_EVT</div>`;
 
-  const boardAlertsHeader = document.getElementById('co-board-alerts-th');
-  if (boardAlertsHeader) {
-    boardAlertsHeader.addEventListener('mouseenter', e => {
+  const alertsHeader = document.getElementById('co-alerts-th');
+  if (alertsHeader) {
+    alertsHeader.addEventListener('mouseenter', e => {
       _cancelHide();
-      tooltip.innerHTML     = BOARD_ALERTS_HTML;
+      tooltip.innerHTML     = ALERTS_LEGEND_HTML;
       tooltip.style.display = 'block';
       _positionTooltip(e, tooltip);
     });
-    boardAlertsHeader.addEventListener('mousemove',  e => _positionTooltip(e, tooltip));
-    boardAlertsHeader.addEventListener('mouseleave', _scheduleHide);
-  }
-
-  const GROUND_ALERTS_HTML = `
-    <div class="co-legend-title">/api/v1/events · category = GROUND</div>
-    <div class="co-legend-sub">Ground-side monitoring alarms — SCC watches telemetry parameters against configured thresholds and raises one of these when a value deviates from nominal. Counts are over the last 24 h.</div>
-    <div class="co-legend-title co-legend-gap">Severity levels</div>
-    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.NOMINAL}">●</span> Nominal</div>
-    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.WATCH}">●</span> Watch</div>
-    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.WARNING}">●</span> Warning</div>
-    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.DISTRESS}">●</span> Distress</div>
-    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.CRITICAL}">●</span> Critical</div>`;
-
-  const groundAlertsHeader = document.getElementById('co-ground-alerts-th');
-  if (groundAlertsHeader) {
-    groundAlertsHeader.addEventListener('mouseenter', e => {
-      _cancelHide();
-      tooltip.innerHTML     = GROUND_ALERTS_HTML;
-      tooltip.style.display = 'block';
-      _positionTooltip(e, tooltip);
-    });
-    groundAlertsHeader.addEventListener('mousemove',  e => _positionTooltip(e, tooltip));
-    groundAlertsHeader.addEventListener('mouseleave', _scheduleHide);
+    alertsHeader.addEventListener('mousemove',  e => _positionTooltip(e, tooltip));
+    alertsHeader.addEventListener('mouseleave', _scheduleHide);
   }
 
   function _wireDots() {
@@ -771,7 +851,7 @@ export function initChadOps() {
         const r       = propagate(sat.satrec, nowDate);
         const eclipse = r?.eciPos ? isInEclipse(r.eciPos, sunDir) : null;
         if (eclipse === null) { eclEl.className = 'co-nil';        eclEl.textContent = '—'; }
-        else if (eclipse)     { eclEl.className = 'co-ecl-shadow'; eclEl.textContent = '● SHADOW'; }
+        else if (eclipse)     { eclEl.className = 'co-ecl-umbra'; eclEl.textContent = '● UMBRA'; }
         else                  { eclEl.className = 'co-ecl-sun';    eclEl.textContent = '☀ SUN'; }
       }
 
@@ -783,17 +863,22 @@ export function initChadOps() {
       if (nameEl) {
         const currentPass = _currentPass(store.satPasses[sat.id], now);
         row.classList.toggle('co-row-live', !!currentPass);
-        let badge = nameEl.querySelector('.co-pass-live-badge');
-        if (currentPass && !badge) {
-          badge = document.createElement('span');
+        // .co-name-main-row is the real name line (see _rowHTML) — the
+        // badge lives at its end, after the name link, so a live-pass
+        // starting/ending just appends/removes the one span in place rather
+        // than building/tearing down a whole extra row.
+        const mainRow = nameEl.querySelector('.co-name-main-row');
+        const liveBadgeEl = mainRow?.querySelector('.co-pass-live-badge');
+        if (currentPass && !liveBadgeEl && mainRow) {
+          const badge = document.createElement('span');
           badge.className = 'co-pass-live-badge';
           const text = document.createElement('span');
           text.className   = 'co-pass-live-text';
           text.textContent = '● LIVE';
           badge.appendChild(text);
-          nameEl.appendChild(badge);
-        } else if (!currentPass && badge) {
-          badge.remove();
+          mainRow.appendChild(badge);
+        } else if (!currentPass && liveBadgeEl) {
+          liveBadgeEl.remove();
         }
         if (currentPass) row.style.setProperty('--pass-progress', _passProgress(currentPass, now).toFixed(3));
         else              row.style.removeProperty('--pass-progress');
@@ -866,7 +951,7 @@ export function initChadOps() {
   });
 
   store.subscribe(key => {
-    if ((key === 'satellites' || key === 'satAccessible' || key === 'satTelemetry' || key === 'satPasses' || key === 'satGnss' || key === 'satGnssMitigation' || key === 'satGlobals' || key === 'satVersions' || key === 'satGroundEvents') && _active) _scheduleRender();
+    if ((key === 'satellites' || key === 'satAccessible' || key === 'satTelemetry' || key === 'satPasses' || key === 'satGnss' || key === 'satGnssMitigation' || key === 'satGlobals' || key === 'satVersions' || key === 'satGroundEvents' || key === 'satMissionMode') && _active) _scheduleRender();
     if (key === 'pingStatus' && _active) _updatePingDots();
   });
 }

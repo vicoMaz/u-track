@@ -10,7 +10,7 @@ import { propagate } from '../tle.js';
 import { sunDirectionECI, isInEclipse } from '../sunVector.js';
 import { schedulePlanFetch } from '../planData.js';
 import { scheduleTmrFetch, TMR_SOURCES } from '../tmrData.js';
-import { requestTmrGapDownload, findMatchingGapProcedure, fetchNextPassProcedures } from '../tmrGapDownload.js';
+import { requestTmrGapDownload, findMatchingGapProcedure, fetchNextPassProcedures, TMTC_LINK_TEMPLATE } from '../tmrGapDownload.js';
 import { satSubsystemOrigin } from '../satSubsystems.js';
 import { satIsSimulated, satEffectiveNow, hasSatTimeOffset } from '../satSimu.js';
 import { fetchTcPackets, matchScheduledTargets, collectArguments, argUnitLabel, TC_114_NAME_RE, tcAckStatus } from '../tcPackets.js';
@@ -153,7 +153,7 @@ function _showPlanTooltip(e, plan) {
 
 // Same shape as _planTooltipHTML — start/end/duration for one shadow window.
 function _eclipseTooltipHTML(win) {
-  const hdr   = `<div class="co-tt-header">ECLIPSE <span class="co-pill" style="background:#2244cc22; color:#6a8fff; border:1px solid #2244cc66;">SHADOW</span></div>`;
+  const hdr   = `<div class="co-tt-header">ECLIPSE <span class="co-pill" style="background:#2244cc22; color:#6a8fff; border:1px solid #2244cc66;">UMBRA</span></div>`;
   const times = `<div class="co-tt-time-row"><span class="co-tt-time-lbl">FROM</span>${_fmtDT(new Date(win.start))}</div>`
               + `<div class="co-tt-time-row"><span class="co-tt-time-lbl">TO</span>${_fmtDT(new Date(win.end))}</div>`
               + `<div class="co-tt-time-row"><span class="co-tt-time-lbl">DUR</span>${fmtDuration(win.end - win.start)}</div>`;
@@ -331,6 +331,20 @@ function _sat() {
   return store.satellites.find(s => s.id === _satId) ?? null;
 }
 
+// Mirrors PassAnalyzer.js's own _updateHash/setSelection hash-persistence —
+// same reasoning: a reload or a copy-pasted link should land back on the
+// SAME satellite+pass, not just the tab. Prefixed with the tab name (unlike
+// Analyzer's bare "<sat>/pass/<ms>") so main.js's startup hash-restore can
+// tell the two tools' selections apart — see its own comment there. Reads
+// current state directly rather than taking sat/pass params since its
+// callers below don't all have a `sat` object already in hand locally.
+function _updateHash() {
+  const sat = _sat();
+  location.hash = (sat && _selectedPass)
+    ? `scheduler/${encodeURIComponent(sat.name.toLowerCase())}/pass/${_selectedPass.start.getTime()}`
+    : 'scheduler';
+}
+
 // "Now", from the currently selected satellite's own point of view — plain
 // Date.now() for a real satellite (or when none is selected); corrected by
 // the satellite's own SCC-reported clock offset when it's simulated (see
@@ -367,6 +381,7 @@ function _selectNextUpcomingPass() {
   const next = _passes().find(p => p.end.getTime() > now);
   if (!next) return;
   _selectedPass = next;
+  _updateHash();
   _renderGantt();
 }
 
@@ -384,6 +399,7 @@ function _stepSelectedPass(dir) {
   const nextIdx = idx + dir;
   if (nextIdx < 0 || nextIdx >= passes.length) return;
   _selectedPass = passes[nextIdx];
+  _updateHash();
   _renderGantt();
 }
 
@@ -1706,11 +1722,15 @@ function _procListFieldKey(key, rowIdx, fieldName) {
 // How many rows to render/submit for this list param — the schema's own
 // p.value length until the operator adds or removes a row, at which point
 // _procListRowCounts[key] becomes the source of truth (see the Add/Remove
-// button handlers in _renderProcDetailView).
+// button handlers in _renderProcDetailView). Defaults to 1 (not 0) when the
+// schema has no rows of its own, so a list param opens with one blank entry
+// ready to fill in rather than an empty state the operator has to click
+// "Add entry" on first — explicitly removing that one row (via ✕) still
+// reaches 0 for the genuinely-empty-list case.
 function _procListRowCount(p, key) {
-  return Object.prototype.hasOwnProperty.call(_procListRowCounts, key)
-    ? _procListRowCounts[key]
-    : (Array.isArray(p?.value) ? p.value.length : 0);
+  if (Object.prototype.hasOwnProperty.call(_procListRowCounts, key)) return _procListRowCounts[key];
+  const schemaLen = Array.isArray(p?.value) ? p.value.length : 0;
+  return schemaLen || 1;
 }
 
 // One list-row field's current value — _procArgValue for everything except a
@@ -2100,12 +2120,13 @@ function _procListFieldInputHTML(f, fieldKey) {
 }
 
 // A List-typed argument's own row — one block per current row (see
-// _procListRowCount), each holding one input per element field (struct rows
-// get one labeled input per field; scalar rows get a single bare input), a
-// per-row remove button, and an "Add entry" button below the last row (or in
-// place of any rows at all, if the list is currently empty — an empty array
-// is a genuinely valid value here, e.g. "no parameters to change", not a
-// state to avoid). Field values are read fresh from the CURRENT
+// _procListRowCount, which defaults this to 1 rather than 0), each holding
+// one input per element field (struct rows get one labeled input per field;
+// scalar rows get a single bare input), a per-row remove button, and an "Add
+// entry" button below the last row (or in place of any rows at all, if the
+// operator has removed every row down to a genuinely empty list — e.g. "no
+// parameters to change" — rather than that being the untouched default).
+// Field values are read fresh from the CURRENT
 // _procArgValues/original-schema state on every render (same as every other
 // param type in this file), not cached anywhere — see
 // _procListFieldOriginalValue for the untouched-row fallback.
@@ -2493,6 +2514,7 @@ function _renderProcDetailView() {
     });
   });
   document.getElementById('sch-proc-schedule-btn')?.addEventListener('click', _onScheduleProcClick);
+  document.getElementById('sch-establish-tmtc-btn')?.addEventListener('click', _onEstablishTmtcClick);
   if (_procCalendarKey) _positionCalendarPicker();
 }
 
@@ -2603,6 +2625,98 @@ async function _onScheduleProcClick() {
   }
 }
 
+// SCC namespaces procedure names per-mission — confirmed live: this app's
+// procedure-catalog warnings (fetchProcedureCatalog) showed real entries
+// shaped like "procedures.mission.pandore.subsys.PLCU...", not the bare
+// "procedures.ops.PASS...." TMTC_LINK_TEMPLATE hardcodes (borrowed from
+// tmrGapDownload.js, whose own gap-download flow has this same assumption
+// baked in). A literal string match against a different mission's namespace
+// just silently fails against SCC — resolved here from the already-fetched
+// catalog instead (matched by its own tail segment, namespace-agnostic), so
+// the shortcut still finds the right procedure regardless of which
+// mission's SCC it's pointed at. Falls back to the hardcoded name only if
+// the catalog hasn't loaded yet or genuinely has no match.
+const TMTC_LINK_TAIL = TMTC_LINK_TEMPLATE.procedureName.split('.').pop();
+
+// null only means "catalog loaded, but genuinely nothing in it matches" —
+// callers should treat that as a real "not found", not silently retry the
+// hardcoded guess (which just repeats the same failure). Returns the
+// hardcoded name as a best-effort guess when the catalog hasn't loaded at
+// all yet (no evidence either way).
+function _resolveTmtcLinkProcedureName() {
+  if (!Array.isArray(_procCatalog)) return TMTC_LINK_TEMPLATE.procedureName;
+  const entry = _procCatalog.find(p => _procName(p).split('.').pop() === TMTC_LINK_TAIL);
+  return entry ? _procName(entry) : null;
+}
+
+// "Establish TMTC" shortcut — schedules OPS_PASS_ESTABLISH_TMTC_LINK
+// (cop1FrameType: AD) directly onto the selected pass, bypassing the
+// search/pick/argument-form flow above entirely: this procedure takes the
+// same one fixed param every time (TMTC_LINK_TEMPLATE, shared with
+// tmrGapDownload.js's own gap-download flow, which schedules this exact
+// same procedure+params as an implicit prerequisite already), so there's
+// nothing for a form to usefully ask the operator — only its NAME needs
+// resolving per-mission (see _resolveTmtcLinkProcedureName above). No
+// confirm() gate — same "fires immediately, acknowledged via a toast"
+// convention satActionsMenu.js's mission-mode buttons use for the same
+// reason (a real, deliberate action against a real satellite, not a
+// destructive one).
+async function _onEstablishTmtcClick() {
+  const sat = _sat();
+  if (!sat || !_selectedPass) return;
+  const btn = document.getElementById('sch-establish-tmtc-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Scheduling…'; }
+  try {
+    const procedureName = _resolveTmtcLinkProcedureName();
+    if (procedureName === null) {
+      showWarningToast(`OPS_PASS_ESTABLISH_TMTC_LINK isn't in this satellite's procedure catalog — search "TMTC" above to find its real name for this mission.`);
+      return;
+    }
+    await scheduleProcedure(sat, _selectedPass, procedureName, TMTC_LINK_TEMPLATE.procedureParameters);
+    invalidateScheduledProcedures(sat, _selectedPass);
+    _getSccPassCheck(sat, { forceRefresh: true }); // same "keep the gap dashes honest" reasoning as _onScheduleProcClick above
+    showActionToast(`Scheduled ${_procDisplayName(procedureName)} on this pass`);
+    if (_selectedPass.future) _renderProcedurePanel(_selectedPass, sat);
+  } catch (err) {
+    showWarningToast(`Failed to establish TMTC link: ${err.message}`);
+  } finally {
+    if (btn) { btn.disabled = !_selectedPass; btn.textContent = 'Establish TMTC'; }
+  }
+}
+
+// Green ring + neutral grey center on a future pass's dot in the "All
+// passes" list — same "what's already queued on SCC" data passTooltip.js's
+// own hover tooltip shows (fetchScheduledProcedures), just surfaced as a
+// persistent glance-able mark instead of something you only see on hover.
+// Only checked for FUTURE passes — a past pass's dot already carries its own
+// outcome color (success/failure/cancelled), nothing left to "have
+// scheduled" on it. Re-run on every render (the list's innerHTML is rebuilt
+// wholesale in _renderGantt below, wiping any previous mark), but
+// fetchScheduledProcedures' own per-sat+pass cache means every call after
+// the first for a given pass resolves instantly instead of re-hitting SCC —
+// cheap even across a fast pan/zoom re-render. Looked back up by data-start
+// rather than closing over the row element directly, since a slower fetch
+// resolving after the list was rebuilt again (different satellite, say)
+// would otherwise mark a detached — or worse, since rows get reused by
+// position, a WRONG — row.
+function _markScheduledPassDots(sat, passes, passListEl) {
+  for (const p of passes) {
+    if (!p.future) continue;
+    const startMs = p.start.getTime();
+    fetchScheduledProcedures(sat, p).then(procs => {
+      if (!procs?.length) return;
+      const row = passListEl.querySelector(`.sch-pass-list-row[data-start="${startMs}"]`);
+      const dot = row?.querySelector('.sch-pass-list-dot');
+      if (!dot) return;
+      dot.classList.add('sch-pass-list-dot-scheduled');
+      // Grey center replacing _FUTURE_COLOR — inline, since it was set
+      // inline in the first place (this row's own template literal above)
+      // and a class-based override would need !important to win over it.
+      dot.style.background = '#667';
+    });
+  }
+}
+
 function _renderGantt() {
   const ruler       = document.getElementById('sch-gantt-ruler');
   const eclipseTrack = document.getElementById('sch-gantt-eclipse');
@@ -2692,8 +2806,9 @@ function _renderGantt() {
       const startMs = Number(row.dataset.start);
       const pass = passes.find(p => p.start.getTime() === startMs);
       if (!pass) return;
-      row.addEventListener('click', () => { _selectedPass = pass; _renderGantt(); });
+      row.addEventListener('click', () => { _selectedPass = pass; _updateHash(); _renderGantt(); });
     });
+    _markScheduledPassDots(sat, passes, passListEl);
   }
 
   if (planTrack) {
@@ -2739,6 +2854,10 @@ function _renderGantt() {
       procSearchInput.placeholder = _selectedPass ? 'Search procedures…' : 'Select a pass first';
       if (!_selectedPass) _hideProcCatalogDropdown();
     }
+    // Same gating as the search input just to its left — nothing to
+    // establish a TMTC link ONTO without a pass selected.
+    const establishTmtcBtn = document.getElementById('sch-establish-tmtc-btn');
+    if (establishTmtcBtn) establishTmtcBtn.disabled = !_selectedPass;
   }
 
   if (!selBody) return;
@@ -2852,6 +2971,7 @@ let _pendingOffsetCorrectionSatId = null;
 function _selectSatellite(satId) {
   _satId = satId;
   _selectedPass = null;
+  _updateHash();
   const sat = _sat();
   if (!sat) {
     _pendingOffsetCorrectionSatId = null;
@@ -2866,6 +2986,11 @@ function _selectSatellite(satId) {
     _renderGantt();
     return;
   }
+  // Keep the Visualizer pointed at whatever satellite is open in Scheduler —
+  // switching tabs mid-task (e.g. to eyeball where it is right now before
+  // queuing a procedure) should land on the right one, not whatever was
+  // tracked last. Same store call Fleet's own one-click "track" icon uses.
+  store.setTrackedSat(sat.id);
   // satEffectiveNow, not Date.now(): satPasses.js fetches this satellite's
   // own pass data centered on ITS effective now (real Date.now() for a
   // normal satellite, clock-offset-corrected for a simulated one — see
@@ -2902,14 +3027,10 @@ function _recheckPendingOffsetCorrection() {
   _selectSatellite(sat.id);
 }
 
-// Entry point for the pass tooltip's "Schedule procedures" button
-// (passTooltip.js's _procedureListHTML), dispatched as sch:open-pass and
-// wired up centrally in main.js — same shape as PassAnalyzer.js's own
-// setSelection/pda:open-pass pair. Only meaningful for a future pass (the
-// button itself is gated the same way _procedureListHTML gates on
-// pass.future) — a past pass has nothing here to schedule.
-export function setSchedulerSelection(sat, pass) {
-  if (!sat || !pass?.future) return;
+// Shared by setSchedulerSelection and restoreSchedulerSelection below — both
+// land on the same satellite+pass, just gated differently for their two
+// different callers (see each one's own comment).
+function _applySelection(sat, pass) {
   if (_satId !== sat.id) {
     const select = document.getElementById('sch-sat-select');
     if (select) select.value = sat.id;
@@ -2919,11 +3040,35 @@ export function setSchedulerSelection(sat, pass) {
   // passed-in pass object directly — by identity it's already the same
   // store.satPasses entry, but matching by start time keeps this robust
   // regardless, same "look it back up from the store" reasoning main.js's
-  // own _restoreAnalyzerPass follows.
+  // own _restorePassSelection follows.
   const match = _passes().find(p => p.start.getTime() === pass.start.getTime());
   if (!match) return; // not in this satellite's currently fetched pass window
   _selectedPass = match;
+  _updateHash();
   _renderGantt();
+}
+
+// Entry point for the pass tooltip's "Schedule procedures" button
+// (passTooltip.js's _procedureListHTML), dispatched as sch:open-pass and
+// wired up centrally in main.js — same shape as PassAnalyzer.js's own
+// setSelection/pda:open-pass pair. Only meaningful for a future pass (the
+// button itself is gated the same way _procedureListHTML gates on
+// pass.future) — a past pass has nothing here to schedule.
+export function setSchedulerSelection(sat, pass) {
+  if (!sat || !pass?.future) return;
+  _applySelection(sat, pass);
+}
+
+// Entry point for main.js's startup hash-restore, reading back the
+// "scheduler/<sat>/pass/<ms>" shape _updateHash below writes. Deliberately
+// NOT future-gated like setSchedulerSelection above — unlike the
+// sch:open-pass bridge (always "queue something on this specific upcoming
+// pass"), a reload/shared link can just as legitimately point at a past
+// pass someone was reviewing (the pass list and gantt bars both let you
+// pick either).
+export function restoreSchedulerSelection(sat, pass) {
+  if (!sat || !pass) return;
+  _applySelection(sat, pass);
 }
 
 // Left column's (Scheduled procedures) width in px — dragged via
@@ -3030,6 +3175,7 @@ export function initScheduler() {
     const pass = _passes().find(p => p.start.getTime() === startMs);
     if (!pass) return;
     _selectedPass = pass;
+    _updateHash();
     _renderGantt();
   });
 

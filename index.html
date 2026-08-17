@@ -31,18 +31,23 @@
 
       </div>
 
-      <!-- Tab bar -->
-      <div id="tab-bar">
+      <!-- Top bar: branding, clock, fleet summary -->
+      <div id="top-bar">
         <img id="app-bolt" src="/favicon.svg" alt="" />
         <span id="app-name">chadOps</span>
-        <span id="app-version" title="chadOps build version"></span>
-        <span id="readonly-vpn-pill" class="readonly-pill" hidden title="Only the SCC RO (.5) subnet is reachable on your current VPN — SCC/FDS/GNM/MIC are not, so ground stations, TMR gap data, GNSS status and procedure scheduling won't have data.">🔒 Read-only VPN</span>
-        <div class="tab-bar-sep"></div>
-        <a class="tab-btn" data-tab="fleet" href="#fleet">Fleet</a>
-        <a class="tab-btn active" data-tab="tracking" href="#tracking">Visualizer</a>
-        <a class="tab-btn" data-tab="scheduler" href="#scheduler">Scheduler</a>
-        <a class="tab-btn" data-tab="schedule" href="#schedule">Weekly Agenda</a>
-        <a class="tab-btn" data-tab="settings" href="#settings">Settings</a>
+        <div class="tb-stats" id="tb-stats">
+          <span class="tb-stat"><strong id="tb-sat-count">—</strong> satellites</span>
+          <span class="tb-stat-sep"></span>
+          <span class="tb-anomaly-wrap" id="tb-anomaly-wrap" tabindex="0">
+            <span class="tb-stat" id="tb-anomaly-stat"><strong id="tb-anomaly-count">—</strong> anomalies</span>
+            <div class="tb-anomaly-popover" id="tb-anomaly-popover"></div>
+          </span>
+          <span class="tb-stat-sep"></span>
+          <span class="tb-stat" id="tb-nextpass-stat">
+            <span id="tb-nextpass-normal">Next pass <strong id="tb-next-pass">—</strong> <span class="tb-nextpass-countdown" id="tb-nextpass-countdown"></span></span>
+            <button type="button" class="co-pass-live-badge tb-inpass-badge" id="tb-inpass-badge" title="Go to Fleet" hidden><span class="co-pass-live-text" id="tb-inpass-text">Currently in Pass</span></button>
+          </span>
+        </div>
         <div id="nav-clocks">
           <div class="nc-box nc-box-utc">
             <span class="nc-label nc-label-utc">UTC</span>
@@ -50,7 +55,7 @@
             <span class="nc-date" id="nc-date-utc">----·--·--</span>
           </div>
           <div class="nc-box">
-            <span class="nc-label">Toulouse <span id="nc-tls-offset" class="nc-offset"></span></span>
+            <span class="nc-label"><span id="nc-tls-label">Toulouse</span> <span id="nc-tls-offset" class="nc-offset"></span></span>
             <span class="nc-time" id="nc-tls">--:--:--</span>
             <span class="nc-date" id="nc-date-tls">----·--·--</span>
           </div>
@@ -63,11 +68,81 @@
             <span class="nc-count" id="nc-gnss-info">—</span>
           </div>
         </div>
-        <div class="api-docs-wrap">
-          <img id="app-logo" src="/logo-u-space.png" alt="U-Space" />
-          <a href="/api-docs.html" target="_blank" class="tab-btn api-docs-btn">API Docs ↗</a>
-        </div>
       </div>
+
+      <!-- Left navigation rail -->
+      <nav id="left-rail">
+        <div class="rail-icon-row">
+          <div class="rail-icon-btn profile-wrap" id="profile-wrap">
+            <button type="button" id="profile-btn" class="rail-icon-btn-inner" title="Status">
+              <svg id="profile-icon" class="rail-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.5-7 8-7s8 3 8 7"/></svg>
+              <span class="rail-label">Profile</span>
+            </button>
+            <div class="profile-popover" id="profile-popover">
+              <div class="pp-section-title">Connection</div>
+              <div class="pp-row"><span>VPN</span><span id="pp-vpn-status">—</span></div>
+              <div class="pp-row-detail" id="pp-vpn-detail"></div>
+              <div class="pp-section-title">Satellites</div>
+              <div id="pp-sat-list" class="pp-sat-list"></div>
+            </div>
+          </div>
+          <button type="button" id="notif-btn" class="rail-icon-btn rail-icon-btn-inner" title="Notifications">
+            <svg class="rail-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            <span class="rail-label">Notifications</span>
+          </button>
+        </div>
+
+        <div class="rail-sep"></div>
+
+        <div class="rail-links">
+          <a class="rail-link" data-tab="fleet" href="#fleet" title="Fleet">
+            <svg class="rail-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18 9 10 15 13 20 5"/><path d="M15 13 14 4"/><circle cx="4" cy="18" r="1.6" fill="currentColor" stroke="none"/><circle cx="9" cy="10" r="1.6" fill="currentColor" stroke="none"/><circle cx="15" cy="13" r="1.6" fill="currentColor" stroke="none"/><circle cx="20" cy="5" r="1.6" fill="currentColor" stroke="none"/><circle cx="14" cy="4" r="1.6" fill="currentColor" stroke="none"/></svg>
+            <span class="rail-label">Fleet</span>
+          </a>
+          <a class="rail-link active" data-tab="tracking" href="#tracking" title="Visualizer">
+            <svg class="rail-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M21.54 15H17a2 2 0 0 0-2 2v4.54"/><path d="M7 3.34V5a3 3 0 0 0 3 3a2 2 0 0 1 2 2c0 1.1.9 2 2 2a2 2 0 0 0 2-2c0-1.1.9-2 2-2h3.17"/><path d="M11 21.95V18a2 2 0 0 0-2-2a2 2 0 0 1-2-2v-1a2 2 0 0 0-2-2H2.05"/></svg>
+            <span class="rail-label">Visualizer</span>
+          </a>
+          <a class="rail-link" data-tab="analyzer" href="#analyzer" title="Pass Analyzer">
+            <svg class="rail-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18h8"/><path d="M3 22h18"/><path d="M14 22a7 7 0 1 0 0-14h-1"/><path d="M9 14h2"/><path d="M9 12a2 2 0 0 1-2-2V6h6v4a2 2 0 0 1-2 2Z"/><path d="M12 6V3a1 1 0 0 0-1-1H9.5a1 1 0 0 0-1 1v3"/></svg>
+            <span class="rail-label">Pass Analyzer</span>
+          </a>
+          <a class="rail-link" data-tab="scheduler" href="#scheduler" title="Procedure Scheduler">
+            <svg class="rail-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="10" y1="2" x2="14" y2="2"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="17" y1="4" x2="19" y2="6"/><circle cx="12" cy="14" r="8"/><line x1="12" y1="14" x2="12" y2="10"/></svg>
+            <span class="rail-label">Procedure Scheduler</span>
+          </a>
+          <a class="rail-link" data-tab="schedule" href="#schedule" title="Pass Calendar">
+            <svg class="rail-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="3" y1="14" x2="21" y2="14"/></svg>
+            <span class="rail-label">Pass Calendar</span>
+          </a>
+          <a class="rail-link" data-tab="settings" href="#settings" title="Settings">
+            <svg class="rail-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            <span class="rail-label">Settings</span>
+          </a>
+        </div>
+
+        <div class="rail-spacer"></div>
+
+        <div class="rail-footer">
+          <div class="rail-sep"></div>
+          <span class="rail-footer-title">Resources</span>
+          <a href="/manual.html" target="_blank" class="rail-link rail-link-secondary" title="Operations manual">
+            <svg class="rail-link-icon" viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5C3 3.67 3.67 3 4.5 3H10v14H4.5A1.5 1.5 0 0 1 3 15.5v-11Z"/><path d="M17 4.5C17 3.67 16.33 3 15.5 3H10v14h5.5a1.5 1.5 0 0 0 1.5-1.5v-11Z"/></svg>
+            <span class="rail-label">Manual</span>
+          </a>
+          <a href="/api-docs.html" target="_blank" class="rail-link rail-link-secondary" title="API Docs">
+            <svg class="rail-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h11l5 5v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/><path d="M14 4v6h6"/></svg>
+            <span class="rail-label">API Docs</span>
+          </a>
+          <div class="rail-sep rail-footer-sep"></div>
+          <div class="rail-logo-card"><img id="app-logo" src="/logo-u-space-transparent.png" alt="U-Space" /></div>
+          <span id="app-version" class="rail-version" title="chadOps build version"></span>
+          <button type="button" id="rail-collapse-btn" class="rail-icon-btn-inner rail-collapse-btn" title="Collapse">
+            <svg class="rail-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
+            <span class="rail-label">Collapse</span>
+          </button>
+        </div>
+      </nav>
 
       <!-- Tracking view -->
       <div id="tracking-view" class="view active">
@@ -105,8 +180,8 @@
                   <th class="co-th" id="co-gnss-th" style="cursor:default">GNSS <span class="co-passes-info">ⓘ</span></th>
                   <th class="co-th co-th-passes" id="co-passes-th" style="cursor:default">Passes <span class="co-passes-info">ⓘ</span></th>
                   <th class="co-th">Orbit</th>
-                  <th class="co-th" id="co-ground-alerts-th" style="cursor:default">Ground Alerts <span class="co-passes-info">ⓘ</span></th>
-                  <th class="co-th" id="co-board-alerts-th" style="cursor:default">Board Alerts <span class="co-passes-info">ⓘ</span></th>
+                  <th class="co-th" id="co-alerts-th" style="cursor:default">Alerts <span class="co-passes-info">ⓘ</span></th>
+                  <th class="co-th" title="GET /api/v1/events/mission">Mission</th>
                   <th class="co-th">Links</th>
                 </tr>
               </thead>
@@ -192,7 +267,10 @@
               <div class="sch-schedule-divider" id="sch-schedule-divider" title="Drag to resize"></div>
               <div class="sch-schedule-col sch-schedule-col-right">
                 <div class="sch-proc-search-wrap" id="sch-proc-search-wrap">
-                  <input type="text" id="sch-proc-search" class="sch-proc-search" placeholder="Select a pass first" autocomplete="off" disabled />
+                  <div class="sch-proc-search-row">
+                    <input type="text" id="sch-proc-search" class="sch-proc-search" placeholder="Select a pass first" autocomplete="off" disabled />
+                    <button type="button" id="sch-establish-tmtc-btn" class="sch-nav-btn sch-establish-tmtc-btn" disabled title="Schedule OPS_PASS_ESTABLISH_TMTC_LINK (cop1FrameType: AD) directly on the selected pass">Establish TMTC</button>
+                  </div>
                   <div class="sch-proc-catalog" id="sch-proc-catalog"></div>
                 </div>
                 <div class="sch-proc-detail-view" id="sch-proc-detail-view"></div>
@@ -235,6 +313,17 @@
                 </div>
               </div>
               <div id="st-sat-list" class="st-list"></div>
+            </div>
+
+            <!-- Local clock section -->
+            <div class="st-section">
+              <div class="st-section-title">Local Clock</div>
+              <div class="st-card">
+                <div class="st-card-label">Label</div>
+                <input id="clock-label-input" type="text" placeholder="e.g. Toulouse" maxlength="24" />
+                <div class="st-card-label">Timezone <span class="st-tip-icon" data-tip="Resolved locally from your browser's own IANA timezone database — nothing is looked up online.">ⓘ</span></div>
+                <select id="clock-tz-select"></select>
+              </div>
             </div>
 
           </div>

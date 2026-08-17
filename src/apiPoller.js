@@ -1,5 +1,5 @@
 import * as satjs from 'satellite.js';
-import { store, PALETTE } from './store.js';
+import { store, nextPlaceholderColor } from './store.js';
 import { setSatBaseUrl } from './satPing.js';
 
 let satIdCounter = 9000;
@@ -21,9 +21,11 @@ function parseSatEntry(item) {
     // The color SCC reported the ONE time it was ever fetched for this
     // satellite (satGlobals.js — captured at creation, persisted from then
     // on) — this is what makes it survive a reload without re-fetching.
-    // Only a satellite SCC has never reported one for at all falls back to
-    // the plain PALETTE-cycle default.
-    const color      = localStorage.getItem(`sat-color-${noradId}`) || PALETTE[store.satellites.length % PALETTE.length];
+    // A satellite SCC has never reported one for at all falls back to
+    // nextPlaceholderColor's stable, noradId-keyed placeholder — same
+    // localStorage entry either way, so this line doesn't need to care
+    // which of the two it's reading back.
+    const color      = nextPlaceholderColor(noradId);
     const model      = item.model === 'FF' ? 'FF' : '12U';
     const satelliteId = item.satelliteId || null;
     return { id, noradId, name, color, satrec, model, satelliteId };

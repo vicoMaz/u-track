@@ -14,6 +14,7 @@
 // showActionToast calls for its success/failure outcomes.
 import { satSubsystemOrigin } from '../satSubsystems.js';
 import { showActionToast } from './actionToast.js';
+import { fetchSatMissionMode } from '../satMissionMode.js';
 
 let _menuEl = null;
 
@@ -58,6 +59,7 @@ async function _postMissionMode(sat, enable, btn) {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     showActionToast(`Mission mode ${enable ? 'enabled' : 'disabled'} for ${sat.name}.`);
+    fetchSatMissionMode(sat); // reflect the new state in the Fleet row right away, don't wait for the next poll cycle
   } catch (e) {
     showActionToast(`Failed to ${label.toLowerCase()} mission mode for ${sat.name}: ${e.message}`);
   }

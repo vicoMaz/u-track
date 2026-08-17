@@ -1,4 +1,4 @@
-import { store, PALETTE } from '../store.js';
+import { store, nextPlaceholderColor } from '../store.js';
 import { parseTLE, propagate, placeholderTLE } from '../tle.js';
 import { persistSatellite, deleteServerSatellite, saveSatOrder } from '../apiPoller.js';
 import { satBaseUrl, setSatBaseUrl, satJwt, setSatJwt, pingSatellite, getPingIntervalSec, restartPingPoller } from '../satPing.js';
@@ -561,10 +561,6 @@ if (simuToggleBtn) {
 
 // ─── Add satellite ────────────────────────────────────────────────────────
 
-function nextColor() {
-  return PALETTE[store.satellites.length % PALETTE.length];
-}
-
 async function finaliseSatellite({ satrec, noradId, satId, ip, line1, line2, statusEl }) {
   const nameInput = document.getElementById('name-input');
   const testResult = propagate(satrec, store.currentTime);
@@ -572,7 +568,7 @@ async function finaliseSatellite({ satrec, noradId, satId, ip, line1, line2, sta
 
   statusEl.remove();
   const id    = `sat-${Date.now()}`;
-  const color = nextColor();
+  const color = nextPlaceholderColor(noradId);
   const name  = nameInput.value.trim() || satId || `SAT-${noradId}`;
   store.addSatellite({ id, noradId, name, color, satrec, model: selectedModel });
   await persistSatellite(name, line1, line2, selectedModel, satId);

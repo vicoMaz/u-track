@@ -142,7 +142,7 @@ function _procedureListHTML(pass, grafanaHost, sat) {
   return listHtml + analyzerBtn;
 }
 
-// Shadow/sun split over the pass duration — moved here from PassDetailPanel.js
+// Umbra/sun split over the pass duration — moved here from PassDetailPanel.js
 // (still used there too) since it's pure, synchronous SGP4 propagation + a
 // sun-vector check every 30s across the pass, no network round trip, so it
 // fits this tooltip's own "stays synchronous-feeling" rule just as well as
@@ -150,29 +150,29 @@ function _procedureListHTML(pass, grafanaHost, sat) {
 export function passEclipseBarHTML(satrec, start, end) {
   if (!satrec || !start || !end) return '';
   const STEP = 30_000; // 30s samples
-  let shadow = 0, sun = 0;
+  let umbra = 0, sun = 0;
   for (let t = start.getTime(); t <= end.getTime(); t += STEP) {
     const d = new Date(t);
     const r = propagate(satrec, d);
     if (!r?.eciPos) continue;
-    if (isInEclipse(r.eciPos, sunDirectionECI(d))) shadow++; else sun++;
+    if (isInEclipse(r.eciPos, sunDirectionECI(d))) umbra++; else sun++;
   }
-  const total = shadow + sun;
+  const total = umbra + sun;
   if (!total) return '';
-  const eclPct = Math.round((shadow / total) * 100);
+  const eclPct = Math.round((umbra / total) * 100);
   const sunPct = 100 - eclPct;
   const fmtMin = m => `${m}m`;
   const durMin = Math.round((end - start) / 60_000);
-  const eclMin = Math.round(shadow / total * durMin);
+  const eclMin = Math.round(umbra / total * durMin);
   const sunMin = durMin - eclMin;
   return `
     <div class="co-tt-ecl-bar">
       <div class="oi-eclipse-bar">
-        <div class="oi-eclipse-seg oi-seg-shadow" style="width:${eclPct}%">${eclPct > 15 ? fmtMin(eclMin) : ''}</div>
-        <div class="oi-eclipse-seg oi-seg-sun"    style="width:${sunPct}%">${sunPct > 15 ? fmtMin(sunMin) : ''}</div>
+        <div class="oi-eclipse-seg oi-seg-umbra" style="width:${eclPct}%">${eclPct > 15 ? fmtMin(eclMin) : ''}</div>
+        <div class="oi-eclipse-seg oi-seg-sun"   style="width:${sunPct}%">${sunPct > 15 ? fmtMin(sunMin) : ''}</div>
       </div>
       <div class="oi-eclipse-legend">
-        <span class="oi-ecl-shadow">● ${eclPct}% shadow</span>
+        <span class="oi-ecl-umbra">● ${eclPct}% umbra</span>
         <span class="oi-ecl-sun">☀ ${sunPct}% sun</span>
       </div>
     </div>`;
@@ -198,7 +198,14 @@ export function passSimpleTooltipContent(pass, sat) {
     ${dataRow}
     ${eclBar}
     <div class="pass-geometry-slot"></div>`;
-  return hdr + details + _procedureListHTML(pass, grafanaHost, sat);
+  // Jump to Fleet for this satellite regardless of past/future — unlike the
+  // microscope/schedule buttons above (mutually exclusive on pass.future),
+  // this one's always relevant, so it's outside _procedureListHTML's own
+  // past/future branching. Hidden without a real `sat` (nothing to jump to).
+  const fleetBtn = sat
+    ? `<button type="button" class="co-tt-sched-btn" data-fleet-focus data-fleet-sat-id="${sat.id}">🛰 View in Fleet</button>`
+    : '';
+  return hdr + details + _procedureListHTML(pass, grafanaHost, sat) + fleetBtn;
 }
 
 // Global delegated handler (not wired per-caller), registered once as a
@@ -236,6 +243,31 @@ document.addEventListener('click', e => {
   const tooltip = el.closest('.co-tooltip');
   if (tooltip) tooltip.style.display = 'none';
   document.dispatchEvent(new CustomEvent('sch:open-pass', { detail: { sat, pass } }));
+});
+
+// Same shape again, for the "🛰 View in Fleet" button — only needs a
+// satellite ID (no pass to re-resolve), announced via fleet:focus-sat and
+// handled centrally in main.js (switches to the Fleet tab, then asks
+// ChadOps.js to scroll/flash that satellite's row).
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-fleet-focus]');
+  if (!el) return;
+  const tooltip = el.closest('.co-tooltip');
+  if (tooltip) tooltip.style.display = 'none';
+  document.dispatchEvent(new CustomEvent('fleet:focus-sat', { detail: { satId: el.dataset.fleetSatId } }));
+});
+
+// "Add one in Settings" / similar inline hints (SatInfo.js's MIC-token
+// tooltip, its no-token attitude-value link) — no sat/pass to look up, just
+// flips the active tab. Clicks the real tab button rather than importing
+// switchTab from main.js, same reasoning ChadOps.js's own track-button
+// handler gives for doing the same thing.
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-goto-settings]');
+  if (!el) return;
+  const tooltip = el.closest('.co-tooltip');
+  if (tooltip) tooltip.style.display = 'none';
+  document.querySelector('[data-tab="settings"]')?.click();
 });
 
 // Per-element generation counters (not a single module-level counter) — each

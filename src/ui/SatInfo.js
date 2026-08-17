@@ -35,7 +35,10 @@ document.addEventListener('click', e => {
 
 function _attHelpHTML(sat, atMs) {
   if (!satJwt(sat.noradId)) {
-    return `<div>No MIC token configured for this satellite.</div><div>Add one in Settings to enable real attitude.</div>`;
+    // data-goto-settings — delegated listener lives in passTooltip.js
+    // alongside its other "jump elsewhere" buttons, so this tooltip doesn't
+    // need its own click wiring.
+    return `<div>No MIC token configured for this satellite.</div><div>Add one in <button type="button" class="co-tt-inline-link" data-goto-settings>Settings</button> to enable real attitude.</div>`;
   }
   const state = attitudeDisplayState(sat, atMs);
   if (state.reason === 'future' || state.reason === 'fast-forward') {
@@ -85,16 +88,18 @@ function fmt(n, dec = 2) {
 
 // Soonest pass with start after the currently displayed (possibly scrubbed)
 // simulated time — not pass.future, which is fixed at fetch time against
-// real wall-clock time and wouldn't track the scrubber.
+// real wall-clock time and wouldn't track the scrubber. Returns the raw pass
+// object too (not just startMs/station) so the caller can wire it up as a
+// data-sch-open link straight into Scheduler.
 function _nextPass(satId, atMs) {
   const passes = store.satPasses[satId];
   if (!passes?.length) return null;
-  let best = null;
+  let best = null, bestStartMs = Infinity;
   for (const p of passes) {
     const startMs = (p.start instanceof Date ? p.start : new Date(p.start)).getTime();
-    if (startMs > atMs && (!best || startMs < best.startMs)) best = { startMs, station: p.station };
+    if (startMs > atMs && startMs < bestStartMs) { best = p; bestStartMs = startMs; }
   }
-  return best;
+  return best ? { pass: best, startMs: bestStartMs, station: best.station } : null;
 }
 
 function _fmtCountdown(ms) {
@@ -113,6 +118,14 @@ function _updateAttitude(sat, atMs) {
     attEl.textContent = 'From telemetry';
     attEl.className   = 'att-real';
     attEl.title       = 'Live attitude restitution from MIC.';
+  } else if (state.reason === 'no-token') {
+    // Clickable straight into Settings (data-goto-settings, handled in
+    // passTooltip.js) — a native title attribute can't hold a link, so this
+    // is the one non-real reason that gets its value wrapped in a real
+    // button instead of plain text.
+    attEl.innerHTML  = `<button type="button" class="gsi-next-link" data-goto-settings title="${_CONSTANT_TOOLTIP['no-token']}">${_CONSTANT_LABEL['no-token']}</button>`;
+    attEl.className  = 'att-constant';
+    attEl.title       = '';
   } else {
     attEl.textContent = _CONSTANT_LABEL[state.reason] ?? 'Sun Pointing';
     attEl.className   = 'att-constant';
@@ -178,8 +191,14 @@ function update() {
   _updateTelemetryFields(sat, nowMs);
   _updateAttitude(sat, nowMs);
 
-  const next  = _nextPass(sat.id, nowMs);
-  nextEl.textContent = next ? `${_fmtCountdown(next.startMs - nowMs)} · ${next.station}` : '—';
+  // Clickable straight into Scheduler with this satellite+pass pre-selected
+  // (data-sch-open — same delegated listener passTooltip.js's own "Schedule
+  // procedures" button uses) instead of leaving the operator to go re-find
+  // this exact pass by hand over there.
+  const next = _nextPass(sat.id, nowMs);
+  nextEl.innerHTML = next
+    ? `<button type="button" class="gsi-next-link" data-sch-open data-sch-sat-id="${sat.id}" data-sch-pass-start="${next.pass.start.getTime()}" title="Schedule procedures for this pass">${_fmtCountdown(next.startMs - nowMs)} · ${next.station}</button>`
+    : '—';
 }
 
 export function initSatInfo() {

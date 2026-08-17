@@ -5,10 +5,12 @@ import { showWarningToast }  from './actionToast.js';
 // Satellite backends sit behind VPN-only 172.* addresses. If every configured
 // 172.* satellite is unreachable at once, that's almost always the VPN being
 // down rather than N unrelated satellites failing simultaneously — worth a
-// nudge. Fires once per bad transition (not every ping cycle while it stays
-// down) and stays up — no auto-dismiss timer — until connectivity recovers
-// or the user dismisses it via the toast's Ignore button.
-let _vpnDown   = false;
+// nudge. Toast fires once per bad transition (not every ping cycle while it
+// stays down) and stays up — no auto-dismiss timer — until connectivity
+// recovers or the user dismisses it via the toast's Ignore button.
+// store.vpnDown itself just tracks the current boolean (see its own doc
+// comment in store.js) so ProfileMenu.js's popover can agree with the toast
+// instead of computing its own, possibly-diverging notion of "down".
 let _hideToast = null;
 
 function _check() {
@@ -20,8 +22,8 @@ function _check() {
     return status === 'timeout' || status === 'error';
   });
 
-  if (allUnreachable && !_vpnDown) {
-    _vpnDown   = true;
+  if (allUnreachable && !store.vpnDown) {
+    store.setVpnDown(true);
     _hideToast = showWarningToast('Check your VPN.');
   } else if (!allUnreachable) {
     _resolve();
@@ -29,8 +31,8 @@ function _check() {
 }
 
 function _resolve() {
-  if (_vpnDown) _hideToast?.();
-  _vpnDown   = false;
+  if (store.vpnDown) _hideToast?.();
+  store.setVpnDown(false);
   _hideToast = null;
 }
 

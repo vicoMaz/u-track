@@ -7,6 +7,7 @@ import { fetchSatGnss }           from './satGnss.js';
 import { fetchSatGnssMitigation } from './satGnssMitigation.js';
 import { fetchSatEventBaseline }  from './satEventBaseline.js';
 import { fetchSatGroundEvents }   from './satGroundEvents.js';
+import { fetchSatMissionMode }    from './satMissionMode.js';
 import { fetchSatGlobals }        from './satGlobals.js';
 import { fetchSatVersions }       from './satVersions.js';
 import { satSubsystemOrigin, satSubsystemPingOrigin, SUBSYSTEMS } from './satSubsystems.js';
@@ -157,6 +158,7 @@ const CADENCE_MS = {
   antennas:      30 * 60_000, // near-static ground-station roster
   eventBaseline: 30 * 60_000, // "24h-ago" snapshot, changes ~hourly at most
   groundEvents:  60_000,      // rolling 24h aggregate
+  missionMode:   60_000,      // on/off flag — only changes via the Fleet row's own Enable/Disable action
   globals:       30 * 60_000, // software versions — pre-existing cadence
   gnssMitigation: 30 * 60_000, // rare-event counter — no benefit polling faster than the slow cycle
   subsystemProbe: 30 * 60_000, // SCC/FDS/GNM/MIC reachability — a VPN's routing doesn't change mid-session,
@@ -210,6 +212,7 @@ async function _pingAndReschedule(sat, myGen) {
       if (_due(sat.id, 'antennas'))      { _markFetched(sat.id, 'antennas');      fetches.push(fetchSatAntennas(sat)); }
       if (_due(sat.id, 'eventBaseline')) { _markFetched(sat.id, 'eventBaseline'); fetches.push(fetchSatEventBaseline(sat)); }
       if (_due(sat.id, 'groundEvents'))  { _markFetched(sat.id, 'groundEvents');  fetches.push(fetchSatGroundEvents(sat)); }
+      if (_due(sat.id, 'missionMode'))   { _markFetched(sat.id, 'missionMode');   fetches.push(fetchSatMissionMode(sat)); }
       if (_due(sat.id, 'globals'))       { _markFetched(sat.id, 'globals');       fetches.push(fetchSatGlobals(sat), fetchSatVersions(sat)); }
       if (_due(sat.id, 'gnssMitigation')) { _markFetched(sat.id, 'gnssMitigation'); fetches.push(fetchSatGnssMitigation(sat)); }
       if (_due(sat.id, 'subsystemProbe')) { _markFetched(sat.id, 'subsystemProbe'); fetches.push(_probeSubsystems(sat)); }

@@ -12,7 +12,16 @@
   --sev-warning:  #ffbe0b;
   --sev-distress: #ff8c00;
   --sev-critical: #e63946;
+  --left-rail-w: 208px;
 }
+
+/* Icon-only mode — see #rail-collapse-btn (main.js), persisted via
+   localStorage. Only the width var + label visibility change; every rail
+   rule below reads --left-rail-w rather than hardcoding either state. */
+body.left-rail-collapsed { --left-rail-w: 56px; }
+body.left-rail-collapsed .rail-label,
+body.left-rail-collapsed .rail-version,
+body.left-rail-collapsed .rail-footer-title { display: none; }
 
 html, body {
   width: 100%; height: 100%;
@@ -34,9 +43,10 @@ html, body {
   top: 56px;
   right: 0;
   bottom: 0;
-  left: 0;
+  left: var(--left-rail-w);
   display: none;
   overflow: hidden;
+  transition: left 0.2s;
 }
 .view.active { display: block; }
 
@@ -73,8 +83,8 @@ body.tracking-active #side-panel { top: 100px; }
 }
 .map-theme-btn:hover { color: #fff !important; background: #2a2a3a !important; }
 
-/* ── Tab bar ────────────────────────────────────────── */
-#tab-bar {
+/* ── Top bar ────────────────────────────────────────── */
+#top-bar {
   position: fixed;
   top: 0; left: 0; right: 0;
   height: 56px;
@@ -87,46 +97,95 @@ body.tracking-active #side-panel { top: 100px; }
   z-index: 9999;
 }
 
-.tab-btn {
-  background: transparent;
-  border: none;
-  color: #888;
-  padding: 6px 16px;
-  cursor: pointer;
-  border-radius: 4px;
-  font-size: 12px;
-  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
-  text-decoration: none;
-  display: inline-block;
-}
-.tab-btn:hover { background: #1e1e2e; color: #ccc; }
-.tab-btn.active { background: #1e1e2e; color: #fff; border-bottom: 2px solid #00d4ff; }
-
-
-.api-docs-wrap {
+/* Fleet-wide summary — see TopSummary.js. Anomaly count's color rides the
+   same --sev-* tokens severity.js already uses (nominal green at 0, warning
+   amber once any satellite trips WARNING-or-worse) rather than a new palette. */
+.tb-stats {
   display: flex;
-  flex-direction: row;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  margin-left: 18px;
+  font-size: 12px;
+  color: #99a3b8;
+  flex-shrink: 0;
 }
-.api-docs-btn {
-  text-decoration: none;
-  color: #666;
-  border: 1px solid #2a2a3a;
-  border-radius: 4px;
+.tb-stat strong { color: #d4dcf0; font-weight: 700; }
+.tb-anomaly-stat-warn strong { color: var(--sev-warning); }
+/* De-emphasized relative to the absolute date/time next to it — the
+   countdown is a convenience readout, not the primary fact this stat is
+   reporting. */
+.tb-nextpass-countdown { color: #767686; }
+/* Reuses .co-pass-live-badge's own glow wholesale (ChadOps.js/PassAnalyzer.js's
+   "a satellite is in-pass right now" visual language) rather than a new one —
+   just zeroes the left margin that badge normally needs to space itself off
+   a name TEXT it sits after (ChadOps.js's row), which doesn't apply here:
+   this IS the stat's only content, not a suffix tag. A real <button> (unlike
+   the other two .co-pass-live-badge instances, which are purely
+   informational) — jumps to Fleet on click (TopSummary.js), so it needs its
+   own hover/cursor affordance the base badge never has reason to carry. */
+.tb-inpass-badge {
+  margin-left: 0;
+  font: inherit;
+  cursor: pointer;
 }
-.api-docs-btn:hover { color: #00d4ff; border-color: #00d4ff44; }
+.tb-inpass-badge:hover { background: #124a34; border-color: #3fd08a; }
+/* .co-pass-live-badge's own `display: inline-block` (an author rule) beats
+   the browser's default `[hidden] { display: none }` UA rule outright —
+   author styles always win over user-agent ones regardless of specificity,
+   so without this override TopSummary.js's own hidden = true/false toggle
+   was silently doing nothing and this badge stayed visible permanently.
+   Its two other .co-pass-live-badge instances (ChadOps.js/PassAnalyzer.js)
+   never hit this: those get inserted into/removed from the DOM outright via
+   innerHTML, never toggled via the hidden attribute on a static element. */
+.tb-inpass-badge[hidden] { display: none; }
+.tb-stat-sep {
+  width: 1px;
+  height: 12px;
+  background: #2a2a3a;
+}
 
-#app-version {
-  color: #767686;
-  font-size: 10px;
-  font-family: 'Courier New', monospace;
-  letter-spacing: 0.03em;
-  white-space: nowrap;
-  margin-left: 6px;
-  align-self: center;
-  padding-top: 2px; /* nudges baseline down slightly to sit with chadOps's lowercase x-height instead of its cap-height */
+/* Hover (or keyboard-focus, via the wrap's own tabindex) breakdown of WHICH
+   satellite(s) are behind the anomaly count and why — same hover-only,
+   no-JS-toggle popover convention .profile-popover uses in the left rail,
+   just anchored downward from the top bar instead of sideways from a rail
+   icon (there's nothing above #top-bar to drop into). Content itself is
+   rebuilt by TopSummary.js's own update(), same cadence as the count. */
+.tb-anomaly-wrap { position: relative; outline: none; }
+.tb-anomaly-popover {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 10px;
+  min-width: 230px;
+  max-width: 340px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #14141f;
+  border: 1px solid #2a2a44;
+  border-radius: 8px;
+  padding: 8px 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 10001;
+  font-size: 11.5px;
+  color: #ccc;
 }
+.tb-anomaly-wrap:hover .tb-anomaly-popover,
+.tb-anomaly-wrap:focus .tb-anomaly-popover,
+.tb-anomaly-wrap:focus-within .tb-anomaly-popover { display: block; }
+.tb-anom-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid #22222e;
+}
+.tb-anom-row:last-child { border-bottom: none; }
+.tb-anom-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.tb-anom-name { color: #eee; font-weight: 600; flex-shrink: 0; white-space: nowrap; }
+.tb-anom-subs { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.tb-anom-sub { font-size: 10.5px; font-weight: 600; white-space: nowrap; }
+.tb-anom-empty { color: #667; font-size: 11.5px; padding: 2px 0; }
 
 /* ── Nav Clocks ─────────────────────────────────────── */
 #nav-clocks {
@@ -199,12 +258,26 @@ body.tracking-active #side-panel { top: 100px; }
 }
 
 /* ── Logo ───────────────────────────────────────────── */
-#app-logo {
-  height: 22px;
-  width: auto;
-  display: block;
-  flex-shrink: 0;
+/* U-Space partner logo — relocated into the rail footer (see .rail-footer).
+   The source PNG (logo-u-space.png) is flattened onto solid white, which
+   read as a stray white block on the dark rail — logo-u-space-transparent.png
+   is a background-removed derivative (white keyed out, colors un-matted;
+   see the one-off script used to generate it) so it can sit directly on
+   the rail with no card/background of its own. */
+.rail-logo-card {
+  margin: 8px 10px 2px;
+  padding: 4px 10px;
 }
+#app-logo {
+  max-width: 92px;
+  width: 100%;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+body.left-rail-collapsed .rail-logo-card,
+body.left-rail-collapsed .rail-footer-sep { display: none; }
+
 #app-bolt {
   height: 20px;
   width: auto;
@@ -217,50 +290,232 @@ body.tracking-active #side-panel { top: 100px; }
   font-weight: 700;
   letter-spacing: 0.06em;
   color: #c0ccee;
-  margin-left: 6px;
+  margin-left: 8px;
   flex-shrink: 0;
 }
 
-/* Shown when store.readOnlyVpn is true — see readOnlyBadge.js — i.e. this
-   client's VPN only carries the SCC RO (.5) monitoring subnet, none of the
-   write-capable ones. Amber "caution", not red "error": nothing is broken,
-   the app just won't have data for several features. */
-.readonly-pill {
-  display: inline-flex;
+/* ── Left navigation rail ──────────────────────────────
+   Fixed overlay, same pattern as #side-panel/#time-player/#timeline-gantt
+   below rather than a CSS-grid content push — keeps this change local
+   instead of rippling into every other fixed element in the app. Width
+   driven entirely by --left-rail-w (see :root / body.left-rail-collapsed
+   at the top of this file). */
+#left-rail {
+  position: fixed;
+  top: 56px; left: 0; bottom: 0;
+  width: var(--left-rail-w);
+  background: #12121a;
+  border-right: 1px solid #2a2a3a;
+  display: flex;
+  flex-direction: column;
+  /* NOT hidden — the profile popover renders outside this box (left:
+     calc(100% + 8px), see .profile-popover) and would get clipped along
+     with it. Each row already self-clips its own label text during the
+     collapse-width transition (.rail-link/.rail-icon-btn-inner both set
+     their own overflow:hidden), so nothing relies on this element doing it
+     too. */
+  overflow: visible;
+  z-index: 9999;
+  transition: width 0.2s;
+}
+
+.rail-icon-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  flex-shrink: 0;
+}
+
+.rail-icon-btn { position: relative; flex-shrink: 0; }
+/* Same icon+label row shape as .rail-link (padding/gap/radius) so the
+   profile/notification/collapse rows read as part of the same list instead
+   of a visually distinct control. */
+.rail-icon-btn-inner {
+  width: 100%;
+  display: flex;
   align-items: center;
-  gap: 4px;
-  margin-left: 10px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  background: rgba(255, 176, 46, 0.1);
-  border: 1px solid rgba(255, 176, 46, 0.35);
-  color: #ffb02e;
+  gap: 12px;
+  padding: 9px 10px;
+  border-radius: 6px;
+  background: transparent;
+  border: none;
+  color: #888;
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s;
+}
+.rail-icon-btn-inner:hover { background: #1e1e2e; color: #ccc; }
+
+/* Hover-only flyout — no JS needed to show/hide it, consistent with the
+   app's other lightweight hover affordances. Populated by ProfileMenu.js. */
+.profile-popover {
+  display: none;
+  position: absolute;
+  top: 4px; left: calc(100% + 8px);
+  width: 260px;
+  background: #14141f;
+  border: 1px solid #2a2a44;
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  z-index: 10001;
+}
+.profile-wrap:hover .profile-popover,
+.profile-wrap:focus-within .profile-popover { display: block; }
+/* Collapsed rail: the flyout would otherwise open flush against the icon
+   with no gap, since left:calc(100%+8px) is relative to the now-narrow
+   56px rail — nudge it out a bit further so it doesn't feel glued on. */
+body.left-rail-collapsed .profile-popover { left: calc(100% + 4px); }
+
+.pp-section-title {
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  white-space: nowrap;
-  flex-shrink: 0;
-  cursor: default;
+  color: #667;
+  margin: 8px 0 4px;
 }
-.readonly-pill[hidden] { display: none; }
+.pp-section-title:first-child { margin-top: 0; }
+.pp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #ccc;
+  padding: 2px 0;
+}
+.pp-row-detail {
+  font-size: 10.5px;
+  color: #778;
+  line-height: 1.4;
+}
+.pp-row-detail:empty { display: none; }
+.pp-sat-list { display: flex; flex-direction: column; gap: 3px; }
+.pp-sat-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #ccc;
+}
+.pp-sat-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.pp-sat-status { margin-left: auto; font-size: 10.5px; color: #889; }
+.pp-empty { font-size: 11.5px; color: #667; }
 
-.tab-bar-sep {
-  width: 1px;
-  height: 18px;
+.rail-sep {
+  height: 1px;
   background: #2a2a3a;
-  margin: 0 6px;
+  margin: 4px 12px;
   flex-shrink: 0;
 }
+
+.rail-links {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px;
+  gap: 2px;
+}
+
+/* Page links — main.js's switchTab selects these by [data-tab], not by
+   class, so all visual states live here. Explicit color/text-decoration are
+   load-bearing: without them these are bare <a> tags and fall back to the
+   browser's default link colors (blue, purple once "visited") instead of
+   the app's own grey. */
+.rail-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  color: #888;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s, border-color 0.15s;
+}
+.rail-link:hover { background: #1e1e2e; color: #ccc; }
+/* Current page — background tint + the app's one accent color (same
+   #00d4ff used for the UTC hero clock, date-input focus, etc. — matches
+   rather than introduces a color) as a left rail rather than the old
+   horizontal bar's underline. */
+.rail-link.active {
+  background: rgba(0, 212, 255, 0.08);
+  color: #fff;
+  border-left: 2px solid #00d4ff;
+  padding-left: 8px;
+}
+.rail-link-icon { width: 18px; height: 18px; flex-shrink: 0; }
+.rail-label { overflow: hidden; text-overflow: ellipsis; }
+
+/* Profile icon glow — reflects store.vpnDown (see ProfileMenu.js's update()).
+   The lines themselves stay a plain white (set directly on the icon, not
+   inherited, so it outranks .rail-icon-btn-inner:hover's own color change
+   and stays visible on hover) — only the halo around them carries the
+   status color. */
+#profile-icon { color: #fff; transition: filter 0.3s ease; }
+#profile-icon.profile-icon-vpn-ok {
+  filter: drop-shadow(0 0 3px var(--sev-nominal)) drop-shadow(0 0 6px var(--sev-nominal));
+}
+#profile-icon.profile-icon-vpn-down {
+  filter: drop-shadow(0 0 3px var(--sev-warning)) drop-shadow(0 0 6px var(--sev-warning));
+}
+
+.rail-spacer { flex: 1; }
+
+.rail-footer {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px 10px;
+  gap: 2px;
+  flex-shrink: 0;
+}
+/* Secondary links stay grey-only, resting and hover alike — no accent,
+   these aren't "current page" state, just reference links. */
+.rail-link-secondary { color: #666; font-size: 12px; }
+.rail-link-secondary:hover { color: #ccc; background: #1e1e2e; }
+
+/* Labels the Manual/API Docs group as reference material, not more tabs —
+   same small-caps kicker recipe as .pp-section-title (profile popover),
+   reused here so the two "labeled group" moments in the rail read as one
+   visual language. */
+.rail-footer-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #556;
+  padding: 2px 10px 4px;
+}
+
+.rail-version {
+  color: #767686;
+  font-size: 10px;
+  font-family: 'Courier New', monospace;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  padding: 6px 10px 2px;
+}
+
+.rail-collapse-btn { border-radius: 6px; margin-top: 4px; }
 
 /* ── Side Panel Container ───────────────────────────── */
 #side-panel {
   position: fixed;
-  top: 64px; left: 10px;
+  top: 64px; left: calc(var(--left-rail-w) + 10px);
   display: flex;
   flex-direction: column;
   gap: 8px;
   z-index: 10000;
+  transition: left 0.2s;
 }
 
 .panel {
@@ -516,7 +771,7 @@ body.tracking-active #side-panel { top: 100px; }
 /* ── Time Player ────────────────────────────────────── */
 #time-player {
   position: fixed;
-  bottom: 0; left: 0; right: 0;
+  bottom: 0; left: var(--left-rail-w); right: 0;
   height: 48px;
   background: rgba(10, 10, 18, 0.97);
   border-top: 1px solid #2a2a3a;
@@ -525,6 +780,7 @@ body.tracking-active #side-panel { top: 100px; }
   gap: 6px;
   padding: 0 12px;
   z-index: 9999;
+  transition: left 0.2s;
 }
 body.tracking-active #time-player { display: flex; }
 
@@ -625,12 +881,13 @@ body.tracking-active #time-player { display: flex; }
 #timeline-gantt {
   position: fixed;
   bottom: 48px;
-  left: 0; right: 0;
+  left: var(--left-rail-w); right: 0;
   background: rgba(8, 8, 16, 0.97);
   border-top: 1px solid #1e1e3a;
   padding: 0 0 4px;
   display: none;
   z-index: 9998;
+  transition: left 0.2s;
 }
 body.tracking-active #timeline-gantt { display: block; }
 
@@ -957,6 +1214,21 @@ body.gantt-collapsed .gantt-rows { display: none; }
   text-overflow: ellipsis;
   max-width: 160px;
 }
+/* #gantt-sat-info (the ancestor) is deliberately pointer-events:none, same
+   as .gsi-att-toggle above — this needs the same explicit override to be
+   clickable at all (jumps to Scheduler for the shown next pass). */
+.gsi-next-link {
+  pointer-events: auto;
+  display: inline;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.gsi-next-link:hover { color: #00d4ff; text-decoration: underline; }
 /* Explicit rule for the Attitude value — the row's actual last child is now
    the toggle button (added below), so the generic :last-child rule above no
    longer matches it. */
@@ -1308,7 +1580,7 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .st-tip-icon[data-tip]:hover::before { opacity: 1; }
 
-.st-card input {
+.st-card input, .st-card select {
   background: #1a1a28;
   border: 1px solid #2a2a3a;
   border-radius: 4px;
@@ -1332,7 +1604,7 @@ body.gantt-collapsed .gantt-rows { display: none; }
   width: 52px;
   padding: 3px 6px;
 }
-.st-card input:focus { border-color: #5566aa; }
+.st-card input:focus, .st-card select:focus { border-color: #5566aa; }
 .st-card input::placeholder { color: #445; }
 
 /* Add-satellite form's SIMU toggle (see index.html, InputPanel.js's
@@ -1940,16 +2212,16 @@ body.gantt-collapsed .gantt-rows { display: none; }
   white-space: nowrap;
   transition: width 0.3s;
 }
-.oi-seg-shadow { background: #2244cc; }
-.oi-seg-sun    { background: #b8920a; }
+.oi-seg-umbra { background: #2244cc; }
+.oi-seg-sun   { background: #b8920a; }
 
 .oi-eclipse-legend {
   display: flex;
   justify-content: space-between;
   font-size: 11px;
 }
-.oi-ecl-shadow { color: #8899ff; }
-.oi-ecl-sun    { color: #e6b800; }
+.oi-ecl-umbra { color: #8899ff; }
+.oi-ecl-sun   { color: #e6b800; }
 
 /* ═══════════════════════════════════════════════════════════════
    chadOps — Operational Status Dashboard
@@ -2071,6 +2343,16 @@ body.gantt-collapsed .gantt-rows { display: none; }
   color: #bbb;
   min-width: 100px;
   white-space: nowrap;
+  /* .co-row td's own default (below) centers every OTHER column — fine for
+     a single short value, but this cell stacks several LEFT-reading lines
+     (the name + LIVE together, then SIM, then the simulated clock; see
+     ChadOps.js's own _rowHTML), and only the flex .co-name-row happened to
+     escape that default on its own (a flex container's children align via
+     justify-content, not text-align). Every other line here is bare inline
+     content with no such escape hatch, so it was left visibly centered
+     while the name row stayed left — confirmed live as the badges reading
+     "not aligned" with the name above/below them. */
+  text-align: left;
 }
 .co-name-row { display: flex; align-items: center; }
 /* Opens the satellite's synoptic view (SCC, or SCC RO under a read-only VPN
@@ -2079,13 +2361,21 @@ body.gantt-collapsed .gantt-rows { display: none; }
    hover as the one affordance that it's clickable at all. */
 .co-sat-name-link { color: inherit; text-decoration: none; }
 .co-sat-name-link:hover { color: #fff; text-decoration: underline; }
+/* Persistent (not hover-only) "leaves the app" cue — sits right next to
+   .co-track-btn's planet icon, which goes to the in-app Visualizer instead,
+   so the two need to read as different destinations without relying on the
+   title tooltip alone. Muted at rest so it doesn't outweigh the name itself;
+   brightens together with the name on hover via the rule above. */
+.co-sat-name-ext { margin-left: 3px; font-size: 11px; color: #667; }
+.co-sat-name-link:hover .co-sat-name-ext { color: inherit; }
 /* Planet icon → track this satellite in the Visualizer, one click (see
-   .co-track-btn's click handler in ChadOps.js's _wireDots). Same small
-   bordered-box treatment (and grey-to-white hover) as .pdp-close elsewhere
-   in the app, just inline in the row's own flow instead of absolutely
-   positioned in a corner — this cell has no competing corner content.
-   currentColor on the SVG's own stroke means the button's own color
-   transition (below) is all that's needed to recolor the icon. */
+   .co-track-btn's click handler in ChadOps.js's _wireDots). Bordered box,
+   plus the same rounded-hover-highlight treatment as the left nav rail's
+   own icon buttons (.rail-link/.rail-icon-btn-inner), just inline in the
+   row's own flow instead of a full-width rail row — this cell has no label
+   to make room for. currentColor on the SVG's own stroke means the
+   button's own color transition (below) is all that's needed to recolor
+   the icon. */
 .co-track-btn {
   display: inline-flex;
   align-items: center;
@@ -2095,16 +2385,29 @@ body.gantt-collapsed .gantt-rows { display: none; }
   margin-right: 7px;
   background: transparent;
   border: 1px solid #2a2a4a;
-  border-radius: 4px;
-  color: #889;
+  border-radius: 6px;
+  color: #888;
   cursor: pointer;
-  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+  transition: color 0.15s, background-color 0.15s, border-color 0.15s;
 }
 .co-track-btn svg { width: 13px; height: 13px; }
-.co-track-btn:hover { color: #fff; border-color: #4444aa; background: #1e1e30; }
+.co-track-btn:hover { color: #ccc; background: #1e1e2e; border-color: #4444aa; }
+/* Simulated satellite — rendered (not omitted) so the icon cluster's width
+   stays the same across every row, but inert: `disabled` alone already
+   blocks the click and (per its own selector in ChadOps.js's _wireDots)
+   never gets a listener attached in the first place; this just gives it the
+   same greyed-out, no-pointer affordance #gantt-toggle:disabled already
+   uses elsewhere for the identical "nothing to do here" case. */
+.co-track-btn:disabled { cursor: default; color: #45455a; }
+.co-track-btn:disabled:hover { background: transparent; border-color: #2a2a4a; }
+/* Invisible layout stand-ins for the ⊕/⋮ icon buttons, reusing their exact
+   width/height/border/margin (see .co-track-btn/.co-actions-btn above) so
+   the LIVE badge's own row (ChadOps.js's _rowHTML/_tick) lines up with the
+   NAME text in the real row below rather than eyeballing a fixed offset. */
+.co-icon-spacer { visibility: hidden; }
 
-/* "⋮" more-actions icon, same small bordered-box treatment as .co-track-btn
-   just to its right — opens satActionsMenu.js's floating menu. */
+/* "⋮" more-actions icon, same bordered-box + nav-rail-hover treatment as
+   .co-track-btn just to its left — opens satActionsMenu.js's floating menu. */
 .co-actions-btn {
   display: inline-flex;
   align-items: center;
@@ -2114,14 +2417,14 @@ body.gantt-collapsed .gantt-rows { display: none; }
   margin-right: 7px;
   background: transparent;
   border: 1px solid #2a2a4a;
-  border-radius: 4px;
-  color: #889;
+  border-radius: 6px;
+  color: #888;
   font-size: 13px;
   line-height: 1;
   cursor: pointer;
-  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+  transition: color 0.15s, background-color 0.15s, border-color 0.15s;
 }
-.co-actions-btn:hover { color: #fff; border-color: #4444aa; background: #1e1e30; }
+.co-actions-btn:hover { color: #ccc; background: #1e1e2e; border-color: #4444aa; }
 
 /* satActionsMenu.js's floating dropdown — fixed-position, singleton, filled
    in fresh on each open. Same dark-card treatment as .co-tooltip. Also reused
@@ -2189,8 +2492,12 @@ body.gantt-collapsed .gantt-rows { display: none; }
    silently anchored to it, so it needs to be visible, not just correct.
    Plain/muted (not another colored badge) since it's contextual info about
    the row, not a status the eye needs drawn to. */
+/* Wrapping .co-name-row (ChadOps.js's own simuTimeLine) — margin-top here,
+   not on .co-simu-time itself, since it's spacing this whole ROW from the
+   SIM row above (.co-simu-badge, always present when this row is — both are
+   isSimu-gated), not just the text inside it. */
+.co-simu-time-row { margin-top: 2px; }
 .co-simu-time {
-  margin-top: 2px;
   color: #9a86d9;
   font-size: 10px;
   font-weight: 400;
@@ -2201,11 +2508,13 @@ body.gantt-collapsed .gantt-rows { display: none; }
    The glow itself is a static box-shadow on a ::after layer; only its OPACITY
    animates (compositor-only) instead of animating the box-shadow's blur/
    spread directly, which would force a repaint every frame for as long as
-   any satellite is in-pass. */
+   any satellite is in-pass. Inline at the end of .co-name-main-row (ChadOps.js's
+   own _rowHTML/_tick), right after the name text — margin-left is the only
+   spacing still owned by the badge itself, separating it from the name. */
 .co-pass-live-badge {
   display: inline-block;
   position: relative;
-  margin-left: 7px;
+  margin-left: 8px;
   padding: 1px 6px;
   color: #eafff4;
   background: #0d3b28;
@@ -2240,12 +2549,15 @@ body.gantt-collapsed .gantt-rows { display: none; }
    needs to be drawn to right now. A distinct violet rather than the
    green/red/orange already meaning ok/fail/cancelled elsewhere, since this
    isn't a severity signal — matches .sat-simu-toggle's active state, the
-   control that sets this tag in the first place. */
+   control that sets this tag in the first place. Its own line directly
+   below .co-name-row (see .co-name-cell's own comment) — margin-top spaces
+   it from the name above, same idea as .co-simu-time's own margin-top
+   spacing IT from this badge in turn. */
 .co-simu-badge {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  margin-left: 7px;
+  margin-top: 3px;
   padding: 1px 7px;
   color: #e4d9ff;
   background: linear-gradient(180deg, #2c2049, #1c1530);
@@ -2384,6 +2696,27 @@ body.gantt-collapsed .gantt-rows { display: none; }
   font-size: 12.5px; /* 10.5px * 1.2 */
   color: #99aacc;
 }
+/* Real button now (data-sch-open, jumps to Scheduler), not plain text —
+   reset to look exactly like the plain-text version it replaces. */
+.co-next-link {
+  display: inline;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.co-next-link:hover { color: #00d4ff; text-decoration: underline; }
+
+/* Brief highlight when jumped-to via the shared tooltip's "View in Fleet"
+   button (see ChadOps.js's focusSatRow) — confirms which row the operator
+   landed on in a table that can run to dozens of satellites. */
+@keyframes co-row-focus-flash-kf {
+  0%, 100% { background-color: transparent; }
+  25%, 75% { background-color: rgba(0, 212, 255, 0.22); }
+}
+.co-row-focus-flash td { animation: co-row-focus-flash-kf 1.6s ease-in-out; }
 
 .co-contact-time { color: #888; font-size: 14px; } /* 11.5px * 1.2 */
 .co-uptime { font-size: 13px; color: #aaa; } /* 11px * 1.2 */
@@ -2402,7 +2735,11 @@ body.gantt-collapsed .gantt-rows { display: none; }
   font-size: 11px; font-weight: 700; letter-spacing: 0.08em; /* 9px * 1.2 */
   color: #445566; min-width: 20px; text-transform: uppercase;
 }
-.co-evt-stack  { display: grid; grid-template-columns: 26px auto auto; justify-content: center; gap: 3px 4px; align-items: center; }
+/* First column fixed wide enough for "WATCH" (the longest label across both
+   ground and board severity sets) — was 26px, too narrow for 5 characters,
+   so the trailing "H" overflowed the track and got painted over by the pill
+   next to it. */
+.co-evt-stack  { display: grid; grid-template-columns: 38px auto auto; justify-content: center; gap: 3px 4px; align-items: center; }
 .co-evt-delta  { font-size: 12px; font-weight: 700; color: #ffaa22; font-variant-numeric: tabular-nums; } /* 10px * 1.2 */
 
 .co-pill {
@@ -2630,6 +2967,10 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .ebn0-chart { display: block; width: 100%; }
 .ebn0-chart .ebn0-hit { cursor: crosshair; }
+/* Only once scroll-to-zoom has actually narrowed the view (see passCursor.js's
+   wireLinkedCursor) — signals the chart can be dragged left/right, not just
+   hovered for the crosshair. */
+.ebn0-chart .ebn0-hit.ebn0-hit-pannable { cursor: grab; }
 .ebn0-loading {
   display: flex;
   align-items: center;
@@ -2889,9 +3230,9 @@ body.gantt-collapsed .gantt-rows { display: none; }
 /* ── Info toast ── small fixed top-right notice, auto-dismisses ── */
 .info-toast {
   position: fixed;
-  top: 66px; /* clears the 56px fixed tab bar with a visible gap */
+  top: 66px; /* clears the 56px fixed top bar with a visible gap */
   right: 14px;
-  z-index: 100000; /* above #tab-bar (9999) and .co-tooltip (99999) — always on top */
+  z-index: 100000; /* above #top-bar/#left-rail (9999) and .co-tooltip (99999) — always on top */
   display: flex;
   align-items: center;
   gap: 7px;
@@ -3001,7 +3342,7 @@ body.tracking-active .info-toast { top: 102px; }
   color: #445566; min-width: 24px; text-transform: uppercase;
 }
 
-.co-ecl-shadow { color: #88aadd; font-size: 13px; } /* 11px * 1.2 */
+.co-ecl-umbra  { color: #88aadd; font-size: 13px; } /* 11px * 1.2 */
 .co-ecl-sun    { color: #ddbb44; font-size: 13px; } /* 11px * 1.2 */
 
 .co-alt-val { color: #c0ccee; font-size: 13px; font-variant-numeric: tabular-nums; } /* 11px * 1.2 */
@@ -3068,7 +3409,43 @@ body.tracking-active .info-toast { top: 102px; }
 }
 
 /* ── Alerts ────────────────────────────────────────────────────── */
-.co-alerts-cell { min-width: 90px; }
+.co-alerts-cell { min-width: 150px; }
+
+/* Ground + board mini-stacks side by side under one column — a thin divider
+   plus each group's own tiny label (colored to match its pill palette: green
+   ramp for ground, blue/amber/red for board) keeps the two readable apart
+   without spending a whole extra column on the split. */
+.co-alerts-fused {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 10px;
+}
+.co-alerts-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+.co-alerts-group + .co-alerts-group {
+  padding-left: 10px;
+  border-left: 1px solid #223047;
+}
+.co-alerts-group-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+.co-alerts-group-ground { color: var(--sev-watch); }
+.co-alerts-group-board  { color: #7a99bb; }
+
+/* ── Mission mode ──────────────────────────────────────────────── */
+.co-mission-cell { min-width: 50px; }
+/* Mission mode is expected to be ON — OFF is the state worth flagging, so
+   this is colored like an alert (green=good/red=bad), not like the neutral
+   nominal/warn palettes above. */
+.co-pill-mission-on  { background: #0e2a1a; color: #2db872; border: 1px solid #1e5030; }
+.co-pill-mission-off { background: #1a0008; color: #ff4466; border: 1px solid #660022; }
 
 .co-alert-badge {
   display: inline-block;
@@ -3148,6 +3525,23 @@ a.co-link:hover {
   font-family: 'Courier New', monospace;
   margin-left: 2px;
 }
+
+/* Inline text-link inside a .co-tooltip sentence (e.g. "Add one in Settings")
+   — deliberately plain (no chip/border) since it sits mid-sentence, unlike
+   .co-link's button-style breakdown chips above. */
+.co-tt-inline-link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: #c77dff;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: text-decoration-color 0.15s;
+}
+.co-tt-inline-link:hover { text-decoration-color: #c77dff; }
 
 /* BDS/procedures — satellite-specific, no subsystem link of their own */
 .co-globals-line {
@@ -3519,6 +3913,12 @@ a.co-link:hover {
   margin-left: 4px;
 }
 .pa-details .co-tt-header { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; padding-bottom: 0; border-bottom: none; padding-right: 82px; } /* reserves room so a long satellite/station/network name can't run under the copy/< / > buttons in the corner (3 buttons now, was 56px for 2) */
+/* This row's own gap:8px (above) already spaces every child, including the
+   LIVE badge (PassAnalyzer.js's own liveBadge, same .co-pass-live-badge as
+   the Fleet table) — its margin-left (style.css, ChadOps.js's own section)
+   exists for THAT context, a plain flex row with no gap, and would double
+   up with this row's gap into 16px if left in place here. */
+.pa-details .co-tt-header .co-pass-live-badge { margin-left: 0; }
 /* < / > pass step buttons + copy, top-right corner of the card — same small
    bordered-box treatment as .pdp-close elsewhere, scaled for this
    context. .pa-details needs position:relative for this to
@@ -4383,6 +4783,14 @@ a.co-link:hover {
   position: relative;
   flex-shrink: 0;
 }
+/* Row, not the search input directly — .sch-proc-catalog's own top:100%
+   (below) stays anchored to .sch-proc-search-wrap, so it still lands right
+   under this whole row (input + shortcut button together) rather than under
+   the input alone. */
+.sch-proc-search-row {
+  display: flex;
+  gap: 6px;
+}
 .sch-proc-search {
   background: #1a1a28;
   border: 1px solid #33334a;
@@ -4390,11 +4798,22 @@ a.co-link:hover {
   color: #eee;
   font-size: 12px;
   padding: 7px 10px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   transition: border-color 0.15s, background-color 0.15s;
 }
 .sch-proc-search:focus { outline: none; border-color: #4a8cff; background: #1e1e30; }
 .sch-proc-search:disabled { opacity: 0.5; cursor: default; }
+/* One-click shortcut for OPS_PASS_ESTABLISH_TMTC_LINK (cop1FrameType: AD) —
+   the same procedure+params tmrGapDownload.js's own gap-download flow
+   already schedules silently as a prerequisite, surfaced here so an operator
+   can request it directly without hunting for it in the procedure catalog.
+   .sch-nav-btn's quiet-chip look (not .sch-proc-schedule-btn's filled accent
+   one) — this fires immediately on click, no argument form/confirm step, so
+   it shouldn't visually compete with the one true "primary action" button in
+   this column. Enabled/disabled in lockstep with the search input just to
+   its left (Scheduler.js's own _renderGantt). */
+.sch-establish-tmtc-btn { flex-shrink: 0; white-space: nowrap; }
 /* Floats OVER whatever's below (the argument form, and the gantt/pass-list
    panels beneath this whole row) instead of reserving permanent layout
    space for a list that's only relevant while actively searching —
@@ -4505,7 +4924,7 @@ a.co-link:hover {
    unpredictably. The full name is still available via the row's own
    title= (_procArgRowHTML). */
 .sch-proc-arg-label {
-  flex: 0 0 150px;
+  flex: 0 0 210px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -4735,14 +5154,14 @@ a.co-link:hover {
    param's own chevron+label instead (see _procGateHeaderHTML), sitting in
    the SAME .sch-proc-arg-row as that param's live field (a sibling, not
    nested inside this button — a <select>/combo can't sit inside a <button>
-   without breaking its own interaction). flex:0 0 150px matches every other
+   without breaking its own interaction). flex:0 0 210px matches every other
    row's .sch-proc-arg-label width, so the field alongside it still starts
    at the same x as every other row's own field. */
 .sch-proc-gated-toggle {
   display: flex;
   align-items: center;
   gap: 5px;
-  flex: 0 0 150px;
+  flex: 0 0 210px;
   min-width: 0;
   background: none;
   border: none;
@@ -4766,7 +5185,12 @@ a.co-link:hover {
    element field inside it, a remove button per row, an add button below.
    Same faint-fill-block language as .sch-proc-gated-group above, so a list
    argument reads as its own grouped unit the same way. */
-.sch-proc-list { display: flex; flex-direction: column; gap: 6px; }
+/* Indented to start at the same x as every scalar row's own field (label's
+   210px + .sch-proc-arg-row's 10px gap) — this row is a column layout (see
+   .sch-proc-arg-row-list), so without this its bordered rows would start
+   flush at the row's own left edge, under the label above instead of under
+   where every other arg's input begins. */
+.sch-proc-list { display: flex; flex-direction: column; gap: 6px; margin-left: 220px; }
 .sch-proc-list-row {
   display: flex;
   align-items: center;
@@ -4904,6 +5328,16 @@ a.co-link:hover {
   width: 7px;
   height: 7px;
   border-radius: 50%;
+}
+/* Marks a FUTURE pass that already has something queued on SCC
+   (Scheduler.js's own _markScheduledPassDots) — green ring, neutral grey
+   center, replacing the plain _FUTURE_COLOR fill entirely (set inline by
+   that same code, since overriding an inline background from here would
+   need !important). Green ring regardless of the fill it replaces — same
+   "scheduled/good" green as this list's own SUCCESS outcome color for a
+   past pass, so the two read as the same signal. */
+.sch-pass-list-dot-scheduled {
+  border: 1.5px solid #44dd88;
 }
 /* The one column allowed to shrink/truncate first (station codes are
    usually abbreviations already, unlike the date/duration columns which

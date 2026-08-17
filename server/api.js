@@ -1,5 +1,5 @@
 import { createServer } from 'http';
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -52,6 +52,77 @@ function send(res, status, data) {
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
   });
   res.end(body);
+}
+
+// ── Manual (docs) manifest ────────────────────────────────────────────────────
+// public/manual is a symlink to the sibling Training repo (../../Training) —
+// Victor edits that repo continuously, so the nav tree is rebuilt from disk on
+// every request instead of a hand-maintained manifest.json, which would drift.
+
+const MANUAL_DIR = join(dirname(fileURLToPath(import.meta.url)), '../public/manual');
+
+// "PUS9" before "PUS11" before "PUS140" — plain string sort would put PUS140
+// before PUS17 before PUS9 (comparing digits as characters), which reads as
+// broken to anyone who knows these are numbered PUS services.
+function _naturalCompare(a, b) {
+  const pa = a.match(/(\d+)|(\D+)/g) || [];
+  const pb = b.match(/(\d+)|(\D+)/g) || [];
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] ?? '', y = pb[i] ?? '';
+    const nx = Number(x), ny = Number(y);
+    if (x !== '' && y !== '' && !isNaN(nx) && !isNaN(ny)) {
+      if (nx !== ny) return nx - ny;
+    } else if (x !== y) {
+      return x < y ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
+// Title = the doc's own first h1/h2/h3, so renaming a heading in the Training
+// repo renames it in the nav too, with no second place to update.
+function _mdTitle(absPath, fallback) {
+  try {
+    const m = readFileSync(absPath, 'utf8').match(/^#{1,3}\s+(.+?)\s*$/m);
+    if (m) return m[1].replace(/[`*_]/g, '').trim();
+  } catch { /* fall through to filename-derived title */ }
+  return fallback;
+}
+
+function _sectionItems(dirAbs, dirRel) {
+  let entries;
+  try { entries = readdirSync(dirAbs, { withFileTypes: true }); } catch { return []; }
+  return entries
+    .filter(e => e.isFile() && e.name.toLowerCase().endsWith('.md'))
+    .map(e => {
+      const rel = dirRel ? `${dirRel}/${e.name}` : e.name;
+      const fallback = e.name.replace(/\.md$/i, '').replace(/[_-]/g, ' ');
+      return { title: _mdTitle(join(dirAbs, e.name), fallback), path: rel };
+    })
+    .sort((a, b) => _naturalCompare(a.path, b.path));
+}
+
+function buildManualManifest() {
+  let topEntries;
+  try { topEntries = readdirSync(MANUAL_DIR, { withFileTypes: true }); }
+  catch { return { title: 'U-Track Operations Manual', root: null, sections: [] }; }
+
+  const sections = [];
+  const rootItems = _sectionItems(MANUAL_DIR, '');
+  if (rootItems.length) sections.push({ title: 'Overview', items: rootItems });
+
+  for (const entry of topEntries.sort((a, b) => _naturalCompare(a.name, b.name))) {
+    if (!entry.isDirectory()) continue;
+    const items = _sectionItems(join(MANUAL_DIR, entry.name), entry.name);
+    if (items.length) sections.push({ title: entry.name, items }); // empty dirs (e.g. COP-1) stay hidden until they hold a .md file
+  }
+
+  const allItems = sections.flatMap(s => s.items);
+  const root = allItems.find(i => /^home\.md$/i.test(i.path))?.path
+    ?? allItems.find(i => /^glossary\.md$/i.test(i.path))?.path
+    ?? allItems[0]?.path
+    ?? null;
+  return { title: 'U-Track Operations Manual', root, sections };
 }
 
 // ── OpenAPI 3.0 spec ──────────────────────────────────────────────────────────
@@ -401,6 +472,12 @@ export function createApiMiddleware() {
     // GET /api/spec.json
     if (path === '/api/spec.json') {
       return send(res, 200, SPEC);
+    }
+
+    // GET /manual/manifest.json — rebuilt from public/manual (symlinked to the
+    // Training repo) on every request; see buildManualManifest() above.
+    if (path === '/manual/manifest.json' && method === 'GET') {
+      return send(res, 200, buildManualManifest());
     }
 
     if (typeof next === 'function') next();

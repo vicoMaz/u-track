@@ -23,16 +23,24 @@ export async function fetchSatGlobals(sat) {
     // Color is captured from SCC exactly once — normally right at creation
     // (InputPanel.js's finaliseSatellite makes an immediate one-off call
     // here for that), with this periodic poll only as a backstop for a
-    // satellite that didn't have one yet by the time this ran (e.g. SCC was
-    // briefly unreachable at creation). The VALUE itself, not just a done
-    // flag, is what's persisted — every other view (Fleet, Settings, the
-    // Visualizer sidebar, globe/map entities) reads this same static
-    // sat.color, and apiPoller.js's initial load restores it straight from
-    // here on a later page reload too, rather than needing to re-fetch.
-    const colorKey = `sat-color-${sat.noradId}`;
-    if (sccColor && !localStorage.getItem(colorKey)) {
+    // satellite that didn't have a CONFIRMED one yet by the time this ran
+    // (e.g. SCC was unreachable, off-VPN, at creation — it's carrying
+    // store.js's nextPlaceholderColor placeholder until then). The VALUE
+    // itself, not just a done flag, is what's persisted — every other view
+    // (Fleet, Settings, the Visualizer sidebar, globe/map entities) reads
+    // this same static sat.color, and apiPoller.js's initial load restores
+    // it straight from here on a later page reload too, rather than needing
+    // to re-fetch. Gated on the *confirmed* flag, not merely on the color
+    // key existing — the key alone would already be set to a placeholder,
+    // which must still lose to a real SCC value the first time one shows
+    // up. Once confirmed, never touched again: no point re-fetching a color
+    // that's already permanent.
+    const colorKey          = `sat-color-${sat.noradId}`;
+    const colorConfirmedKey = `sat-color-confirmed-${sat.noradId}`;
+    if (sccColor && !localStorage.getItem(colorConfirmedKey)) {
       store.setSatColor(sat.id, sccColor);
       localStorage.setItem(colorKey, sccColor);
+      localStorage.setItem(colorConfirmedKey, '1');
     }
   } catch { /* offline or aborted */ }
   finally { clearTimeout(timer); }

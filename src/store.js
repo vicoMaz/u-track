@@ -74,6 +74,14 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
   // before its first ping even resolves. Never persisted — it describes this
   // browser session's network, not a fact about the satellite itself.
   satAccessible: {},   // satId → bool
+  // True when every VPN-only (172.*) satellite is simultaneously
+  // unreachable — set by vpnGuard.js, which is also what pops the "Check
+  // your VPN." toast off the back of the same check. Stored centrally so
+  // ProfileMenu.js's popover can show the same "down", not just its own
+  // read-only/full-access split which has no way to represent "nothing at
+  // all is reachable" (see readOnlyVpn below, which reads as `false` —
+  // i.e. "full access" — once accessibleSatellites empties out).
+  vpnDown: false,
   // Per-subsystem reachability (scc/fds/gnm/mic — sccRo is covered by
   // pingStatus itself), probed by satPing.js once the main ping succeeds.
   // Lets the UI tell "fully reachable" apart from "only SCC RO (read-only)
@@ -86,6 +94,7 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
   satGnssMitigation: {},    // satId → { count30d, lastMs: number|null, windowStartMs, saturated } | undefined
   satEventBaseline: {},     // satId → { normal, low, med, high } — cumulative counts 24 h ago
   satGroundEvents: {},      // satId → { watch, warning, distress, critical } — GROUND event counts, last 24h
+  satMissionMode: {},       // satId → { enabled } — GET /api/v1/events/mission
   satGlobals: {},           // satId → { bdsVersion, proceduresVersion, sccVersion, sccColor }
   satVersions: {},          // satId → { fds, scc, sccRo, gnm, mic } each { version, appUrl } | null
   // noradId → { noradId, source, entries: [{ t: ms, q: {x,y,z,w} }] } | undefined.
@@ -218,6 +227,12 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
     if (this.satAccessible[satId] === accessible) return;
     this.satAccessible[satId] = accessible;
     this.notify('satAccessible');
+  },
+
+  setVpnDown(down) {
+    if (this.vpnDown === down) return;
+    this.vpnDown = down;
+    this.notify('vpnDown');
   },
 
   setSubsystemReachable(satId, key, reachable) {
@@ -419,6 +434,11 @@ setPingStatus(satId, status) {
     this.notify('satGroundEvents');
   },
 
+  setSatMissionMode(satId, data) {
+    this.satMissionMode[satId] = data;
+    this.notify('satMissionMode');
+  },
+
   setSatGlobals(satId, data) {
     this.satGlobals[satId] = data;
     this.notify('satGlobals');
@@ -506,3 +526,17 @@ export const PALETTE = [
   '#00d4ff', '#ff6b35', '#00ff9d', '#ff3860',
   '#c77dff', '#ffbe0b', '#fb5607', '#8338ec',
 ];
+
+// Placeholder color for a satellite with no confirmed SCC color yet (see
+// satGlobals.js). Persisted the first time it's picked, keyed by noradId,
+// so it stays put across reloads/peers instead of drifting whenever
+// store.satellites.length happens to differ (satellites are shared fleet
+// state — another user adding/removing one shifts everyone else's index).
+export function nextPlaceholderColor(noradId) {
+  const key = `sat-color-${noradId}`;
+  const stored = localStorage.getItem(key);
+  if (stored) return stored;
+  const color = PALETTE[store.satellites.length % PALETTE.length];
+  localStorage.setItem(key, color);
+  return color;
+}

@@ -35,8 +35,11 @@ function _downloadPacketStorePayload(procedureName, gapStart, gapEnd) {
 
 // Prerequisite: if a pass has zero procedures scheduled on it yet, the TM/TC link
 // itself hasn't been set up — schedule this first, unmodified, before the actual
-// gap-download procedure.
-const TMTC_LINK_TEMPLATE = {
+// gap-download procedure. Exported so Scheduler.js's own "Establish TMTC" shortcut
+// (next to the procedure search bar) can schedule the identical procedure+params
+// by hand, on demand, instead of only ever getting it as an implicit side effect
+// of a gap-download request.
+export const TMTC_LINK_TEMPLATE = {
   procedureName: 'procedures.ops.PASS.OPS_PASS_ESTABLISH_TMTC_LINK',
   procedureDescription: '',
   scheduled: false,

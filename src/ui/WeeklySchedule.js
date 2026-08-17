@@ -276,6 +276,17 @@ export function initWeeklySchedule() {
       if (!entry) return;
       el.addEventListener('mouseenter', e => tooltip.showForPass(e, entry.pass, entry.sat));
       el.addEventListener('mouseleave', tooltip.scheduleHide);
+      // Real click, not just the hover tooltip's own buttons — these blocks
+      // are often just a few px tall (a full week compressed into one
+      // screen), too small a target to reliably hover-then-click inside a
+      // floating tooltip. Same bridge events the tooltip's own buttons
+      // dispatch (pda:open-pass for a completed pass, sch:open-pass for a
+      // future one), so this is a shortcut to the SAME destination, not a
+      // second path.
+      el.addEventListener('click', () => {
+        const evt = entry.pass.future ? 'sch:open-pass' : 'pda:open-pass';
+        document.dispatchEvent(new CustomEvent(evt, { detail: { sat: entry.sat, pass: entry.pass } }));
+      });
     });
   }
 

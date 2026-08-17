@@ -787,7 +787,7 @@ function _renderGanttPlans() {
 // _ganttTooltip singleton and _fmtDT/_fmtGapDuration formatters already
 // defined above for the Pass/Plan rows.
 function _eclipseTooltipHTML(win) {
-  const hdr   = `<div class="co-tt-header">ECLIPSE <span class="co-pill" style="background:#2244cc22; color:#6a8fff; border:1px solid #2244cc66;">SHADOW</span></div>`;
+  const hdr   = `<div class="co-tt-header">ECLIPSE <span class="co-pill" style="background:#2244cc22; color:#6a8fff; border:1px solid #2244cc66;">UMBRA</span></div>`;
   const times = `<div class="co-tt-time-row"><span class="co-tt-time-lbl">START</span>${_fmtDT(new Date(win.start))}</div>`
               + `<div class="co-tt-time-row"><span class="co-tt-time-lbl">END</span>${_fmtDT(new Date(win.end))}</div>`
               + `<div class="co-tt-time-row"><span class="co-tt-time-lbl">DUR</span>${_fmtGapDuration(win.end - win.start)}</div>`;
