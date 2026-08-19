@@ -15,6 +15,14 @@ persistent/
 .env
 .env.*
 
+# Dev-machine-only symlink to the sibling Training repo (server/api.js's
+# MANUAL_DIR) — committing the symlink itself broke every fresh checkout's
+# `vite build` (Vite's public-dir copy stats it and finds no such target on
+# any machine other than the one that created it, CI included). Each
+# developer who wants the manual viewer creates their own local symlink;
+# server/api.js already degrades gracefully (empty nav tree) without one.
+public/manual
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

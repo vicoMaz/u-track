@@ -1873,10 +1873,7 @@ function _procArgValue(p, key) {
     const final      = new Date(base.getTime() + offsetSec * 1000);
     return final.toISOString().replace('Z', '000000Z');
   }
-  let raw = _procArgValues[key] ?? p.value;
-  // subscheduleId has no natural zero-ish default of its own (schema value
-  // is null) — 0 is what was asked for as its default when untouched.
-  if (raw == null && _isSubscheduleParam(p)) raw = 0;
+  let raw = _procArgValues[key] ?? _procParamSchemaDefault(p);
   if (_isProcParamBoolean(p)) return typeof raw === 'boolean' ? raw : raw === 'true';
   if (_isProcParamNumeric(p) && typeof raw === 'string' && raw.trim() !== '') {
     const n = Number(raw);
@@ -1926,6 +1923,25 @@ function _gateShowsSchedule(gateParam, value) {
 function _isSubscheduleParam(p) {
   const n = (p?.name ?? '').toLowerCase();
   return n === 'subscheduleid' || n === 'subschedule';
+}
+
+// SCC's own schema default for this param, with two NAMED exceptions where
+// the raw catalog entry genuinely ships none at all — deliberately not a
+// blanket "first enumValues entry" fallback for every enum missing one
+// (most have no sensible default to guess at; a wrong guess sent silently
+// is worse than a blank field the operator has to notice and fill in):
+//  - tcUploadMode (confirmed live: value:null despite it mattering — it's
+//    what gates scheduleTime/subscheduleId's own visibility above)
+//    defaults to SEND_NOW_AND_VERIFY specifically, not its own first
+//    enumValues entry (SEND_NOW, no verification) — silently skipping the
+//    verify step because a field happened to render blank is the wrong
+//    direction to fail in.
+//  - subscheduleId falls back to 0, per its own pre-existing special-case
+function _procParamSchemaDefault(p) {
+  if (p?.value != null) return p.value;
+  if (_isTcUploadModeParam(p)) return 'SEND_NOW_AND_VERIFY';
+  if (_isSubscheduleParam(p)) return 0;
+  return null;
 }
 
 // Floating dropdown (.sch-proc-catalog, see style.css) — shown while the
@@ -2005,9 +2021,7 @@ function _procArgRowHTML(p, key) {
   const labelHTML = `<span class="sch-proc-arg-label" title="${escapeHtml(String(label))}">${escapeHtml(String(label))}`
     + (typeStr ? ` <span class="sch-proc-arg-type">${escapeHtml(typeStr)}</span>` : '')
     + `</span>`;
-  // subscheduleId has no natural zero-ish default of its own (its schema
-  // value is null) — 0 is what was asked for as its default when untouched.
-  const value = _procArgValues[key] ?? p.value ?? (_isSubscheduleParam(p) ? 0 : '');
+  const value = _procArgValues[key] ?? _procParamSchemaDefault(p) ?? '';
 
   if (_isProcParamList(p)) return _procListRowHTML(p, key, labelHTML);
 
@@ -2069,6 +2083,17 @@ function _procScalarFieldHTML(p, key, value) {
   }
   if (Array.isArray(p.enumValues) && p.enumValues.length) {
     _procComboEnums.set(key, p.enumValues);
+    // Confirmed live: this combo can render blank even though SCC's own
+    // catalog entry clearly has a default selected somewhere — same
+    // "GET /api/v1/procedure's exact shape isn't fully confirmed" gap
+    // fetchProcedureCatalog's own warnings cover for the catalog LIST
+    // shape (see its "no name field" warning), just not yet for a
+    // parameter's own default-value field. Logs the raw param object once
+    // per empty enum so the real field name (defaultValue? currentValue?
+    // something under enumValues itself?) is visible instead of guessing.
+    if (value === '' || value == null) {
+      console.warn(`[Scheduler] enum param "${key}" has no resolved value — check the real default-value field:`, JSON.parse(JSON.stringify(p)));
+    }
     return _procEnumComboHTML(key, value);
   }
   return `<input type="text" class="sch-proc-arg-input" data-arg-key="${escapeHtml(key)}" value="${escapeHtml(String(value))}" />`;
@@ -2239,7 +2264,7 @@ function _renderProcDetailView() {
     // param's own field, now that it no longer gets a normal row of its own.
     if (gateParam) {
       const gateKey  = _procParamKey(gateParam, params.indexOf(gateParam));
-      const gateValue = _procArgValues[gateKey] ?? gateParam.value ?? '';
+      const gateValue = _procArgValues[gateKey] ?? _procParamSchemaDefault(gateParam) ?? '';
       const bodyHTML = gatedRows.length ? `<div class="sch-proc-gated-body">${gatedRows.join('')}</div>` : '';
       const groupHTML = `<div class="sch-proc-gated-group${_procScheduleGroupCollapsed ? ' sch-proc-gated-collapsed' : ''}">
         ${_procGateHeaderHTML(gateParam, gateKey, gateValue)}
