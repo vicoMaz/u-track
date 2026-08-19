@@ -8,10 +8,12 @@ import { initSatInfo } from './ui/SatInfo.js';
 import { initChadOps, focusSatRow } from './ui/ChadOps.js';
 import { initWeeklySchedule }   from './ui/WeeklySchedule.js';
 import { initPassAnalyzer, setSelection as setAnalyzerSelection } from './ui/PassAnalyzer.js';
+import { initAlertAnalyzer }    from './ui/AlertAnalyzer.js';
 import { initScheduler, setSchedulerSelection, restoreSchedulerSelection } from './ui/Scheduler.js';
 import { initNavClocks }        from './ui/NavClocks.js';
 import { initSatPing }          from './satPing.js';
 import { initVpnGuard }         from './ui/vpnGuard.js';
+import { initPassNotify }       from './satPassNotify.js';
 import { initTopSummary }       from './ui/TopSummary.js';
 import { initProfileMenu }      from './ui/ProfileMenu.js';
 import { closeAddPointPanel }   from './ui/AddPointPanel.js';
@@ -43,7 +45,7 @@ function _applyTrackingVisibility(isTracking) {
 // the startup hash-restore all need to land on a specific pass/satellite,
 // not just flip the tab to its empty state the way a plain button click does.
 function switchTab(target) {
-  const hideSide    = target === 'fleet' || target === 'schedule' || target === 'settings' || target === 'analyzer' || target === 'scheduler';
+  const hideSide    = target === 'fleet' || target === 'schedule' || target === 'settings' || target === 'analyzer' || target === 'scheduler' || target === 'alerts';
   const isTracking  = target === 'tracking';
   closeAddPointPanel(); // slide-in shouldn't persist across a tab change — it's tied to the sat panel, which just hid
   tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === target));
@@ -113,6 +115,7 @@ initSatInfo();
 initChadOps();
 initWeeklySchedule();
 initPassAnalyzer();
+initAlertAnalyzer();
 initScheduler();
 initNavClocks();
 initTopSummary();
@@ -194,4 +197,4 @@ if (_schedulerHash) {
   if (_initBtn) _initBtn.click();
 }
 
-loadInitialState().then(() => { startApiPoller(); initSatPing(); initVpnGuard(); });
+loadInitialState().then(() => { startApiPoller(); initSatPing(); initVpnGuard(); initPassNotify(); });

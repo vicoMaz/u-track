@@ -1,5 +1,6 @@
 import { store }                from './store.js';
 import { satSubsystemOrigin }  from './satSubsystems.js';
+import { getAlertWindowDays }  from './alertWindow.js';
 
 const PACKET = 'TM_3_25_OBSW_HK_PLT';
 const PARAMS = {
@@ -10,7 +11,7 @@ const PARAMS = {
 };
 
 async function _queryAt(origin, param, endMs, signal) {
-  const start = new Date(endMs - 3_600_000).toISOString(); // 1h window ending at 24h ago
+  const start = new Date(endMs - 3_600_000).toISOString(); // 1h search window ending at the reference instant (endMs) — wide enough to find the closest prior packet regardless of how far back endMs itself is
   const end   = new Date(endMs).toISOString();
   const url = `${origin}/api/v1/parameters`
     + `?start=${encodeURIComponent(start)}`
@@ -46,7 +47,7 @@ export async function fetchSatEventBaseline(sat) {
   const ctrl    = new AbortController();
   _ctrl.set(sat.id, ctrl);
   const timer   = setTimeout(() => ctrl.abort(), 15_000);
-  const endMs   = Date.now() - 24 * 3_600_000; // 24 h ago
+  const endMs   = Date.now() - getAlertWindowDays() * 24 * 3_600_000; // operator-chosen window ago (ChadOps.js's Alerts-column toggle)
   try {
     const [normal, low, med, high] = await Promise.all(
       Object.values(PARAMS).map(p => _queryAt(origin, p, endMs, ctrl.signal))

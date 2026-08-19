@@ -1,0 +1,47 @@
+// Standalone eclipse-window computation, for callers that just want a plain
+// list of {start,end} windows over an arbitrary range and don't need
+// Scheduler.js's own gantt-specific pan/zoom-driven recompute lifecycle
+// (_eclipseGen/_eclipseJobSat there track a live, changing viewport; this is
+// a one-shot compute over a fixed range, e.g. AlertAnalyzer.js's histogram
+// band overlay).
+//
+// Same generator + time-budgeted chunk runner as Scheduler.js's own
+// _eclipseWork/_runEclipseChunk — a flat loop over several days of 1-min-step
+// SGP4 propagation is a single main-thread stall, visible as a hitch, if run
+// in one go.
+import { propagate } from './tle.js';
+import { sunDirectionECI, isInEclipse } from './sunVector.js';
+
+const ECLIPSE_STEP_MS = 60_000;
+
+function* _eclipseWork(satrec, t0, t1) {
+  const windows = [];
+  let inEcl = false, wStart = 0;
+  const d = new Date();
+  for (let t = t0; t <= t1; t += ECLIPSE_STEP_MS) {
+    d.setTime(t);
+    const r = propagate(satrec, d);
+    if (r) {
+      const ecl = isInEclipse(r.eciPos, sunDirectionECI(d));
+      if (ecl && !inEcl)      { wStart = t; inEcl = true; }
+      else if (!ecl && inEcl) { windows.push({ start: wStart, end: t }); inEcl = false; }
+    }
+    yield;
+  }
+  if (inEcl) windows.push({ start: wStart, end: t1 });
+  return windows;
+}
+
+// Calls onDone(windows) once, asynchronously — [] immediately if the
+// satellite has no propagatable TLE at all.
+export function computeEclipseWindows(sat, t0, t1, onDone) {
+  if (!sat.satrec) { onDone([]); return; }
+  const gen = _eclipseWork(sat.satrec, t0, t1);
+  (function step() {
+    const budgetStart = performance.now();
+    let result;
+    do { result = gen.next(); } while (!result.done && performance.now() - budgetStart < 8);
+    if (result.done) onDone(result.value);
+    else setTimeout(step, 0);
+  })();
+}

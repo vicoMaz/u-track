@@ -8,6 +8,8 @@ import { satIsSimulated, setSatIsSimulated } from '../satSimu.js';
 import { satStarTrackerConesVisible, setSatStarTrackerConesVisible } from '../satStarTracker.js';
 import { fetchSatGlobals } from '../satGlobals.js';
 import { openAddPointPanel } from './AddPointPanel.js';
+import { satPassNotifyEnabled, setSatPassNotifyEnabled, requestPassNotifyPermission } from '../satPassNotify.js';
+import { showWarningToast } from './actionToast.js';
 
 // ─── Icons ────────────────────────────────────────────────────────────────
 
@@ -18,6 +20,10 @@ const SVG_EYE_OFF = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="
 // as SVG_EYE, with the pupil swapped for a small sparkle/star.
 const SVG_EYE_STAR     = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><path d="M12 8.5 L13.1 10.9 L15.5 12 L13.1 13.1 L12 15.5 L10.9 13.1 L8.5 12 L10.9 10.9 Z" fill="currentColor" stroke="none"/></svg>`;
 const SVG_EYE_STAR_OFF = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+
+// Pass-notify toggle (renderSettingsSatList) — plain bell, same 13px outline
+// icon convention as the eye toggles above.
+const SVG_BELL = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
 
 // ─── ID-key helpers for change detection ─────────────────────────────────
 
@@ -482,6 +488,7 @@ function renderSettingsSatList() {
     item.dataset.id = sat.id;
     item.style.setProperty('--sat-color', sat.color);
     const isSimu = satIsSimulated(sat.noradId);
+    const notifyOn = satPassNotifyEnabled(sat.noradId);
     item.innerHTML = `
       <span class="st-drag-handle" title="Drag to reorder">⠿</span>
       <span class="st-sat-dot" style="background:${sat.color}"></span>
@@ -489,9 +496,24 @@ function renderSettingsSatList() {
       <span class="st-model-badge${model === 'FF' ? ' ff-active' : ''}">${model}</span>
       ${isSimu ? '<span class="st-simu-badge" title="Simulated satellite — not a real, currently-orbiting object; kept out of the Visualizer (Globe/Map)">🧪 SIM</span>' : ''}
       ${unreachable ? '<span class="st-unreachable-badge" title="Not reachable on your current VPN — hidden from the sat panel, Fleet table, globe/map and weekly schedule until it responds again">unreachable</span>' : ''}
+      <button class="st-notify-btn${notifyOn ? ' st-notify-active' : ''}" title="Browser notification 1 min before each of this satellite's passes">${SVG_BELL}</button>
       <button class="st-gear-btn" title="Edit">⚙</button>
       <button class="remove-btn" data-id="${sat.id}" data-norad="${sat.noradId}" title="Remove">×</button>
     `;
+    const notifyBtn = item.querySelector('.st-notify-btn');
+    notifyBtn.addEventListener('click', async () => {
+      const enabling = !satPassNotifyEnabled(sat.noradId);
+      // Only actually asks the FIRST time (Notification.permission stays
+      // 'granted'/'denied' after that) — see requestPassNotifyPermission's
+      // own comment on why this has to happen synchronously in this click,
+      // not inside satPassNotify.js's own background tick.
+      if (enabling && !(await requestPassNotifyPermission())) {
+        showWarningToast(`Browser notifications are blocked for this site — allow them in Chrome's site settings, then try the toggle again.`);
+        return;
+      }
+      setSatPassNotifyEnabled(sat.noradId, enabling);
+      notifyBtn.classList.toggle('st-notify-active', enabling);
+    });
     item.querySelector('.st-gear-btn').addEventListener('click', () => _openSatEditModal(sat));
     item.querySelector('.remove-btn').addEventListener('click', () => {
       deleteServerSatellite(sat.noradId);

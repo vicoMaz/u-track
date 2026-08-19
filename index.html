@@ -36,10 +36,8 @@
         <img id="app-bolt" src="/favicon.svg" alt="" />
         <span id="app-name">chadOps</span>
         <div class="tb-stats" id="tb-stats">
-          <span class="tb-stat"><strong id="tb-sat-count">—</strong> satellites</span>
-          <span class="tb-stat-sep"></span>
-          <span class="tb-anomaly-wrap" id="tb-anomaly-wrap" tabindex="0">
-            <span class="tb-stat" id="tb-anomaly-stat"><strong id="tb-anomaly-count">—</strong> anomalies</span>
+          <span class="tb-hover-stat-wrap" id="tb-satcount-wrap" tabindex="0">
+            <span class="tb-stat" id="tb-satcount-stat"><strong id="tb-sat-count">—</strong> satellites</span>
             <div class="tb-anomaly-popover" id="tb-anomaly-popover"></div>
           </span>
           <span class="tb-stat-sep"></span>
@@ -106,6 +104,10 @@
           <a class="rail-link" data-tab="analyzer" href="#analyzer" title="Pass Analyzer">
             <svg class="rail-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18h8"/><path d="M3 22h18"/><path d="M14 22a7 7 0 1 0 0-14h-1"/><path d="M9 14h2"/><path d="M9 12a2 2 0 0 1-2-2V6h6v4a2 2 0 0 1-2 2Z"/><path d="M12 6V3a1 1 0 0 0-1-1H9.5a1 1 0 0 0-1 1v3"/></svg>
             <span class="rail-label">Pass Analyzer</span>
+          </a>
+          <a class="rail-link" data-tab="alerts" href="#alerts" title="Alert Analyzer">
+            <svg class="rail-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span class="rail-label">Alert Analyzer</span>
           </a>
           <a class="rail-link" data-tab="scheduler" href="#scheduler" title="Procedure Scheduler">
             <svg class="rail-link-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="10" y1="2" x2="14" y2="2"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="17" y1="4" x2="19" y2="6"/><circle cx="12" cy="14" r="8"/><line x1="12" y1="14" x2="12" y2="10"/></svg>
@@ -180,7 +182,22 @@
                   <th class="co-th" id="co-gnss-th" style="cursor:default">GNSS <span class="co-passes-info">ⓘ</span></th>
                   <th class="co-th co-th-passes" id="co-passes-th" style="cursor:default">Passes <span class="co-passes-info">ⓘ</span></th>
                   <th class="co-th">Orbit</th>
-                  <th class="co-th" id="co-alerts-th" style="cursor:default">Alerts <span class="co-passes-info">ⓘ</span></th>
+                  <th class="co-th" id="co-alerts-th" style="cursor:default">
+                    <span class="co-alerts-th-label">Alerts
+                      <span class="co-alerts-window-toggle" id="co-alerts-window-toggle" title="Alert window">
+                        <button type="button" class="co-alerts-window-btn" data-days="1">1d</button>
+                        <button type="button" class="co-alerts-window-btn" data-days="7">7d</button>
+                      </span>
+                      <span class="co-passes-info">ⓘ</span></span>
+                    <table class="co-sevmerge-table">
+                      <colgroup><col class="co-sevmerge-col-sev"/><col class="co-sevmerge-col-grd"/><col class="co-sevmerge-col-brd"/></colgroup>
+                      <tbody><tr>
+                        <th class="co-sevmerge-head co-sevmerge-tier-head">SEV</th>
+                        <th class="co-sevmerge-head co-alerts-group-ground">GRD</th>
+                        <th class="co-sevmerge-head co-alerts-group-board">BRD</th>
+                      </tr></tbody>
+                    </table>
+                  </th>
                   <th class="co-th" title="GET /api/v1/events/mission">Mission</th>
                   <th class="co-th">Links</th>
                 </tr>
@@ -200,6 +217,62 @@
       <div id="analyzer-view" class="view">
         <div class="pa-section">
           <div id="pa-body" class="pa-body"></div>
+        </div>
+      </div>
+
+      <!-- Alert Analyzer view -->
+      <div id="alerts-view" class="view">
+        <div class="pa-section">
+          <div class="aa-toolbar">
+            <label class="sch-label" for="aa-sat-select">Satellite</label>
+            <select id="aa-sat-select" class="sch-select"></select>
+            <span class="aa-count" id="aa-count"></span>
+          </div>
+          <div class="aa-histogram-wrap" id="aa-histogram">
+            <div id="aa-hist-svg"></div>
+            <div class="aa-hist-toolbar">
+              <button type="button" id="aa-band-eclipse-btn" class="sch-nav-btn aa-hist-band-btn" title="Shade every eclipse window across the current time range">Eclipse</button>
+              <button type="button" id="aa-band-passes-btn" class="sch-nav-btn aa-hist-band-btn" title="Shade every ground-station pass across the current time range">Passes</button>
+              <button type="button" id="aa-band-plans-btn" class="sch-nav-btn aa-hist-band-btn" title="Shade every scheduled plan window across the current time range">Plans</button>
+              <button type="button" id="aa-hist-zoom-reset" class="sch-nav-btn aa-hist-zoom-reset-btn" title="Back to the full, un-zoomed time range" hidden>Reset zoom ↺</button>
+            </div>
+          </div>
+          <div class="aa-table-wrap">
+            <table class="co-table aa-table">
+              <thead>
+                <tr>
+                  <th class="co-th aa-th-sortable" id="aa-th-date" title="Click to sort — shows each repeat alert's most recent occurrence">Date <span id="aa-sort-arrow">▼</span></th>
+                  <th class="co-th aa-th-filter-th aa-th-checklist-th">
+                    <button type="button" id="aa-source-btn" class="aa-th-select aa-th-checklist-btn" title="Filter by source">Source <span id="aa-source-btn-badge" class="aa-th-checklist-badge"></span></button>
+                    <div class="aa-checklist-popover" id="aa-source-checklist">
+                      <label class="aa-checklist-row"><input type="checkbox" value="GROUND" checked /> Ground</label>
+                      <label class="aa-checklist-row"><input type="checkbox" value="ON_BOARD" checked /> Board</label>
+                      <div class="aa-checklist-sep"></div>
+                      <label class="aa-checklist-row" title="Collapse every alert off the same housekeeping packet into one row, regardless of when each one fired (Ground only — Board rows are unaffected)">
+                        <input type="checkbox" id="aa-hk-group-checkbox" />
+                        Merge by HK packet <span class="aa-checklist-row-note">(Ground only)</span>
+                      </label>
+                    </div>
+                  </th>
+                  <th class="co-th aa-th-filter-th aa-th-checklist-th">
+                    <button type="button" id="aa-severity-btn" class="aa-th-select aa-th-checklist-btn" title="Filter by severity">Severity <span id="aa-severity-btn-badge" class="aa-th-checklist-badge"></span></button>
+                    <div class="aa-checklist-popover" id="aa-severity-checklist">
+                      <label class="aa-checklist-row" title="Mildest — Ground: Watch · Board: Nominal/Watch"><input type="checkbox" value="1" /> 1</label>
+                      <label class="aa-checklist-row" title="Ground: Warning · Board: Warning"><input type="checkbox" value="2" checked /> 2</label>
+                      <label class="aa-checklist-row" title="Ground: Distress · Board: Distress"><input type="checkbox" value="3" checked /> 3</label>
+                      <label class="aa-checklist-row" title="Most severe — Ground: Critical · Board: Severe"><input type="checkbox" value="4" checked /> 4</label>
+                    </div>
+                  </th>
+                  <th class="co-th aa-th-sortable" id="aa-th-occ" title="How many times this same parameter fired (any severity/value) — click to sort, hover a count for the full occurrence list">Occurrence <span id="aa-occ-sort-arrow"></span></th>
+                  <th class="co-th aa-th-msg" title="Source packet — shown as 〃 when identical to the row above">HK</th>
+                  <th class="co-th">Param</th>
+                  <th class="co-th">Actual value</th>
+                  <th class="co-th">Expected value</th>
+                </tr>
+              </thead>
+              <tbody id="aa-tbody"></tbody>
+            </table>
+          </div>
         </div>
       </div>
 

@@ -156,8 +156,8 @@ const CADENCE_MS = {
   passes:        2  * 60_000, // schedule + procedure history
   tle:           30 * 60_000, // also pushed live via apiPoller's tleUpdate
   antennas:      30 * 60_000, // near-static ground-station roster
-  eventBaseline: 30 * 60_000, // "24h-ago" snapshot, changes ~hourly at most
-  groundEvents:  60_000,      // rolling 24h aggregate
+  eventBaseline: 30 * 60_000, // "N-days-ago" snapshot (see alertWindow.js), changes slowly
+  groundEvents:  60_000,      // rolling N-day aggregate (see alertWindow.js)
   missionMode:   60_000,      // on/off flag — only changes via the Fleet row's own Enable/Disable action
   globals:       30 * 60_000, // software versions — pre-existing cadence
   gnssMitigation: 30 * 60_000, // rare-event counter — no benefit polling faster than the slow cycle

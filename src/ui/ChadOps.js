@@ -4,7 +4,7 @@ import { sunDirectionECI, isInEclipse }       from '../sunVector.js';
 import { getPingIntervalSec, getPingElapsedSec, getLastPingMs, satBaseUrl, pingSatellite } from '../satPing.js';
 import { satSubsystemOrigin, satSubsystemHost } from '../satSubsystems.js';
 import { satIsSimulated, satEffectiveNow } from '../satSimu.js';
-import { worstSev } from './severity.js';
+import { worstSev, SEV_COLOR } from './severity.js';
 import {
   passSimpleTooltipContent as _tooltipContent,
   positionTooltip          as _positionTooltip,
@@ -15,6 +15,9 @@ import {
 } from './passTooltip.js';
 import { MITIGATION_WINDOW_DAYS } from '../satGnssMitigation.js';
 import { wireSatActionsIcon } from './satActionsMenu.js';
+import { getAlertWindowDays, setAlertWindowDays } from '../alertWindow.js';
+import { fetchSatGroundEvents } from '../satGroundEvents.js';
+import { fetchSatEventBaseline } from '../satEventBaseline.js';
 
 // URL builders — subnet routing: .1=SCC, .2=FDS, .3=GNM, .4=MIC, .5=SCC RO (see satSubsystems.js).
 // FDS/GNM/SCC may be overridden as bare IPs OR full URLs (e.g. a hostname+HTTPS
@@ -104,38 +107,9 @@ function _modePillCls(status, value) {
   return _monPillCls(status);
 }
 
-// Real on-board event counts from TM; baseline = counts 24 h ago for delta display
-function _evtBadge(events, baseline) {
-  if (!events) return '<span class="co-nil">—</span>';
-  const rows = [
-    { label: 'HIGH', v: events.high,   b: baseline?.high   },
-    { label: 'MED',  v: events.med,    b: baseline?.med    },
-    { label: 'LOW',  v: events.low,    b: baseline?.low    },
-    { label: 'NOM',  v: events.normal, b: baseline?.normal },
-  ];
-  // Flat grid children — 3 cols: label | pill | delta — all rows align together
-  return `<div class="co-evt-stack">${rows.map(r => {
-    const val = r.v?.value ?? null;
-    const cls = r.v?.status ? _monPillCls(r.v.status) : '';
-    const valHtml = val != null
-      ? `<span class="co-pill ${cls}">${val}</span>`
-      : '<span class="co-nil">—</span>';
-    const d = (val != null && r.b != null) ? Number(val) - r.b : 0;
-    const deltaHtml = d > 0 ? `<span class="co-evt-delta">+${d}</span>` : '<span></span>';
-    return `<span class="co-mode-label">${r.label}</span>${valHtml}${deltaHtml}`;
-  }).join('')}</div>`;
-}
-
 // Ground alerts get their own 5-step severity palette (nominal→critical) instead of
 // the shared 3-bucket _monPillCls used elsewhere — kept separate to avoid recoloring
 // battery/orbit pills that already rely on _monPillCls's coarser grouping.
-const _GROUND_SEV_COLOR = {
-  NOMINAL:  'var(--sev-nominal)',
-  WATCH:    'var(--sev-watch)',
-  WARNING:  'var(--sev-warning)',
-  DISTRESS: 'var(--sev-distress)',
-  CRITICAL: 'var(--sev-critical)',
-};
 const _GROUND_SEV_CLS = {
   NOMINAL:  'co-pill-ga-nominal',
   WATCH:    'co-pill-ga-watch',
@@ -144,41 +118,98 @@ const _GROUND_SEV_CLS = {
   CRITICAL: 'co-pill-ga-critical',
 };
 
-// Ground-side monitoring alarms (category GROUND from /api/v1/events), counted by
-// criticality over the last 24h — same visual language as _evtBadge, but a direct
-// count instead of a counter delta, since these are discrete events, not a cumulative
-// on-board counter.
-function _groundEvtBadge(counts) {
-  if (!counts) return '<span class="co-nil">—</span>';
-  const rows = [
-    { label: 'CRIT',  v: counts.critical, sev: 'CRITICAL' },
-    { label: 'DIST',  v: counts.distress, sev: 'DISTRESS' },
-    { label: 'WARN',  v: counts.warning,  sev: 'WARNING'  },
-    { label: 'WATCH', v: counts.watch,    sev: 'WATCH'    },
-  ];
-  return `<div class="co-evt-stack">${rows.map(r =>
-    `<span class="co-mode-label">${r.label}</span><span class="co-pill ${_GROUND_SEV_CLS[r.sev]}">${r.v}</span><span></span>`
-  ).join('')}</div>`;
-}
+// Ground alarm criticality (WATCH/WARNING/DISTRESS/CRITICAL) and Board's own
+// cumulative severity counters (NORMAL/LOW/MEDIUM/HIGH) don't share a
+// vocabulary, but both already come in exactly 4 mild→severe bands — merged
+// onto one shared SEV 1-4 tier here, same numbering Alert Analyzer's own
+// satAlerts.js _CRITICALITY_TIER already established, so a "2" means the
+// same severity in both places in this app. Textual mapping is spelled out
+// in ALERTS_LEGEND_HTML below (the Alerts column header's own hover tooltip).
+const _SEV_TIER_ROWS = [
+  { tier: 1, groundKey: 'watch',    groundSev: 'WATCH',    boardKey: 'normal' },
+  { tier: 2, groundKey: 'warning',  groundSev: 'WARNING',  boardKey: 'low'    },
+  { tier: 3, groundKey: 'distress', groundSev: 'DISTRESS', boardKey: 'med'    },
+  { tier: 4, groundKey: 'critical', groundSev: 'CRITICAL', boardKey: 'high'   },
+];
 
-// Ground (station-side alarms) and board (on-board event counters) are two
-// independent sources with their own severity vocabularies — not just two
-// views of the same thing — so they're kept as separate mini-stacks (own
-// label, own palette) side by side rather than merged row-by-row into one
-// set of pills, which would wrongly imply e.g. CRIT and HIGH are the same
-// tier. Fused under one <td>/<th> instead of two so the fleet table doesn't
-// spend two full columns on what's conceptually one "alerts" glance.
-function _alertsCell(groundCounts, events, baseline) {
-  return `<div class="co-alerts-fused">
-    <div class="co-alerts-group">
-      <span class="co-alerts-group-label co-alerts-group-ground">GRD</span>
-      ${_groundEvtBadge(groundCounts)}
-    </div>
-    <div class="co-alerts-group">
-      <span class="co-alerts-group-label co-alerts-group-board">BRD</span>
-      ${_evtBadge(events, baseline)}
-    </div>
-  </div>`;
+// Ground (station-side alarms, /api/v1/events category=GROUND, over
+// alertWindow.js's own operator-chosen window) and Board (cumulative
+// on-board event counters since last OBC boot, delta = change over that
+// same window) are two independent sources that used to render as two
+// separate label sets (CRIT/DIST/WARN/WATCH vs HIGH/MED/LOW/NOM) side by
+// side — merged here into one SEV/GRD/BRD table, a row per shared tier, so
+// "how bad does EITHER side currently look" reads as one glance instead of
+// two separately-labeled stacks. A fixed <colgroup> (not content-sized
+// columns) keeps the GRD/BRD divider at the same x on every satellite's own
+// row regardless of how many digits either side's numbers run to — Board's
+// cumulative counters can hit 5-6 digits where Ground's own windowed counts
+// usually stay much smaller.
+function _alertsCell(groundCounts, events, baseline, uptimeSec) {
+  // Board's own delta (bHtml below) only means anything back to the OBC's
+  // last reboot — its cumulative counters reset then. A satellite whose OBC
+  // has been up for LESS than the selected window (co-alerts-window-toggle)
+  // hasn't actually accumulated a full window's worth of history: the
+  // baseline snapshot (satEventBaseline.js's own "N days ago" query) either
+  // lands before that reboot — comparing against a previous boot cycle's
+  // counter values, which can read as a bogus negative delta or just be
+  // plain wrong — or finds nothing at all. Rather than show a table that
+  // might be silently lying, the whole SEV/GRD/BRD grid is replaced with
+  // this notice instead — checked per-satellite (not a single column-wide
+  // notice), since it depends on THIS satellite's own uptime, not the
+  // window setting alone: one satellite can be freshly rebooted while its
+  // neighbor has been up for months.
+  const windowDays = getAlertWindowDays();
+  const windowSec  = windowDays * 86400;
+  if (uptimeSec != null && uptimeSec < windowSec) {
+    return `<div class="co-alerts-uptime-warn" title="OBC uptime is only ${_fmtUptime(uptimeSec)} — shorter than the ${windowDays}-day alert window, so counts/deltas over that window aren't fully available yet.">⚠<br>Uptime ${_fmtUptime(uptimeSec)}<br>&lt; ${windowDays}d window</div>`;
+  }
+
+  const rows = _SEV_TIER_ROWS.map(({ tier, groundKey, groundSev, boardKey }) => {
+    // A zero count stays neutral grey (co-pill-nominal, same muted class
+    // _monPillCls falls back to) rather than its severity color — "0
+    // CRITICAL" painted alarm-red reads as if something's actually wrong,
+    // when zero is exactly the opposite: nothing of that severity happened.
+    const g = groundCounts ? groundCounts[groundKey] : null;
+    const gHtml = g != null
+      ? `<span class="co-pill ${g === 0 ? 'co-pill-nominal' : _GROUND_SEV_CLS[groundSev]}">${g}</span>`
+      : '<span class="co-nil">—</span>';
+
+    const b    = events ? events[boardKey] : null;
+    const bVal = b?.value ?? null;
+    const bBase = baseline?.[boardKey];
+    const d = (bVal != null && bBase != null) ? Number(bVal) - bBase : 0;
+    // Delta only now, not the raw lifetime counter (which ran to 5-6 digits
+    // and told an operator little on its own — see this cell's own alignment
+    // fix below: a single value with nothing beside it is trivially
+    // left-alignable at a fixed x, which a variable-width pill+delta PAIR
+    // never was).
+    //
+    // Colored by the shared SEV 1-4 tier this ROW represents (_GROUND_SEV_CLS
+    // — same palette GRD uses, same "0 stays neutral" rule as GRD's own gHtml
+    // above), NOT b.status — confirmed live that every BRD pill rendered the
+    // same neutral blue regardless of tier, because b.status is whether the
+    // raw cumulative COUNTER value itself sits in some expected numeric
+    // range (a counter monitoring its own magnitude), not which severity
+    // tier it belongs to; it's realistically always NOMINAL.
+    const bCls = d === 0 ? 'co-pill-nominal' : _GROUND_SEV_CLS[groundSev];
+    const bHtml = bVal != null
+      ? `<span class="co-pill ${bCls}">${d}</span>`
+      : '<span class="co-nil">—</span>';
+
+    return `<tr>
+      <td class="co-sevmerge-tier">${tier}</td>
+      <td class="co-sevmerge-val">${gHtml}</td>
+      <td class="co-sevmerge-val">${bHtml}</td>
+    </tr>`;
+  }).join('');
+
+  // No <thead> here any more — SEV/GRD/BRD now labels the column ONCE, in
+  // the Fleet table's own outer header row (index.html's #co-alerts-th),
+  // not repeated atop every single satellite's own mini-table.
+  return `<table class="co-sevmerge-table">
+    <colgroup><col class="co-sevmerge-col-sev"/><col class="co-sevmerge-col-grd"/><col class="co-sevmerge-col-brd"/></colgroup>
+    <tbody>${rows}</tbody>
+  </table>`;
 }
 
 // GET /api/v1/events/mission — { enabled: bool } — the read-only counterpart
@@ -540,9 +571,9 @@ function _rowHTML(sat, now, eclipse) {
     <td class="co-gnss-cell">${_gnssCell(store.satGnss[sat.id], store.satGnssMitigation[sat.id])}</td>
     <td class="co-passes-cell" data-sat-id="${sat.id}">${_passDots(store.satPasses[sat.id])}</td>
     <td>${orbitCell}</td>
-    <td class="co-alerts-cell">${_alertsCell(store.satGroundEvents[sat.id], tm?.events, store.satEventBaseline[sat.id])}</td>
+    <td class="co-alerts-cell">${_alertsCell(store.satGroundEvents[sat.id], tm?.events, store.satEventBaseline[sat.id], tm?.uptime?.value)}</td>
     <td class="co-mission-cell">${_missionModeCell(store.satMissionMode[sat.id])}</td>
-    <td class="co-links-cell">${_linkBadge('Dashboard', _dashboardUrl(satBaseUrl(sat.noradId)))}<span class="co-links-info" data-sat-id="${sat.id}">ⓘ</span></td>
+    <td class="co-links-cell"><span class="co-links-row">${_linkBadge('Dashboard', _dashboardUrl(satBaseUrl(sat.noradId)))}<span class="co-links-info" data-sat-id="${sat.id}">ⓘ</span></span></td>
   </tr>`;
 }
 
@@ -649,35 +680,77 @@ export function initChadOps() {
     gnssHeader.addEventListener('mouseleave', _scheduleHide);
   }
 
-  // Ground and board legends stacked in one tooltip (co-legend-gap divides
-  // them) since the two mini-stacks they document now live under a single
-  // "Alerts" header instead of two.
-  const ALERTS_LEGEND_HTML = `
-    <div class="co-legend-title">Ground · /api/v1/events (category = GROUND)</div>
-    <div class="co-legend-sub">Ground-side monitoring alarms — SCC watches telemetry parameters against configured thresholds and raises one of these when a value deviates from nominal. Counts are over the last 24 h.</div>
-    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.NOMINAL}">●</span> Nominal</div>
-    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.WATCH}">●</span> Watch</div>
-    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.WARNING}">●</span> Warning</div>
-    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.DISTRESS}">●</span> Distress</div>
-    <div class="co-legend-row"><span class="co-gnss-led" style="color:${_GROUND_SEV_COLOR.CRITICAL}">●</span> Critical</div>
+  // Leads with the SEV 1-4 tier mapping (_SEV_TIER_ROWS) — the merged
+  // GRD/BRD table (_alertsCell) only ever shows a bare number per row, so
+  // this is the one place that spells out what "2" actually means on either
+  // side. Ground/Board source descriptions kept below it (co-legend-gap
+  // divides them) since those carry info the tier table itself doesn't —
+  // which API/packet each side reads from, and (Board specifically) that
+  // its pill is a delta, colored by the same tier palette, not the raw
+  // per-parameter monitoring status of the underlying counter. A function,
+  // not a static const, since the window (1d/7d — co-alerts-window-toggle
+  // below) is operator-changeable and this needs to name whichever is
+  // current every time it's actually shown, not just at wiring time.
+  function _alertsLegendHtml() {
+    const days = getAlertWindowDays();
+    const windowLabel = days === 1 ? 'the last day' : `the last ${days} days`;
+    return `
+    <div class="co-legend-title">SEV 1-4 — shared severity tier</div>
+    <div class="co-legend-sub">Ground alarm criticality and Board's own severity counters use different words for the same 4 mild→severe bands — merged onto one shared number so a "2" means the same thing on either side.</div>
+    <table class="co-legend-sevmap">
+      <thead><tr><th></th><th>Ground</th><th>Board</th></tr></thead>
+      <tbody>
+        <tr><td style="color:${SEV_COLOR[1]}">1</td><td>Watch</td><td>Normal</td></tr>
+        <tr><td style="color:${SEV_COLOR[2]}">2</td><td>Warning</td><td>Low</td></tr>
+        <tr><td style="color:${SEV_COLOR[3]}">3</td><td>Distress</td><td>Medium</td></tr>
+        <tr><td style="color:${SEV_COLOR[4]}">4</td><td>Critical</td><td>High</td></tr>
+      </tbody>
+    </table>
+    <div class="co-legend-title co-legend-gap">Ground · /api/v1/events (category = GROUND)</div>
+    <div class="co-legend-sub">SCC watches telemetry parameters against configured thresholds and raises one of these when a value deviates from nominal. Counts are over ${windowLabel} (toggle 1d/7d in the column header) — the pill shown here is that count, colored by its own row's SEV tier above (grey at 0).</div>
     <div class="co-legend-title co-legend-gap">Board · Packet: TM_3_25_OBSW_HK_PLT</div>
-    <div class="co-legend-sub">Cumulative on-board event counters since last OBC boot. The <span style="color:#ffcc00;font-weight:600">+N</span> delta shows how many new events occurred in the last 24 h.</div>
-    <div class="co-legend-row"><span class="co-mode-label">HIGH</span> OBSW_AM_NB_HIGH_SEV_EVT</div>
-    <div class="co-legend-row"><span class="co-mode-label">MED</span> OBSW_AM_NB_MED_SEV_EVT</div>
-    <div class="co-legend-row"><span class="co-mode-label">LOW</span> OBSW_AM_NB_LOW_SEV_EVT</div>
-    <div class="co-legend-row"><span class="co-mode-label">NOM</span> OBSW_AM_NB_NORMAL_EVT</div>`;
+    <div class="co-legend-sub">On-board event counters (OBSW_AM_NB_{HIGH,MED,LOW,NORMAL}_SEV_EVT) are cumulative since last OBC boot — the pill shown here is the DELTA instead, how many new events of that tier occurred over ${windowLabel}, not that lifetime total. Colored the same way as Ground: its row's own SEV tier above, grey when the delta is 0.</div>`;
+  }
 
   const alertsHeader = document.getElementById('co-alerts-th');
   if (alertsHeader) {
     alertsHeader.addEventListener('mouseenter', e => {
       _cancelHide();
-      tooltip.innerHTML     = ALERTS_LEGEND_HTML;
+      tooltip.innerHTML     = _alertsLegendHtml();
       tooltip.style.display = 'block';
       _positionTooltip(e, tooltip);
     });
     alertsHeader.addEventListener('mousemove',  e => _positionTooltip(e, tooltip));
     alertsHeader.addEventListener('mouseleave', _scheduleHide);
   }
+
+  // 1d/7d window toggle, next to the "Alerts" header label — changes
+  // affect every satellite's Ground count AND Board delta at once (both
+  // read getAlertWindowDays() fresh on their own next fetch — see
+  // satGroundEvents.js/satEventBaseline.js), so this forces an immediate
+  // refetch of both for every tracked satellite rather than leaving stale
+  // numbers on screen until their own slow cadence (up to 30 min for the
+  // Board baseline) happens to come around on its own.
+  function _updateAlertWindowToggle() {
+    const days = getAlertWindowDays();
+    document.querySelectorAll('.co-alerts-window-btn').forEach(btn => {
+      btn.classList.toggle('co-alerts-window-btn-active', Number(btn.dataset.days) === days);
+    });
+  }
+  document.querySelectorAll('.co-alerts-window-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation(); // stays inside the header cell, doesn't bubble into anything hover/click-sensitive above it
+      const days = Number(btn.dataset.days);
+      if (days === getAlertWindowDays()) return;
+      setAlertWindowDays(days);
+      _updateAlertWindowToggle();
+      for (const sat of store.satellites) {
+        fetchSatGroundEvents(sat);
+        fetchSatEventBaseline(sat);
+      }
+    });
+  });
+  _updateAlertWindowToggle();
 
   function _wireDots() {
     tbody.querySelectorAll('.co-dot[data-idx]').forEach(dot => {

@@ -1,12 +1,17 @@
 import { store } from './store.js';
 import { satSubsystemOrigin } from './satSubsystems.js';
+import { getAlertWindowDays } from './alertWindow.js';
 
 // Ground-side monitoring alarms — the SCC's own /api/v1/events endpoint returns
 // ON_BOARD (spacecraft-raised), GROUND (SCC parameter-threshold alarms), and
 // SATELLITE_PASS events all together; this counts just the GROUND ones by
-// criticality over the last 24h, same window/shape as the board-event counters.
-const LOOKBACK_MS = 24 * 3_600_000;
-const MAX_EVENTS  = 200;
+// criticality over the operator-chosen window (getAlertWindowDays — 1 or 7
+// days, ChadOps.js's own Alerts-column toggle), same window/shape as the
+// board-event counters.
+// Sized for the 7-day default, not the old fixed 24h window — the old 200
+// cap was a day's worth of events; left as-is it would silently undercount
+// a busy satellite's week.
+const MAX_EVENTS  = 1000;
 
 // Cancel a satellite's still-running fetch rather than let it pile up
 // alongside a new one — see satTelemetry.js's _ctrl for the same rationale.
@@ -25,7 +30,7 @@ export async function fetchSatGroundEvents(sat) {
   if (!origin) return;
 
   const now   = new Date();
-  const start = new Date(now.getTime() - LOOKBACK_MS);
+  const start = new Date(now.getTime() - getAlertWindowDays() * 24 * 3_600_000);
   const url = `${origin}/api/v1/events`
     + `?start=${encodeURIComponent(start.toISOString())}`
     + `&end=${encodeURIComponent(now.toISOString())}`

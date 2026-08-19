@@ -6,12 +6,16 @@ import { store }            from '../store.js';
 import { worstSev, satSeverities, SEV, SEV_COLOR, SEV_LABEL } from './severity.js';
 import { fmtDateTimeShort } from './passTooltip.js';
 import { satEffectiveNow, satIsSimulated } from '../satSimu.js';
+import { escapeHtml } from './logView.js';
 
+// Returns { sat, start } for the soonest upcoming pass across the whole
+// fleet (not just the timestamp) — the top bar names which satellite it's
+// for, since "Next pass" alone doesn't say whose.
 function _nextPass() {
   let soonest = null;
   for (const sat of store.satellites) {
     const next = (store.satPasses[sat.id] ?? []).find(p => p.future);
-    if (next && (!soonest || next.start < soonest)) soonest = next.start;
+    if (next && (!soonest || next.start < soonest.start)) soonest = { sat, start: next.start };
   }
   return soonest;
 }
@@ -80,7 +84,7 @@ function _anomalyDetailHTML(sats) {
       .join('');
     return `<div class="tb-anom-row">
       <span class="tb-anom-dot" style="background:${sat.color}"></span>
-      <span class="tb-anom-name">${sat.name}</span>
+      <span class="tb-anom-name">${escapeHtml(sat.name)}</span>
       <span class="tb-anom-subs">${subs}</span>
     </div>`;
   }).join('');
@@ -88,8 +92,7 @@ function _anomalyDetailHTML(sats) {
 
 export function initTopSummary() {
   const countEl        = document.getElementById('tb-sat-count');
-  const anomalyEl      = document.getElementById('tb-anomaly-count');
-  const anomalyBox     = document.getElementById('tb-anomaly-stat');
+  const satCountBox    = document.getElementById('tb-satcount-stat');
   const anomalyPop     = document.getElementById('tb-anomaly-popover');
   const nextPassEl     = document.getElementById('tb-next-pass');
   const countdownEl    = document.getElementById('tb-nextpass-countdown');
@@ -112,9 +115,12 @@ export function initTopSummary() {
     const sats = store.satellites;
     countEl.textContent = String(sats.length);
 
+    // No separate "N anomalies" stat — the satellite-count number itself
+    // turns warning-amber (tb-stat-warn) when any satellite is at
+    // WARNING-or-worse; hovering it (see index.html's tb-satcount-wrap)
+    // reveals which one(s) and why via the same popover as before.
     const anomalies = sats.filter(s => worstSev(s) >= SEV.WARNING).length;
-    anomalyEl.textContent = String(anomalies);
-    anomalyBox.classList.toggle('tb-anomaly-stat-warn', anomalies > 0);
+    if (satCountBox) satCountBox.classList.toggle('tb-stat-warn', anomalies > 0);
     if (anomalyPop) anomalyPop.innerHTML = _anomalyDetailHTML(sats);
 
     // "In Pass" (glowing, same badge as the Fleet table's own LIVE tag)
@@ -131,8 +137,10 @@ export function initTopSummary() {
 
     if (!live) {
       const next = _nextPass();
-      nextPassEl.textContent = next ? fmtDateTimeShort(next) : '—';
-      if (countdownEl) countdownEl.textContent = next ? `(in ${_fmtCountdownHMS(next.getTime() - Date.now())})` : '';
+      nextPassEl.innerHTML = next
+        ? `<span style="color:${next.sat.color || 'inherit'}">${escapeHtml(next.sat.name)}</span> ${fmtDateTimeShort(next.start)}`
+        : '—';
+      if (countdownEl) countdownEl.textContent = next ? `(in ${_fmtCountdownHMS(next.start.getTime() - Date.now())})` : '';
     }
   }
 

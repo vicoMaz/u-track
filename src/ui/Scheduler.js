@@ -2514,7 +2514,6 @@ function _renderProcDetailView() {
     });
   });
   document.getElementById('sch-proc-schedule-btn')?.addEventListener('click', _onScheduleProcClick);
-  document.getElementById('sch-establish-tmtc-btn')?.addEventListener('click', _onEstablishTmtcClick);
   if (_procCalendarKey) _positionCalendarPicker();
 }
 
@@ -3124,6 +3123,18 @@ export function initScheduler() {
   document.body.appendChild(_tooltipEl);
   _tooltipEl.addEventListener('mouseenter', () => clearTimeout(_ttHideTimer));
   _tooltipEl.addEventListener('mouseleave', _hideTooltipSoon);
+
+  // Establish TMTC — registered ONCE here, not inside _renderProcDetailView.
+  // That function only ever runs once a procedure has already been picked
+  // from the search/catalog (see _renderGantt's own `if (_selectedProc)`
+  // guard), but this button is the shortcut that's meant to bypass picking
+  // a procedure entirely — wiring it there meant a fresh pass selection,
+  // with no procedure ever opened, left the click with no listener at all
+  // and the button a silent no-op. The button itself is a static element
+  // outside the detail view (sch-proc-search-wrap, not sch-proc-detail-view)
+  // and never gets torn down/rebuilt, so one-time wiring here is enough —
+  // its disabled state alone (toggled in _renderGantt) tracks pass selection.
+  document.getElementById('sch-establish-tmtc-btn')?.addEventListener('click', _onEstablishTmtcClick);
 
   // Calendar picker (_calendarPickerHTML) dismissal — registered ONCE here
   // rather than inside _renderProcDetailView (which reruns on every keystroke/

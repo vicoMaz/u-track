@@ -27,13 +27,21 @@ export function showActionToast(msg) {
 // this is for conditions the user needs to actually notice and act on, not a
 // routine confirmation. Returns a hide() function the caller can invoke to
 // dismiss it programmatically once resolved.
-export function showWarningToast(msg) {
+//
+// `action` is optional: { label, onClick } for a concrete suggested next
+// step (e.g. vpnGuard.js's own "Retry", which reloads the page) shown ahead
+// of the Ignore button. Most callers are one-off error messages with no
+// single obvious next action beyond dismissing them, so this only renders
+// when actually passed.
+export function showWarningToast(msg, action) {
   const el = _ensureEl();
   clearTimeout(_hideTimer);
   el.classList.add('warn');
-  el.innerHTML = `<span class="info-toast-icon">⚠</span><span class="info-toast-msg">${msg}</span><button type="button" class="info-toast-ignore">Ignore</button>`;
+  const actionHtml = action ? `<button type="button" class="info-toast-action">${action.label}</button>` : '';
+  el.innerHTML = `<span class="info-toast-icon">⚠</span><span class="info-toast-msg">${msg}</span>${actionHtml}<button type="button" class="info-toast-ignore">Ignore</button>`;
   el.classList.add('visible');
   const hide = () => { el.classList.remove('visible'); };
   el.querySelector('.info-toast-ignore').addEventListener('click', hide, { once: true });
+  if (action) el.querySelector('.info-toast-action').addEventListener('click', action.onClick, { once: true });
   return hide;
 }

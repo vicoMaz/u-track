@@ -92,8 +92,8 @@ positions: {},       // { [noradId]: last propagated result } — written by Sat
   satTmr: {},          // satId → { [source]: { rangeStart, rangeEnd, gapWindows: [{start,end}] } } — source: 'bus' | 'pay' (see tmrData.js's TMR_SOURCES)
   satGnss: {},              // satId → { lastBothGood: Date|null, hkIsValid: bool|null }
   satGnssMitigation: {},    // satId → { count30d, lastMs: number|null, windowStartMs, saturated } | undefined
-  satEventBaseline: {},     // satId → { normal, low, med, high } — cumulative counts 24 h ago
-  satGroundEvents: {},      // satId → { watch, warning, distress, critical } — GROUND event counts, last 24h
+  satEventBaseline: {},     // satId → { normal, low, med, high } — cumulative counts as of alertWindow.js's own window-ago
+  satGroundEvents: {},      // satId → { watch, warning, distress, critical } — GROUND event counts, over alertWindow.js's own window
   satMissionMode: {},       // satId → { enabled } — GET /api/v1/events/mission
   satGlobals: {},           // satId → { bdsVersion, proceduresVersion, sccVersion, sccColor }
   satVersions: {},          // satId → { fds, scc, sccRo, gnm, mic } each { version, appUrl } | null

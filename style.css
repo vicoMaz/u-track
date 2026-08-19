@@ -97,9 +97,11 @@ body.tracking-active #side-panel { top: 100px; }
   z-index: 9999;
 }
 
-/* Fleet-wide summary — see TopSummary.js. Anomaly count's color rides the
-   same --sev-* tokens severity.js already uses (nominal green at 0, warning
-   amber once any satellite trips WARNING-or-worse) rather than a new palette. */
+/* Fleet-wide summary — see TopSummary.js. Satellite-count's color rides the
+   same --sev-* tokens severity.js already uses (nominal/default at 0,
+   warning amber once any satellite trips WARNING-or-worse) rather than a new
+   palette — no separate "N anomalies" stat any more; the count itself IS the
+   anomaly indicator, detail on hover (see .tb-hover-stat-wrap below). */
 .tb-stats {
   display: flex;
   align-items: center;
@@ -110,7 +112,7 @@ body.tracking-active #side-panel { top: 100px; }
   flex-shrink: 0;
 }
 .tb-stat strong { color: #d4dcf0; font-weight: 700; }
-.tb-anomaly-stat-warn strong { color: var(--sev-warning); }
+.tb-stat-warn strong { color: var(--sev-warning); }
 /* De-emphasized relative to the absolute date/time next to it — the
    countdown is a convenience readout, not the primary fact this stat is
    reporting. */
@@ -145,12 +147,15 @@ body.tracking-active #side-panel { top: 100px; }
 }
 
 /* Hover (or keyboard-focus, via the wrap's own tabindex) breakdown of WHICH
-   satellite(s) are behind the anomaly count and why — same hover-only,
-   no-JS-toggle popover convention .profile-popover uses in the left rail,
-   just anchored downward from the top bar instead of sideways from a rail
-   icon (there's nothing above #top-bar to drop into). Content itself is
-   rebuilt by TopSummary.js's own update(), same cadence as the count. */
-.tb-anomaly-wrap { position: relative; outline: none; }
+   satellite(s) are contributing anomalies and why, triggered off the
+   satellite-count stat itself — same hover-only, no-JS-toggle popover
+   convention .profile-popover uses in the left rail, just anchored downward
+   from the top bar instead of sideways from a rail icon (there's nothing
+   above #top-bar to drop into). Generically named (not tb-anomaly-wrap) —
+   this "stat + hover popover" shape isn't inherently anomaly-specific, just
+   what it's used for today. Content itself is rebuilt by TopSummary.js's
+   own update(), same cadence as the count. */
+.tb-hover-stat-wrap { position: relative; outline: none; }
 .tb-anomaly-popover {
   display: none;
   position: absolute;
@@ -170,9 +175,9 @@ body.tracking-active #side-panel { top: 100px; }
   font-size: 11.5px;
   color: #ccc;
 }
-.tb-anomaly-wrap:hover .tb-anomaly-popover,
-.tb-anomaly-wrap:focus .tb-anomaly-popover,
-.tb-anomaly-wrap:focus-within .tb-anomaly-popover { display: block; }
+.tb-hover-stat-wrap:hover .tb-anomaly-popover,
+.tb-hover-stat-wrap:focus .tb-anomaly-popover,
+.tb-hover-stat-wrap:focus-within .tb-anomaly-popover { display: block; }
 .tb-anom-row {
   display: flex;
   align-items: center;
@@ -1771,8 +1776,19 @@ body.gantt-collapsed .gantt-rows { display: none; }
   padding: 1px 5px; white-space: nowrap; flex-shrink: 0;
   cursor: default;
 }
-.st-gear-btn {
+/* Bell now leads the right-pushed trio (bell, gear, remove) — margin-left:auto
+   moved here from .st-gear-btn below since this is the first of the three now. */
+.st-notify-btn {
   margin-left: auto;
+  display: inline-flex; align-items: center;
+  background: none; border: 1px solid #1e2a3a; border-radius: 3px;
+  color: #445566; cursor: pointer;
+  padding: 2px 6px; flex-shrink: 0;
+  transition: color .15s, border-color .15s, background-color .15s;
+}
+.st-notify-btn:hover { color: #99bbdd; border-color: #2a4a6a; }
+.st-notify-btn.st-notify-active { color: #ffcc44; border-color: #7a5010; background: rgba(224,160,48,0.12); }
+.st-gear-btn {
   background: none; border: 1px solid #1e2a3a; border-radius: 3px;
   color: #556677; font-size: 12px; cursor: pointer;
   padding: 2px 6px; flex-shrink: 0;
@@ -2308,15 +2324,9 @@ body.gantt-collapsed .gantt-rows { display: none; }
   text-align: center;
 }
 
-/* Colored accent from SCC's own sccColor (globals endpoint) — same left-edge
-   treatment as the side-panel satellite list, keyed off the satellite's own
-   reported color rather than the app-local color picker.
-   Hover used to darken the WHOLE row's background instead — besides being
-   a fairly heavy-handed hover treatment, it visually fought with
-   .co-row-live's own progress-sweep background below (an in-progress
-   pass's row IS the progress bar; the flat hover background painted right
-   over that sweep, making it look like it had vanished while the mouse sat
-   over it). Thickening this left accent on hover instead touches a
+/* Per-satellite color accent (sat.color, captured from SCC at creation —
+   see ChadOps.js's own comment on that) on the row's first cell only, as a
+   left border — hover brightens it into an inset box-shadow instead of a
    completely different property, so it can never collide with that.
    Confirmed live: animating border-left-WIDTH (as this first tried) grows
    the cell's own border-box, which the table's column-width algorithm
@@ -2326,7 +2336,15 @@ body.gantt-collapsed .gantt-rows { display: none; }
    adding to it — same trick .co-row-live's own left-edge glow below
    already uses for exactly this reason — so it only ever grows rightward,
    never touching layout/column widths at all. */
-.co-row td:first-child {
+/* Direct-child combinator (>), NOT a descendant selector — the Alerts cell
+   now nests its own .co-sevmerge-table with its own first-column SEV cells
+   (ChadOps.js's own co-sevmerge-tier), which are also <td>:first-child
+   nested somewhere inside .co-row. --scc-color is a custom property, which
+   inherits straight through that nesting same as any other CSS value, so a
+   plain descendant selector here painted a SECOND colored bar on that inner
+   table's own first column too — confirmed live. > scopes this to the row's
+   own real first cell only. */
+.co-row > td:first-child {
   border-left: 3px solid var(--scc-color, transparent);
   /* A couple extra px beyond the other cells' shared 4px (.co-row td, above)
      — clearance so the hover shadow's growth (6px, below) never paints
@@ -2335,7 +2353,7 @@ body.gantt-collapsed .gantt-rows { display: none; }
   padding-left: 6px;
   transition: box-shadow 0.15s ease;
 }
-.co-row:hover td:first-child { box-shadow: inset 6px 0 0 0 var(--scc-color, transparent); }
+.co-row:hover > td:first-child { box-shadow: inset 6px 0 0 0 var(--scc-color, transparent); }
 
 /* ── Name + ping dot ───────────────────────────────────────────── */
 .co-name-cell {
@@ -2735,13 +2753,6 @@ body.gantt-collapsed .gantt-rows { display: none; }
   font-size: 11px; font-weight: 700; letter-spacing: 0.08em; /* 9px * 1.2 */
   color: #445566; min-width: 20px; text-transform: uppercase;
 }
-/* First column fixed wide enough for "WATCH" (the longest label across both
-   ground and board severity sets) — was 26px, too narrow for 5 characters,
-   so the trailing "H" overflowed the track and got painted over by the pill
-   next to it. */
-.co-evt-stack  { display: grid; grid-template-columns: 38px auto auto; justify-content: center; gap: 3px 4px; align-items: center; }
-.co-evt-delta  { font-size: 12px; font-weight: 700; color: #ffaa22; font-variant-numeric: tabular-nums; } /* 10px * 1.2 */
-
 .co-pill {
   display: inline-block;
   padding: 1px 5px;
@@ -3283,6 +3294,23 @@ body.tracking-active .info-toast { top: 102px; }
   transition: color 0.15s, border-color 0.15s, background-color 0.15s;
 }
 .info-toast-ignore:hover { background: #2a2a48; border-color: #4444aa; color: #ccc; }
+/* The suggested next step (e.g. vpnGuard.js's own "Retry") — same shape as
+   Ignore but filled with the warn toast's own amber accent, so it visually
+   reads as the recommended action rather than the neutral dismissal Ignore
+   is. */
+.info-toast-action {
+  flex-shrink: 0;
+  background: #3a2a08;
+  border: 1px solid #e0a030;
+  color: #ffd9a0;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
+}
+.info-toast-action:hover { background: #4a3610; border-color: #ffb84d; color: #fff; }
 /* Noticeably more prominent than a routine toast — this is a "your VPN is
    probably down" condition that stays up indefinitely until it resolves or
    the user dismisses it, not a fire-and-forget confirmation, so it gets a
@@ -3410,34 +3438,149 @@ body.tracking-active .info-toast { top: 102px; }
 
 /* ── Alerts ────────────────────────────────────────────────────── */
 .co-alerts-cell { min-width: 150px; }
-
-/* Ground + board mini-stacks side by side under one column — a thin divider
-   plus each group's own tiny label (colored to match its pill palette: green
-   ramp for ground, blue/amber/red for board) keeps the two readable apart
-   without spending a whole extra column on the split. */
-.co-alerts-fused {
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 10px;
-}
-.co-alerts-group {
+/* Per-satellite "OBC uptime is shorter than the alert window" notice
+   (ChadOps.js's own _alertsCell) — REPLACES the SEV/GRD/BRD pill table
+   entirely for this satellite (rather than a small badge alongside it),
+   since a table that might be silently showing wrong deltas isn't worth
+   keeping on screen just because there's room for both. Centered in the
+   same cell the table would otherwise occupy; min-height roughly matches
+   the 4-row table's own height so the row doesn't visibly shrink for
+   whichever satellites happen to show this. */
+.co-alerts-uptime-warn {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
+  justify-content: center;
+  min-height: 56px;
+  font-size: 10px;
+  color: var(--sev-warning);
+  text-align: center;
+  line-height: 1.5;
+  cursor: help;
 }
-.co-alerts-group + .co-alerts-group {
-  padding-left: 10px;
-  border-left: 1px solid #223047;
+
+/* Plain block stack, NOT flex — the nested .co-sevmerge-table below centers
+   itself the exact same way here (margin:0 auto) as it does in every data
+   row's own <td>; using flex align-items:center here instead was a SECOND,
+   different centering mechanism for the identical 138px-wide table, and the
+   two didn't always resolve to quite the same x — the GRD/BRD divider in
+   this header could end up a px or two off from the divider in the rows
+   below. One mechanism, used everywhere, is what actually guarantees they
+   match. */
+.co-alerts-th-label { display: block; text-align: center; white-space: nowrap; margin-bottom: 2px; }
+/* 1d/7d alert-window toggle (ChadOps.js's own co-alerts-window-btn wiring) —
+   a tiny segmented control, same idea as .sem-model-btn's larger 12U/FF
+   toggle in the Settings sat-edit modal, just compact enough to sit inline
+   in a table header cell rather than its own labeled row. */
+.co-alerts-window-toggle {
+  display: inline-flex;
+  vertical-align: middle;
+  margin: 0 3px;
+  border: 1px solid #2a2a4a;
+  border-radius: 4px;
+  overflow: hidden; /* clips each button's own square corners to the group's rounded ones */
 }
-.co-alerts-group-label {
+.co-alerts-window-btn {
+  padding: 1px 5px;
+  background: #1a1a2e;
+  border: none;
+  border-left: 1px solid #2a2a4a; /* divider between the two — the FIRST button's own left edge is the group's own border above, not doubled */
+  color: #667;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: inherit;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.co-alerts-window-btn:first-child { border-left: none; }
+.co-alerts-window-btn:hover { background: #1e1e38; color: #99aacc; }
+.co-alerts-window-btn-active { background: #1a2a3e; color: #00d4ff; }
+
+/* Merged SEV/GRD/BRD table (ChadOps.js's own _alertsCell) — one row per
+   shared severity tier (1-4) instead of Ground/Board's old separate
+   CRIT/DIST/WARN/WATCH + HIGH/MED/LOW/NOM label stacks side by side, same
+   "one severity number means one thing" shape Alert Analyzer's own table
+   already established. table-layout:fixed + an explicit <colgroup> (not
+   content-sized columns) is what actually keeps the GRD/BRD divider at the
+   same x on every satellite's own row: each row renders its OWN independent
+   <table>, and Board's cumulative counters run to 5-6 digits where Ground's
+   24h counts stay 1-2 — auto-sized columns would leave that divider (and
+   the numbers themselves) landing at a different x per satellite depending
+   on whose numbers happened to be wider that tick. */
+.co-sevmerge-table {
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin: 0 auto; /* centers the fixed-width table within the wider <td>, matching every other cell's own text-align:center */
+}
+.co-sevmerge-col-sev { width: 20px; }
+.co-sevmerge-col-grd { width: 40px; }
+.co-sevmerge-col-brd { width: 78px; } /* fits a "+NNNN" delta comfortably, with room to spare now that the raw lifetime counter isn't shown alongside it */
+.co-sevmerge-table th,
+.co-sevmerge-table td {
+  padding: 1px 4px;
+  font-size: 11px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.co-sevmerge-head {
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.1em;
+  padding-bottom: 3px;
 }
-.co-alerts-group-ground { color: var(--sev-watch); }
-.co-alerts-group-board  { color: #7a99bb; }
+.co-sevmerge-tier-head { color: #556; }
+/* Plain, not severity-colored — the tier number sits right next to its own
+   already-colored Ground pill, and re-coloring the "1"/"2"/"3"/"4" label
+   itself on top of that just doubled up on color with no new information,
+   reading as busier/brighter than the data it was labeling. */
+.co-sevmerge-tier { font-weight: 700; color: #99a3b8; }
+/* Ground's own pill right-aligned toward the GRD/BRD divider, within the
+   fixed GRD column — numbers of different digit counts only share a common
+   edge when aligned, not centered (centered, each pill's own edge drifted
+   per row depending on its own digit count — confirmed live, the same class
+   of bug fixed the same way in Scheduler's list-row labels and the Alert
+   Analyzer occurrence tooltip's param column). */
+.co-sevmerge-val:nth-child(2) { text-align: right; padding-right: 10px; }
+/* Board's own pill left-aligned toward the SAME divider from the other
+   side, at a fixed padding — not centered, for the identical reason as
+   Ground above. Board went through an intermediate "pill + separate delta,
+   centered as a pair" design that had the same drift bug in a different
+   shape; now that the cell holds a single value (the delta — see
+   ChadOps.js's own _alertsCell), left-aligning it is enough on its own:
+   with nothing else in the cell, the pill's own left edge sits at this
+   fixed x regardless of how many digits it runs to. */
+.co-sevmerge-val:nth-child(3) { text-align: left; padding-left: 8px; }
+/* Muted — was severity-green/blue (var(--sev-watch)/#7a99bb), full
+   saturation on a 9px label read as much brighter than every other .co-th
+   header in this table. */
+.co-alerts-group-ground { color: #7a9e82; }
+.co-alerts-group-board  { color: #7f8fa3; }
+/* Left-aligned at the same fixed padding as .co-sevmerge-val:nth-child(3)'s
+   data cells below it — was centered (.co-sevmerge-table th's own default,
+   below), which sat the "BRD" label in the middle of the column while every
+   pill under it hugged the divider instead, reading as two different
+   columns stacked on top of each other. Needs the extra .co-sevmerge-table
+   scoping (not just .co-alerts-group-board alone) to actually outrank that
+   default: a bare single class loses to "th" plus a class on specificity. */
+.co-sevmerge-table th.co-alerts-group-board { text-align: left; padding-left: 8px; }
+/* The one divider actually asked for — between GRD and BRD, not before SEV —
+   same left-border-on-the-second-value-column idea the old flex layout used,
+   just anchored to the fixed <colgroup> above instead of natural content width. */
+.co-sevmerge-table .co-sevmerge-val + .co-sevmerge-val,
+.co-sevmerge-table th.co-alerts-group-board {
+  border-left: 1px solid #223047;
+}
+/* SEV/Ground/Board mapping table in the Alerts column header's own hover
+   tooltip (ChadOps.js's ALERTS_LEGEND_HTML) — same shape as the fleet
+   table's own merged cell, just spelling out textual values instead of live
+   counts. */
+.co-legend-sevmap { border-collapse: collapse; margin: 6px 0; font-size: 11px; }
+.co-legend-sevmap th, .co-legend-sevmap td { padding: 2px 8px; text-align: left; }
+.co-legend-sevmap thead th { font-size: 9px; font-weight: 700; letter-spacing: 0.08em; color: #667; }
+.co-legend-sevmap td:first-child { font-weight: 700; text-align: center; }
 
 /* ── Mission mode ──────────────────────────────────────────────── */
 .co-mission-cell { min-width: 50px; }
@@ -3462,9 +3605,17 @@ body.tracking-active .info-toast { top: 102px; }
 .co-sev-crit { color: #ff3366; border: 1px solid #881133; }
 
 /* ── External links ────────────────────────────────────────────── */
-.co-links-cell {
-  min-width: 90px;
-  display: flex;
+.co-links-cell { min-width: 90px; }
+/* Flex layout lives on this inner wrapper, not the <td> itself — matching
+   .co-gnss-stack's own convention elsewhere in this table.
+   A <td> with display:flex stops participating in normal table-cell layout
+   for vertical centering (it doesn't reliably stretch to the ROW's own
+   height the way a plain table-cell does), which was pinning this cell's
+   content to the top of a row a taller sibling cell (e.g. Alerts, which can
+   stack up to 8 lines) had stretched — the <td> itself now just keeps its
+   default vertical-align:middle, like every other column here. */
+.co-links-row {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
@@ -3841,6 +3992,359 @@ a.co-link:hover {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* ── Alert Analyzer (AlertAnalyzer.js) ──────────────────────────────── */
+.aa-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  padding: 12px 16px;
+  border-bottom: 1px solid #1e1e2e;
+}
+.aa-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: #667;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+/* "Merge by HK packet" — now a row inside the Source popover (.aa-checklist-
+   popover below), not a standalone toolbar control, since it only ever acts
+   on Source=Ground rows: it belongs next to the Ground/Board choice it
+   depends on, not floating disconnected from it. .aa-checklist-sep divides
+   it from the two actual source filters above; _wireChecklistFilter (see
+   AlertAnalyzer.js) deliberately only counts checkboxes that carry a
+   value= attribute for the Source Set, so this valueless one rides along in
+   the same popover without being mistaken for a third source option. */
+.aa-checklist-sep { height: 1px; margin: 4px 2px; background: #262638; }
+.aa-checklist-row-note { color: #667; font-weight: 400; }
+/* Occurrence-tooltip per-occurrence severity — the table row's own Severity
+   cell goes blank for a grouped alert (see _renderTable) since one pill
+   there can only show the group's worst case; this is where each
+   occurrence's own tier actually lives now. flex:0 0 auto (not a fixed px
+   width like Param below) is enough since every possible value is the same
+   single digit, unlike a param name's own wildly varying length. */
+.aa-occ-tt-sev { flex: 0 0 auto; margin-left: 6px; }
+/* Occurrence-tooltip Param name (AlertAnalyzer.js's own
+   _occurrenceTooltipHTML, HK-grouped rows only) — fixed-width column (not
+   just margin-left off the date) so the Actual-value column after it lands
+   at the same x on every row regardless of how long any given row's own
+   param name is; overflow ellipsizes the rare name that doesn't fit rather
+   than pushing the value column out of alignment. */
+.aa-occ-tt-param {
+  flex: 0 0 200px;
+  margin-left: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Occurrence-tooltip actual-value reading (Ground only) — the default
+   grouping key no longer pins one value per row, so this is what lets each
+   occurrence's own reading still be seen at a glance. */
+.aa-occ-tt-value {
+  margin-left: 6px;
+  font-family: 'Courier New', monospace;
+  color: #7fd1a8;
+}
+.aa-table-wrap {
+  flex: 1;
+  overflow: auto;
+}
+.aa-table { width: 100%; }
+.aa-th-sortable { cursor: pointer; user-select: none; }
+.aa-th-sortable:hover { color: #aab; }
+.aa-th-msg { text-align: left; }
+/* Source/Severity filters live IN the header cell itself (click the column
+   name to filter it) rather than a separate toolbar row above — a native
+   <select>, styled to blend into .co-th's own look until hovered/focused,
+   not a custom popover. */
+.aa-th-filter-th { padding: 0; }
+.aa-th-select {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: #555;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  text-align: center;
+  text-align-last: center;
+  padding: 5px 4px;
+  cursor: pointer;
+}
+.aa-th-select:hover, .aa-th-select:focus { color: #99a3b8; outline: none; background: #14141f; }
+.aa-th-select option { background: #1a1a28; color: #ccc; text-transform: none; }
+/* Severity's own checklist popover — click-to-open/stay-open-while-toggling/
+   click-outside-to-close, unlike Source's plain native <select> (a single
+   choice closes on pick, no need for anything fancier there). */
+.aa-th-checklist-th { position: relative; }
+.aa-th-checklist-badge { font-weight: 400; opacity: 0.8; }
+.aa-checklist-popover {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 130px;
+  margin-top: 2px;
+  background: #16161f;
+  border: 1px solid #33334a;
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+  z-index: 20;
+  text-align: left;
+}
+.aa-checklist-popover.aa-checklist-open { display: block; }
+.aa-checklist-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  font-size: 11.5px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: #ccc;
+  cursor: pointer;
+}
+.aa-checklist-row:hover { background: #20202e; }
+.aa-checklist-row input { cursor: pointer; }
+.aa-td {
+  padding: 7px 10px;
+  font-size: 12.5px;
+  border-bottom: 1px solid #14141f;
+  text-align: center;
+  color: #ccc;
+  white-space: nowrap;
+}
+.aa-td-date { font-variant-numeric: tabular-nums; color: #99a3b8; }
+/* "—" for a never-repeated alert (no tooltip, nothing to list), "×N" for a
+   collapsed group — hover shows every occurrence date (AlertAnalyzer.js's
+   own delegated tbody listener). tabular-nums keeps the column from
+   jittering in width as counts change digit count. */
+.aa-td-occ { font-variant-numeric: tabular-nums; color: #99a3b8; font-weight: 600; }
+.aa-td-occ-hoverable { cursor: help; text-decoration: underline dotted; text-underline-offset: 2px; }
+.aa-td-occ-hoverable:hover { color: #eee; }
+/* Flex, not plain inline flow — lets .aa-occ-tt-param claim a fixed-width
+   column (see its own comment below) so .aa-occ-tt-value lines up across
+   every row instead of drifting with each row's own param-name length.
+   Single line now (no more wrap-to-second-line for a long name): the fixed
+   param column ellipsizes overflow instead, so nothing needs the extra
+   vertical room wrapping used to buy. */
+.aa-occ-tt-row {
+  display: flex;
+  align-items: baseline;
+  padding: 2px 0;
+  font-variant-numeric: tabular-nums;
+}
+.aa-occ-tt-date { flex: 0 0 auto; }
+/* Wider variant for occurrence tooltips showing the "Merge by HK packet"
+   breakdown (AlertAnalyzer.js sets this alongside .co-tooltip only for
+   group.hkGrouped) — even with wrapping allowed above, the default 300px
+   cap made every single row wrap, when most HK+date combinations actually
+   fit on one line at a slightly wider box. */
+.aa-occ-tooltip-wide { max-width: 560px; }
+/* HK — the source packet's own name (e.g. "TM_3_25_OBSW_HK_GNC_MK2_RTE"),
+   just the ONE identifying line (AlertAnalyzer.js's own _parseAlertMessage
+   drops its description line entirely — "Housekeeping of GNC MARK 2
+   routines" repeats near-verbatim for every packet of that type and names
+   nothing the packet's own name doesn't already). Replaced with a dim ditto
+   mark (not left blank) when identical to the row directly above — a fully
+   empty cell reads as "no HK packet", which is never actually true for a
+   ground alert; .aa-td-hk-repeat dims the ditto mark down so the repeat
+   still reads as secondary against a row with its own new HK name. */
+.aa-td-hk {
+  text-align: left;
+  max-width: 1px; /* forces the column to actually shrink to .aa-table-wrap's width instead of growing to fit content, so overflow/ellipsis below has something to clip against */
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: 'Courier New', monospace;
+  color: #8888aa;
+}
+.aa-td-hk-repeat { color: #4a4a5c; }
+/* The specific parameter/packet name (satAlerts.js's own eventName) — plain
+   colored monospace text, no chip background/border. */
+.aa-msg-param {
+  font-family: 'Courier New', monospace;
+  font-weight: 700;
+  font-size: 11px;
+  color: #c9a7ff;
+}
+.aa-td-param { text-align: left; }
+/* Actual/Expected value — usually a short token ("TRUE"/"FALSE", a number)
+   so these stay narrow rather than sharing HK's own flex-to-fill sizing;
+   the Actual one gets a touch more weight since it's the one side of the
+   comparison that's currently wrong. */
+.aa-td-value {
+  font-family: 'Courier New', monospace;
+  white-space: nowrap;
+}
+.aa-row:hover { background: #14141f; }
+/* Rows with an occurrence inside the histogram bucket currently under the
+   crosshair (AlertAnalyzer.js's own _highlightBucketRows) — a distinct blue
+   tint (not just the plain :hover gray above) so it reads as "the chart is
+   pointing at this row", not an ordinary mouse-over. */
+.aa-row-bucket-hl { background: rgba(0, 140, 255, 0.12); }
+.aa-row-bucket-hl:hover { background: rgba(0, 140, 255, 0.18); }
+.aa-empty {
+  padding: 28px;
+  text-align: center;
+  color: #667;
+  font-size: 12px;
+}
+/* Same GRD/BRD accent colors ChadOps.js's own Fleet-row alerts cell already
+   uses (.co-alerts-group-ground/-board) — a pure label-distinguishing accent,
+   not a severity signal (that's the separate Severity column/pill below). */
+.aa-source-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border: 1px solid;
+  background: transparent;
+}
+.aa-source-ground { color: var(--sev-watch); border-color: var(--sev-watch); }
+.aa-source-board  { color: #7a99bb; border-color: #7a99bb; }
+/* Board rows only — hover shows the exact TM_5_* event-report packet that
+   raised this alert (AlertAnalyzer.js's own _showBoardEventTooltip,
+   satBoardEventTm.js). Same cursor/underline affordance as the Occurrence
+   column's own hoverable cells, so the two "this has a hover detail" cues
+   in this table read as one consistent language. */
+.aa-source-board-hoverable { cursor: help; text-decoration: underline dotted; text-underline-offset: 2px; }
+.aa-source-board-hoverable:hover { background: rgba(122, 153, 187, 0.12); }
+/* Colored straight from severity.js's own SEV_COLOR (inline style, set in
+   AlertAnalyzer.js) rather than a fixed CSS class per tier — same 5-step
+   scale every other severity-driven UI in the app already reads from there. */
+.aa-severity-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  border: 1px solid;
+  background: transparent;
+}
+
+/* Board-up/Ground-down alert histogram (AlertAnalyzer.js's own
+   _histogramSVG) — same display:block/width:100% shape ebn0-chart uses so
+   the SVG stretches to fill the panel instead of sizing to its viewBox.
+   position:relative anchors .aa-hist-zoom-reset-btn (below) to this box's
+   own top-right corner rather than the page's. */
+.aa-histogram-wrap {
+  position: relative;
+  flex-shrink: 0;
+  padding: 4px 16px 0;
+  border-bottom: 1px solid #1e1e2e;
+}
+/* The chart's own drawing surface — a separate element from the wrap above
+   so the Reset-zoom button (a sibling, not a descendant of this) never
+   triggers the wheel/mousedown pan-and-zoom handlers wired on this one
+   (AlertAnalyzer.js's own _wireHistogramZoomPan). */
+#aa-hist-svg {
+  cursor: grab;
+  user-select: none; /* dragging fast across the chart shouldn't also select surrounding page text */
+}
+/* Actively panning (AlertAnalyzer.js's own mousedown/mouseup handlers) —
+   the held-and-moving state of the grab cursor right above. */
+#aa-hist-svg.aa-hist-dragging { cursor: grabbing; }
+.aa-hist-chart { display: block; width: 100%; }
+/* Reset-zoom + the three band toggles below now share one small flex row,
+   positioned as a group over the chart's own top-right corner — was just
+   .aa-hist-zoom-reset-btn positioned individually before the toggles existed. */
+.aa-hist-toolbar {
+  position: absolute;
+  top: 6px;
+  right: 20px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+/* Eclipse/Passes/Plans vertical-band toggles (AlertAnalyzer.js's own
+   _setBandMode) — smaller than the base .sch-nav-btn so three of these plus
+   Reset zoom fit in one row without crowding the chart underneath. Each
+   tints its own active state to match its band's own color on the chart
+   itself (_BAND_COLOR there) — glancing at the toolbar alone says which
+   overlay is live without needing to look at the chart first. */
+.aa-hist-band-btn { font-size: 10px; padding: 3px 8px; }
+#aa-band-eclipse-btn.aa-hist-band-btn-active { color: #008cff; border-color: #008cff; background: rgba(0, 140, 255, 0.12); }
+#aa-band-passes-btn.aa-hist-band-btn-active  { color: #00cc66; border-color: #00cc66; background: rgba(0, 204, 102, 0.12); }
+#aa-band-plans-btn.aa-hist-band-btn-active   { color: #ff8c00; border-color: #ff8c00; background: rgba(255, 140, 0, 0.12); }
+/* Drawn first, underneath the grid/bars (_bandRects, called before anything
+   else in _histogramSVG's own template) — a backdrop the chart sits on top
+   of, not a foreground mark competing with the bars for attention.
+   pointer-events:none: purely decorative, shouldn't intercept the chart's
+   own hover/crosshair/drag handling underneath it. */
+.aa-hist-band { pointer-events: none; }
+/* Every label on this chart carries the same stroke halo (paint-order:stroke)
+   as .aa-hist-cursor-label already did — legible sitting directly over a
+   colored bar or a grid line, not just next to one. */
+.aa-hist-axis-label {
+  font-size: 10px;
+  font-family: 'Courier New', monospace;
+  font-weight: 700;
+  fill: #8888aa;
+  paint-order: stroke;
+  stroke: #0a0a0f;
+  stroke-width: 2.5px;
+  stroke-linejoin: round;
+}
+.aa-hist-tick {
+  font-size: 9px;
+  font-family: 'Courier New', monospace;
+  fill: #6a6a8a;
+  paint-order: stroke;
+  stroke: #0a0a0f;
+  stroke-width: 2.5px;
+  stroke-linejoin: round;
+}
+/* Horizontal (count) / vertical (time, aligned to the SAME ticks below)
+   reference grid — faint, strictly behind the bars in source order, so a
+   bar's own top edge can be read against a "nice" round count instead of
+   only compared relative to its neighbors. */
+.aa-hist-grid-h, .aa-hist-grid-v {
+  stroke: #22223a;
+  stroke-width: 0.6;
+}
+.aa-hist-grid-v { stroke-dasharray: 1.5,2.5; }
+.aa-hist-grid-label {
+  font-size: 8.5px;
+  font-family: 'Courier New', monospace;
+  fill: #565678;
+}
+/* Crosshair — shown either on hovering the histogram itself, or a row in the
+   table below it (AlertAnalyzer.js's own _showHistCursor/_hideHistCursor);
+   repositioned via x1/x2/x attribute updates on the SAME two elements every
+   time rather than re-rendering the whole SVG per mouse-move. */
+.aa-hist-cursor {
+  stroke: #ffffff;
+  stroke-opacity: 0.55;
+  stroke-width: 1;
+  stroke-dasharray: 2,2;
+  pointer-events: none;
+}
+.aa-hist-cursor-label {
+  font-size: 9.5px;
+  font-family: 'Courier New', monospace;
+  font-weight: 700;
+  fill: #eee;
+  paint-order: stroke;
+  stroke: #0a0a0f;
+  stroke-width: 2.5px;
+  stroke-linejoin: round;
+  pointer-events: none;
 }
 
 /* Thin, dark, low-contrast scrollbars for every scrolling region in this

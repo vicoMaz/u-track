@@ -24,7 +24,13 @@ function _check() {
 
   if (allUnreachable && !store.vpnDown) {
     store.setVpnDown(true);
-    _hideToast = showWarningToast('Check your VPN.');
+    // Spells out the actual next step, not just the symptom — the normal
+    // recovery path is "turn the VPN on, then reload" (a fresh load
+    // reconnects everything cleanly, not just ping status), so Retry does
+    // exactly that rather than a soft re-check that would just wait on the
+    // same automatic ping cycle already running underneath this toast.
+    _hideToast = showWarningToast('Check your VPN — activate it, then Retry.',
+      { label: 'Retry', onClick: () => window.location.reload() });
   } else if (!allUnreachable) {
     _resolve();
   }
