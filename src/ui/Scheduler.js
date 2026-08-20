@@ -1780,8 +1780,23 @@ function _procListRowCount(p, key) {
 // picker's dedicated listeners ever write (a plain string there would be
 // silently ignored in favor of the original schema value instead).
 function _procListFieldValue(f, fieldKey) {
-  if (_isProcParamDateTime(f)) return _procArgValues[fieldKey] ?? f.value ?? '';
+  // Same instant computation the top-level datetime path uses. This used to
+  // return _procArgValues[fieldKey] raw, which — once the field became a real
+  // picker — is the {dt, offsetSec} object the picker's listeners write, not a
+  // timestamp SCC can parse. It also means an untouched row now submits the
+  // date the widget is *showing* (the schema's value, else now) instead of an
+  // empty string, matching how a top-level datetime argument already behaves.
+  if (_isProcParamDateTime(f)) return _procDateTimeISO(f, fieldKey);
   return _procArgValue(f, fieldKey);
+}
+
+// The final instant for a date/time argument (or list entry): the picker's base
+// date plus its seconds offset, in the nanosecond-precision ISO form SCC's
+// procedure-scheduler expects.
+function _procDateTimeISO(p, key) {
+  const base      = _procDateTimeBase(p, key);
+  const offsetSec = Number(_procArgValues[key]?.offsetSec ?? 0) || 0;
+  return new Date(base.getTime() + offsetSec * 1000).toISOString().replace('Z', '000000Z');
 }
 
 // Short, human-readable type hint shown next to each argument's label (see
@@ -1792,18 +1807,50 @@ function _procListFieldValue(f, fieldKey) {
 // rather than the raw Java-style class name. Falls back to that raw
 // string's last dotted segment for a type this app hasn't seen before,
 // rather than showing nothing at all.
+// Prefers valueType — SCC's own short vocabulary ("Long", "Enum",
+// "AbsoluteTime", "ArgumentView") — and falls back to the LAST DOTTED SEGMENT of
+// the fully-qualified Java class. Never matches against the full class path:
+// every generated enum lives under
+// ...procedure.generator.internalclasses.enumerated.*, and "internalclasses"
+// contains the substring "int", so a whole-path scan labelled every enum
+// argument "int". Confirmed live on ESSAIS_SCC_ARGUMENTS_TYPES_TEST's test_elist
+// (a List<SAS_AR_ADDR_Enum>), which read "list of int".
+function _scalarTypeLabel(type, valueType) {
+  const raw = String(valueType ?? '').trim() || String(type ?? '').split('.').pop() || '';
+  const low = raw.toLowerCase();
+  if (!low) return '';
+  if (low.includes('bool'))                                    return 'boolean';
+  if (low.includes('instant') || low.includes('absolutetime')) return 'datetime';
+  if (low.includes('enum'))                                    return 'enum';
+  if (low.includes('double')  || low.includes('float'))        return 'double';
+  if (low.includes('long'))                                    return 'long';
+  if (low.includes('short'))                                   return 'short';
+  if (low.includes('byte'))                                    return 'byte';
+  if (low.includes('int'))                                     return 'int';
+  if (low.includes('string'))                                  return 'string';
+  // Unrecognized: show it the way SCC names it ("ArgumentView", "Unknown")
+  // rather than nothing at all — an honest label beats a blank one.
+  return raw;
+}
+
+// "list" on its own told an operator nothing — a list of what? The element type
+// is in the catalog response the whole time: SCC sends subType/subValueType
+// alongside type/valueType on the LIST parameter itself (and elementParameter
+// for a struct row). Confirmed against the live catalog: of 157 list arguments
+// across 119 procedures, the element is Enum (75), ArgumentView (37), Long (18),
+// Byte (11), AbsoluteTime (8) or String (4) — so "list" was collapsing six
+// genuinely different input shapes into one word.
 function _procParamTypeLabel(p) {
-  if (_isProcParamList(p)) return 'list';
-  const raw = String(p?.type ?? p?.valueType ?? '').toLowerCase();
-  if (!raw) return '';
-  if (raw.includes('bool'))                     return 'boolean';
-  if (raw.includes('instant') || raw.includes('absolutetime')) return 'datetime';
-  if (raw.includes('double') || raw.includes('float'))         return 'double';
-  if (raw.includes('long'))                     return 'long';
-  if (raw.includes('int'))                      return 'int';
-  if (raw.includes('string'))                   return 'string';
-  if (raw.includes('enum'))                     return 'enum';
-  return raw.split('.').pop();
+  if (_isProcParamList(p)) {
+    if (_procListIsStruct(p)) return 'list of struct';
+    // _procListElementFields already normalizes the element schema, including
+    // the subType/subValueType fallback for when elementParameter is null —
+    // which, against the live catalog, is every single list.
+    const f    = _procListElementFields(p)[0];
+    const elem = _scalarTypeLabel(f?.type, f?.valueType);
+    return elem ? `list of ${elem}` : 'list';
+  }
+  return _scalarTypeLabel(p?.type, p?.valueType);
 }
 
 // datetime-local inputs have no timezone of their own (the spec treats the
@@ -1905,12 +1952,7 @@ function _procArgValue(p, key) {
     }
     return rows;
   }
-  if (_isProcParamDateTime(p)) {
-    const base      = _procDateTimeBase(p, key);
-    const offsetSec = Number(_procArgValues[key]?.offsetSec ?? 0) || 0;
-    const final      = new Date(base.getTime() + offsetSec * 1000);
-    return final.toISOString().replace('Z', '000000Z');
-  }
+  if (_isProcParamDateTime(p)) return _procDateTimeISO(p, key);
   let raw = _procArgValues[key] ?? _procParamSchemaDefault(p);
   if (_isProcParamBoolean(p)) return typeof raw === 'boolean' ? raw : raw === 'true';
   if (_isProcParamNumeric(p) && typeof raw === 'string' && raw.trim() !== '') {
@@ -2056,7 +2098,13 @@ function _procArgRowHTML(p, key) {
   // title= — the label truncates with an ellipsis past its own fixed
   // column width now (see .sch-proc-arg-label's own comment), so the full
   // name is still one hover away instead of just gone.
-  const labelHTML = `<span class="sch-proc-arg-label" title="${escapeHtml(String(label))}">${escapeHtml(String(label))}`
+  // The type goes in the title= too, not just the visible chip: the label
+  // truncates past its fixed column width, and a long argument name takes the
+  // chip with it (e.g. packetStoresToChangePointerDate, whose "list of enum"
+  // was invisible). The tooltip is then the one place the type is always
+  // readable.
+  const titleText = typeStr ? `${label} — ${typeStr}` : String(label);
+  const labelHTML = `<span class="sch-proc-arg-label" title="${escapeHtml(titleText)}">${escapeHtml(String(label))}`
     + (typeStr ? ` <span class="sch-proc-arg-type">${escapeHtml(typeStr)}</span>` : '')
     + `</span>`;
   const value = _procArgValues[key] ?? _procParamSchemaDefault(p) ?? '';
@@ -2064,6 +2112,35 @@ function _procArgRowHTML(p, key) {
   if (_isProcParamList(p)) return _procListRowHTML(p, key, labelHTML);
 
   if (_isProcParamDateTime(p)) {
+    return `<div class="sch-proc-arg-row">
+      ${labelHTML}
+      <div class="sch-proc-arg-field">${_procDateTimeFieldHTML(p, key)}</div>
+    </div>`;
+  }
+  return `<div class="sch-proc-arg-row">
+    ${labelHTML}
+    <div class="sch-proc-arg-field">${_procScalarFieldHTML(p, key, value)}</div>
+  </div>`;
+}
+
+// The date/time FIELD on its own (no row/label wrapper): the dd/mm/yyyy
+// HH:mm:ss text input plus its 📅 calendar picker, and — unless `compact` —
+// the UTC+offset box and the LOS/AOS/timeline quickfills.
+//
+// Extracted from _procArgRowHTML so a datetime *inside a list row* gets the
+// same widget instead of the bare ISO-string text box it used to get. Every
+// listener involved is delegated by class + data-arg-key (see
+// _renderProcDetailView's .sch-proc-arg-dt / .sch-proc-arg-cal-btn wiring) and
+// the calendar writes back via closest('.sch-proc-arg-datetime'), so a
+// composite list key like "scheduleTimes[2].value" works here unchanged.
+//
+// compact keeps the two PICKERS — 📅 calendar and ⏱ timeline — and drops only
+// the UTC+offset box and the LOS/AOS quickfills, which are per-argument
+// conveniences that would treble the width of every row in a list of 8
+// timestamps. Both pickers work per row unchanged: each writes {dt} into
+// _procArgValues under whatever data-arg-key it carries, so a composite
+// "datesToSetPointersTo[1].value" key needs no special handling.
+function _procDateTimeFieldHTML(p, key, { compact = false } = {}) {
     const base      = _procDateTimeBase(p, key);
     const offsetSec = _procArgValues[key]?.offsetSec ?? 0;
     // Plain text, not <input type="datetime-local"> — that control's
@@ -2078,31 +2155,27 @@ function _procArgRowHTML(p, key) {
     // the native picker — see its own header comment for why) right under
     // this field, toggled via _procCalendarKey.
     const calendarHTML = _procCalendarKey === key ? _calendarPickerHTML(key, base) : '';
-    // Label, date/time inputs, AND the quickfill shortcuts all share one
-    // row now — .sch-proc-arg-datetime itself wraps (flex-wrap) onto a
-    // second line if the panel's too narrow to fit everything, rather than
-    // forcing the quickfill buttons onto their own line unconditionally.
-    return `<div class="sch-proc-arg-row">
-      ${labelHTML}
-      <div class="sch-proc-arg-field">
-        <div class="sch-proc-arg-datetime">
-          <input type="text" placeholder="dd/mm/yyyy HH:mm:ss" class="sch-proc-arg-input sch-proc-arg-dt" data-arg-key="${escapeHtml(key)}" data-fallback="${_dateToDatetimeLocalUTC(base)}" value="${_fmtDTInput(base)}" />
-          <button type="button" class="sch-nav-btn sch-proc-arg-cal-btn${_procCalendarKey === key ? ' sch-proc-pick-btn-active' : ''}" data-arg-key="${escapeHtml(key)}" title="Pick from calendar">📅</button>
+    // Date/time input AND the quickfill shortcuts share one row —
+    // .sch-proc-arg-datetime itself wraps (flex-wrap) onto a second line if the
+    // panel's too narrow to fit everything, rather than forcing the quickfill
+    // buttons onto their own line unconditionally.
+    const extrasHTML = compact ? '' : `
           <span class="sch-proc-arg-offset-lbl">UTC&nbsp;+</span>
           <input type="number" class="sch-proc-arg-input sch-proc-arg-offset" data-arg-key="${escapeHtml(key)}" data-arg-subkey="offsetSec" value="${offsetSec}" />
           <span class="sch-proc-arg-offset-lbl">s</span>
           <button type="button" class="sch-nav-btn sch-proc-quickfill-btn" data-arg-key="${escapeHtml(key)}" data-quickfill="los"${_selectedPass ? '' : ' disabled'}>CURRENT LOS+0</button>
-          <button type="button" class="sch-nav-btn sch-proc-quickfill-btn" data-arg-key="${escapeHtml(key)}" data-quickfill="aos"${_nextPassAfterSelected() ? '' : ' disabled'}>NEXT AOS+0</button>
-          <button type="button" class="sch-nav-btn sch-proc-pick-btn${_procDateTimePickKey === key ? ' sch-proc-pick-btn-active' : ''}" data-arg-key="${escapeHtml(key)}" title="Click a point on the timeline below to set this time">⏱ Pick</button>
+          <button type="button" class="sch-nav-btn sch-proc-quickfill-btn" data-arg-key="${escapeHtml(key)}" data-quickfill="aos"${_nextPassAfterSelected() ? '' : ' disabled'}>NEXT AOS+0</button>`;
+    // Icon-only in a list row — the label wouldn't fit beside the field, and the
+    // title carries the explanation either way. Active state still reads from
+    // _procDateTimePickKey, so only the row actually awaiting a click lights up.
+    const pickLabel = compact ? '⏱' : '⏱ Pick';
+    return `<div class="sch-proc-arg-datetime${compact ? ' sch-proc-arg-datetime-compact' : ''}">
+          <input type="text" placeholder="dd/mm/yyyy HH:mm:ss" class="sch-proc-arg-input sch-proc-arg-dt" data-arg-key="${escapeHtml(key)}" data-fallback="${_dateToDatetimeLocalUTC(base)}" value="${_fmtDTInput(base)}" />
+          <button type="button" class="sch-nav-btn sch-proc-arg-cal-btn${_procCalendarKey === key ? ' sch-proc-pick-btn-active' : ''}" data-arg-key="${escapeHtml(key)}" title="Pick from calendar">📅</button>
+          <button type="button" class="sch-nav-btn sch-proc-pick-btn${_procDateTimePickKey === key ? ' sch-proc-pick-btn-active' : ''}" data-arg-key="${escapeHtml(key)}" title="Click a point on the timeline below to set this time">${pickLabel}</button>
+          ${extrasHTML}
           ${calendarHTML}
-        </div>
-      </div>
-    </div>`;
-  }
-  return `<div class="sch-proc-arg-row">
-    ${labelHTML}
-    <div class="sch-proc-arg-field">${_procScalarFieldHTML(p, key, value)}</div>
-  </div>`;
+        </div>`;
 }
 
 // The FIELD half only (no row/label wrapper) for a boolean/enum/plain-text
@@ -2174,12 +2247,16 @@ function _procListFieldInputHTML(f, fieldKey) {
       <option value="false"${!boolValue ? ' selected' : ''}>false</option>
     </select>`;
   }
+  // Same dd/mm/yyyy picker the top-level scheduleTime field gets, rather than
+  // the raw ISO-string text box this used to be. A list of AbsoluteTime (8 in
+  // the live catalog, e.g. ELEM_SAT_BACKUP_TTAG_NOMINAL_MODE's scheduleTimes)
+  // is exactly where hand-typing nanosecond ISO strings is most error-prone.
+  if (_isProcParamDateTime(f)) return _procDateTimeFieldHTML(f, fieldKey, { compact: true });
   if (Array.isArray(f.enumValues) && f.enumValues.length) {
     _procComboEnums.set(fieldKey, f.enumValues);
     return _procEnumComboHTML(fieldKey, value, 'sch-proc-list-input');
   }
-  const placeholder = _isProcParamDateTime(f) ? ' placeholder="e.g. 2026-07-30T12:00:00.000000000Z"' : '';
-  return `<input type="text" class="sch-proc-arg-input sch-proc-list-input" data-arg-key="${escapeHtml(fieldKey)}" value="${escapeHtml(String(value))}"${placeholder} />`;
+  return `<input type="text" class="sch-proc-arg-input sch-proc-list-input" data-arg-key="${escapeHtml(fieldKey)}" value="${escapeHtml(String(value))}" />`;
 }
 
 // A List-typed argument's own row — one block per current row (see
@@ -3039,8 +3116,33 @@ let _pendingOffsetCorrectionSatId = null;
 // background requests (TMR gap scan) that shouldn't fire until the user
 // actually picks a satellite" — and this auto-pick was the only startup path
 // that set it. Safe to gate: Scheduler writes trackedSatId but never reads it.
+// The ↗ beside the "Scheduled procedures" panel title — opens this satellite's
+// own SCC page in a new tab, so an operator reviewing what's queued here can get
+// to SCC's own view of it without hunting for the IP.
+//
+// Same destination and same read-only fallback the Fleet row's satellite name
+// already uses (ChadOps.js's _synopticUrl): SCC's synoptic, or SCC RO's when
+// store.readOnlyVpn says this client can't reach the write-capable subnet at
+// all. Hidden rather than left dead when no satellite is selected or neither
+// subsystem IP is configured — a link that goes nowhere is worse than no link.
+function _updateSccLink() {
+  const a = document.getElementById('sch-scc-link');
+  if (!a) return;
+  const sat    = _sat();
+  const origin = sat ? satSubsystemOrigin(sat.noradId, store.readOnlyVpn ? 'sccRo' : 'scc') : '';
+  if (!sat || !origin) {
+    a.hidden = true;
+    a.removeAttribute('href');
+    return;
+  }
+  a.href   = `${origin}/synoptic`;
+  a.title  = `Open ${sat.name}'s SCC page ↗`;
+  a.hidden = false;
+}
+
 function _selectSatellite(satId, userInitiated = false) {
   _satId = satId;
+  _updateSccLink();
   _selectedPass = null;
   _updateHash();
   const sat = _sat();

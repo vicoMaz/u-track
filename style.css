@@ -6073,3 +6073,30 @@ a.co-link:hover {
   overflow: hidden;
 }
 .track-subtab-content.active { display: block; }
+
+/* Compact date/time widget used inside a list row (_procDateTimeFieldHTML's
+   `compact` variant). The full-width version carries a UTC+offset box and three
+   quickfill buttons; a list of 8 timestamps has no room for that per row, so
+   compact keeps just the text field and its 📅 picker. nowrap because a list row
+   is already inside a flex column with its own label — letting this wrap too
+   made two-line rows for no gain. */
+.sch-proc-arg-datetime-compact { flex-wrap: nowrap; gap: 4px; }
+.sch-proc-arg-datetime-compact .sch-proc-arg-dt { flex: 1 1 120px; min-width: 0; }
+/* Both pickers shrink to icon buttons here — flex:0 0 auto so the text field,
+   not the buttons, absorbs whatever width the row has. */
+.sch-proc-arg-datetime-compact .sch-proc-arg-cal-btn,
+.sch-proc-arg-datetime-compact .sch-proc-pick-btn { flex: 0 0 auto; padding: 2px 5px; }
+
+/* ↗ beside the "Scheduled procedures" panel title — opens the selected
+   satellite's SCC synoptic (Scheduler.js's _updateSccLink). Same glyph and
+   same "this leaves the app" meaning as .co-link / .co-sat-name-ext in the
+   Fleet table, kept dim until hover so the title still reads as a title. */
+.sch-scc-link {
+  margin-left: 6px;
+  color: #667;
+  text-decoration: none;
+  font-weight: 400;
+  transition: color 0.12s;
+}
+.sch-scc-link:hover,
+.sch-scc-link:focus-visible { color: #4aa3ff; }
