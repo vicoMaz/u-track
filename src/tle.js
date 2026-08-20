@@ -161,14 +161,3 @@ export function placeholderTLE(seed) {
 
   return { line1: l1 + _tleChecksum(l1), line2: l2 + _tleChecksum(l2) };
 }
-
-/** ECI position → Cesium Cartesian3 (meters) */
-export function eciToCartesian3(eciPos, gmst) {
-  const ecef = satellite.eciToEcf(eciPos, gmst);
-  // eslint-disable-next-line no-undef
-  return Cesium.Cartesian3.fromElements(
-    ecef.x * 1000,
-    ecef.y * 1000,
-    ecef.z * 1000
-  );
-}

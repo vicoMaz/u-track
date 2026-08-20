@@ -14,14 +14,25 @@ npm install
 ## Start
 
 ```bash
-npm run dev
+npm start
 ```
 
-This starts a single server:
+This builds the app and serves the build, from a single server:
 
 | URL | Purpose |
 |-----|---------|
-| http://localhost:5173 | Globe, planisphere, controls, and REST API |
+| http://localhost:4173 | Globe, planisphere, controls, and REST API |
+
+`npm start` is what operators should use. It serves ~176 KB gzipped over 2 requests;
+`npm run dev` serves the same app as 87 unbundled modules totalling ~6 MB uncompressed
+(inline sourcemaps, no compression) — fine for development, needlessly slow to load
+otherwise. Both mount the same REST API.
+
+For development with hot reload:
+
+```bash
+npm run dev     # http://localhost:5173
+```
 
 ## Stop
 
@@ -31,19 +42,19 @@ Press **Ctrl+C** in the terminal.
 
 ```bash
 # Ctrl+C to stop, then:
-npm run dev
+npm start
 ```
 
 ---
 
 ## API Docs
 
-Open http://localhost:5173/api-docs.html (or click **API Docs ↗** in the top bar).
+Open http://localhost:4173/api-docs.html (or click **API Docs ↗** in the top bar).
 
 ### Add a satellite
 
 ```bash
-curl -X POST http://localhost:5173/api/satellites \
+curl -X POST http://localhost:4173/api/satellites \
   -H "Content-Type: application/json" \
   -d '{
     "name": "ISS",

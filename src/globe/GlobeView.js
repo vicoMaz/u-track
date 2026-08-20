@@ -34,6 +34,19 @@ export function initGlobe() {
 
   try {
     viewer = new Cesium.Viewer('globe-view', {
+      // Draw on demand instead of every animation frame. Cesium's default loop
+      // re-renders continuously whether or not anything moved; this globe only
+      // changes when updatePositions() runs (store 'currentTime'/'realAttitude'/
+      // 'playbackSpeed', or a camera interaction, which Cesium marks dirty
+      // itself). Paired with TimePlayer's MIN_APPLY_MS throttle that turns
+      // ~60 renders/second into ~5.
+      //
+      // maximumRenderTimeChange: Infinity — without it Cesium force-renders
+      // whenever its OWN clock has advanced past the threshold, which would
+      // defeat the whole thing here, since updatePositions drives
+      // viewer.clock.currentTime directly (see the frozen-clock comment below).
+      requestRenderMode: true,
+      maximumRenderTimeChange: Infinity,
       animation: false,
       baseLayerPicker: false,
       fullscreenButton: false,
@@ -85,6 +98,16 @@ export function initGlobe() {
     if (key === 'satellites' || key === 'satAccessible') syncEntities();
     if (key === 'trackedSatId')   applyTracking();
     if (key === 'groundStations') syncGSEntities();
+    // requestRenderMode means nothing reaches the screen until something asks
+    // for a frame. Asking here — once, after whichever handler above ran —
+    // covers every store-driven mutation in one place rather than relying on
+    // each of them to remember (adding/removing satellites, retracking,
+    // ground-station and footprint changes). The viewer is private to this
+    // module (getViewer has no callers), so there is no other mutation route.
+    // Camera interaction is Cesium's own business and already marks the scene
+    // dirty. requestRender is idempotent within a frame, so the extra call on
+    // the updatePositions path costs nothing.
+    viewer?.scene.requestRender();
   });
 }
 
@@ -172,6 +195,11 @@ function updatePositions() {
   const t = store.currentTime;
   viewer.clock.currentTime = Cesium.JulianDate.fromDate(t);
   for (const ent of entities.values()) ent.update(t);
+  // Required by requestRenderMode (see the Viewer options above): entity
+  // mutations done this way don't reliably mark the scene dirty on their own,
+  // and without this the globe would simply stop updating. One explicit request
+  // per batch of updates is exactly the point — it's what replaces 60fps.
+  viewer.scene.requestRender();
 }
 
 export function getViewer() { return viewer; }

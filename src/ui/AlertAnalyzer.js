@@ -32,6 +32,12 @@ import { positionTooltip } from './passTooltip.js';
 import { escapeHtml } from './logView.js';
 import { SEV, SEV_COLOR } from './severity.js';
 
+// True only while the Alerts tab is visible. _selectSatellite issues a 7-day /
+// maxLimit=500 events query per satellite, which used to run once on every page
+// load for a tab most sessions never open. Same gate ChadOps.js/Scheduler.js use.
+let _eclipseCancel  = null; // cancel handle for an in-flight computeEclipseWindows walk
+let _active         = false;
+let _pendingSelect  = false; // a boot-time auto-pick deferred until first open
 let _satId          = null;
 let _alerts          = null; // null = not yet loaded/unreachable, undefined = loading, Array = loaded
 // Same checked-= shown checklist shape as severity below.
@@ -158,6 +164,8 @@ function _renderSelector() {
   const stillThere = prev && store.satellites.some(s => s.id === prev);
   const nextId = stillThere ? prev : store.satellites[0].id;
   select.value = nextId;
+  // Dropdown is current either way; the fetch waits until someone opens the tab.
+  if (!_active) { _pendingSelect = true; return; }
   if (nextId !== prev) _selectSatellite(nextId);
 }
 
@@ -169,6 +177,10 @@ async function _selectSatellite(satId) {
   // lazily below only if a band mode is actually active right now, same
   // "don't pay for a mode that isn't open" reasoning _ensureBandData itself
   // documents.
+  // Stop the previous satellite's eclipse walk — it can still be mid-chain here,
+  // and its result is about to be irrelevant.
+  _eclipseCancel?.();
+  _eclipseCancel  = null;
   _eclipseWindows = null;
   _passBands       = null;
   _planBands        = null;
@@ -195,7 +207,11 @@ function _ensureBandData(mode) {
   if (mode === 'eclipse') {
     if (_eclipseWindows !== null) return;
     _eclipseWindows = undefined;
-    computeEclipseWindows(sat, t0, t1, windows => {
+    // Cancel any still-running walk before starting another: the guard inside
+    // the callback discards a stale RESULT, but only this stops the work.
+    _eclipseCancel?.();
+    _eclipseCancel = computeEclipseWindows(sat, t0, t1, windows => {
+      _eclipseCancel = null;
       if (myGen !== _bandGen || _satId !== sat.id) return; // superseded by a newer satellite/toggle
       _eclipseWindows = windows;
       _updateBandButtons();
@@ -1084,7 +1100,19 @@ export function initAlertAnalyzer() {
   // here rather than a start/stop ticker (nothing here needs to keep
   // running while hidden in the first place).
   document.querySelectorAll('[data-tab]').forEach(btn => {
-    btn.addEventListener('click', () => { if (btn.dataset.tab === 'alerts') _renderHistogram(); });
+    btn.addEventListener('click', () => {
+      if (btn.dataset.tab !== 'alerts') { _active = false; return; }
+      _active = true;
+      // First open pays off whatever _renderSelector deferred; the select's
+      // value is already right, it just hasn't been fetched for yet.
+      if (_pendingSelect) {
+        _pendingSelect = false;
+        const select = document.getElementById('aa-sat-select');
+        _selectSatellite(select?.value || null); // _render/_renderHistogram run inside
+      } else {
+        _renderHistogram();
+      }
+    });
   });
 
   store.subscribe(key => { if (key === 'satellites') _renderSelector(); });

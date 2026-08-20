@@ -1,4 +1,5 @@
-import { propagate, eciToCartesian3 } from '../tle.js';
+import { propagate } from '../tle.js';
+import * as satellite from 'satellite.js';
 import { sunDirectionECI, isInEclipse } from '../sunVector.js';
 import { store } from '../store.js';
 import { satSunExclDeg, satEarthExclDeg, satStarTrackerConesVisible, MODEL_STAR_TRACKERS, ST_FOV_HALF_ANGLE_DEG } from '../satStarTracker.js';
@@ -24,6 +25,18 @@ const R_EARTH_KM = 6371;
 // EARTH_LIMB_KM, kept in sync so the 3D globe's cone coloring and the STT
 // POV widget always agree on blinded/clear for the same satellite.
 const EARTH_LIMB_KM = 100;
+/** ECI position → Cesium Cartesian3 (meters).
+ *  Lives here rather than in tle.js because it is the one function in that
+ *  module that touched the global `Cesium`, and tle.js is imported by
+ *  apiPoller/MapView/store — i.e. by code that must keep working when Cesium
+ *  isn't loaded at all (it is fetched on demand now, see main.js's ensureGlobe).
+ *  SatEntity.js is globe-only and already evaluates Cesium.* at module scope, so
+ *  this is where the dependency belongs. Only ever called from this file. */
+function eciToCartesian3(eciPos, gmst) {
+  const ecef = satellite.eciToEcf(eciPos, gmst);
+  return Cesium.Cartesian3.fromElements(ecef.x * 1000, ecef.y * 1000, ecef.z * 1000);
+}
+
 const ST_COLOR_OK  = Cesium.Color.DODGERBLUE;
 const ST_COLOR_BAD = Cesium.Color.RED;
 

@@ -157,8 +157,26 @@ function _gapCandidates(rangeStart, rangeEnd, passIntervals) {
 async function _walkCandidate(sccOrigin, start, end, filter, param, signal) {
   const gaps = []; // discovered newest-first, reversed to chronological order before returning
   let cursor = end; // upper bound; walks backward toward `start`
+  // Hard iteration cap. The loop below is bounded only by `cursor` decreasing,
+  // and that depends on API data rather than on arithmetic (see the
+  // Math.min guard at the bottom) — so an explicit ceiling is what guarantees
+  // termination. A dense 24h candidate at the ~3.5k rows/h seen live needs
+  // ~84 pages, so 120 leaves real headroom while still bounding the damage:
+  // each page is a MAX_ROWS request occupying one of the browser's 6
+  // connections to this origin. Unlike satGnss's equivalent walk, whose window
+  // provably shrinks by at least MIN_WINDOW_MS per iteration, nothing here is
+  // structurally monotonic.
+  const MAX_PAGES = 120;
+  let pages = 0;
   try {
     while (cursor > start) {
+      if (++pages > MAX_PAGES) {
+        // Out of budget with data still unwalked. Report only what was
+        // confirmed and treat the remainder as covered — the same
+        // "don't paint a gap we're not sure about" bias as the catch below.
+        console.warn(`[tmr] ${filter}: page cap (${MAX_PAGES}) hit, ${new Date(start).toISOString()}..${new Date(cursor).toISOString()} left unwalked`);
+        return gaps.reverse();
+      }
       const rows = await _queryPage(sccOrigin, start, cursor, MAX_ROWS, filter, param, signal);
       if (!rows.length) {
         if (cursor - start >= GAP_THRESHOLD_MS) gaps.push({ start, end: cursor });
@@ -189,7 +207,19 @@ async function _walkCandidate(sccOrigin, start, end, filter, param, signal) {
       // seen yet. Re-query [start, earliestT) next iteration. If the true
       // count is exactly MAX_ROWS, the next page simply comes back empty —
       // one cheap extra request, not a bug.
-      cursor = earliestT - 1;
+      //
+      // Math.min, not a bare assignment: `earliestT` comes from _rowTime, a
+      // fallback chain (onBoardTime ?? generationTime ?? receptionTime ?? time),
+      // while _queryPage orders and filters on onBoardTime specifically. A page
+      // whose rows lack onBoardTime — or an on-board clock reset making it
+      // inconsistent with generationTime, which for store-and-forward TM can
+      // differ by hours — yields an `earliestT` ABOVE `cursor`. The bare
+      // assignment then moved the cursor backward-in-name-only: the next query
+      // covered the same or a wider range, returned the same superset, and the
+      // loop went stationary — an unbounded stream of MAX_ROWS requests at full
+      // speed. Forcing a strict decrease makes progress arithmetic, not
+      // data-dependent.
+      cursor = Math.min(cursor - 1, earliestT - 1);
     }
   } catch (e) {
     if (signal.aborted) throw e; // let abort unwind the whole scan

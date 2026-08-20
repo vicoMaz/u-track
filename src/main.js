@@ -1,15 +1,8 @@
 import { initTimePlayer } from './ui/TimePlayer.js';
 import { initInputPanel } from './ui/InputPanel.js';
 import { initSttPovWidget } from './ui/sttPovWidget.js';
-import { initGlobe, setGlobeVisible } from './globe/GlobeView.js';
-import { initMap, invalidateMapSize, setMapVisible } from './planisphere/MapView.js';
 import { loadInitialState, startApiPoller } from './apiPoller.js';
 import { initSatInfo } from './ui/SatInfo.js';
-import { initChadOps, focusSatRow } from './ui/ChadOps.js';
-import { initWeeklySchedule }   from './ui/WeeklySchedule.js';
-import { initPassAnalyzer, setSelection as setAnalyzerSelection } from './ui/PassAnalyzer.js';
-import { initAlertAnalyzer }    from './ui/AlertAnalyzer.js';
-import { initScheduler, setSchedulerSelection, restoreSchedulerSelection } from './ui/Scheduler.js';
 import { initNavClocks }        from './ui/NavClocks.js';
 import { initSatPing }          from './satPing.js';
 import { initVpnGuard }         from './ui/vpnGuard.js';
@@ -21,6 +14,130 @@ import { store }                from './store.js';
 
 // eslint-disable-next-line no-undef -- injected by vite.config.js's `define`
 document.getElementById('app-version').textContent = __APP_VERSION__;
+
+// ── Lazy tab modules ────────────────────────────────────────────────
+// Each of these is the root of exactly one view and is imported nowhere else
+// (verified), so it can be a separate chunk that only downloads when its tab is
+// first opened. Together they were 314KB of the single 493KB bundle — the 2D
+// planisphere alone is 159KB of it, almost all Leaflet, for a subtab that isn't
+// even the default. TimePlayer, InputPanel, SatInfo, NavClocks, TopSummary,
+// sttPovWidget and the globe stay static: they are the persistent shell (top
+// bar, side panel, bottom player) or the default view, so they are needed for
+// first paint regardless.
+//
+// `init` runs once, on first activation. `replayClick` matters: several of these
+// modules register their OWN [data-tab] listeners inside init to gate their work
+// on tab visibility (ChadOps.start/stop, Scheduler/AlertAnalyzer's _active), and
+// those listeners cannot have seen the click that triggered this very load — so
+// the click is re-dispatched afterwards for them to catch. Re-entering switchTab
+// from that synthetic click is harmless: it is idempotent, and the guard below
+// means the module is never loaded twice.
+const LAZY_VIEWS = {
+  fleet:     { path: () => import('./ui/ChadOps.js'),        init: 'initChadOps' },
+  schedule:  { path: () => import('./ui/WeeklySchedule.js'), init: 'initWeeklySchedule' },
+  analyzer:  { path: () => import('./ui/PassAnalyzer.js'),   init: 'initPassAnalyzer' },
+  alerts:    { path: () => import('./ui/AlertAnalyzer.js'),  init: 'initAlertAnalyzer' },
+  scheduler: { path: () => import('./ui/Scheduler.js'),      init: 'initScheduler' },
+};
+const _viewMods    = {}; // tab -> resolved module, once loaded
+const _viewLoading = {}; // tab -> in-flight promise, so a double click loads once
+
+function ensureView(tab) {
+  const spec = LAZY_VIEWS[tab];
+  if (!spec) return Promise.resolve(null);
+  if (_viewMods[tab]) return Promise.resolve(_viewMods[tab]);
+  if (!_viewLoading[tab]) {
+    _viewLoading[tab] = spec.path().then(mod => {
+      _viewMods[tab] = mod;
+      mod[spec.init]();
+      document.querySelector(`[data-tab="${tab}"]`)
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      return mod;
+    }).catch(err => {
+      // A failed chunk load must not poison the tab forever — clear the
+      // in-flight marker so the next click retries rather than hanging.
+      delete _viewLoading[tab];
+      console.error(`[main] failed to load the "${tab}" view:`, err);
+      return null;
+    });
+  }
+  return _viewLoading[tab];
+}
+
+// The 2D planisphere is its own chunk for the same reason, but hangs off the
+// Visualizer's 3D/2D subtab rather than a [data-tab] button. Loading it on
+// demand also fixes a second problem: initMap() used to run at boot against a
+// display:none container, where Leaflet measures 0x0 and _fitWorld computes
+// Math.log2(0/256) = -Infinity for its zoom — a whole map construction that
+// rendered nothing.
+let _mapMod = null, _mapLoading = null;
+function ensureMap() {
+  if (_mapMod) return Promise.resolve(_mapMod);
+  if (!_mapLoading) {
+    _mapLoading = import('./planisphere/MapView.js').then(mod => {
+      mod.initMap();
+      _mapMod = mod;
+      return mod;
+    }).catch(err => {
+      _mapLoading = null;
+      console.error('[main] failed to load the planisphere:', err);
+      return null;
+    });
+  }
+  return _mapLoading;
+}
+
+// The 3D globe, and Cesium itself. index.html no longer carries the Cesium
+// <script>: it is ~4.97MB of parsed JS that only this view needs, and in <head>
+// it sat in front of the app shell on every load — including for the six views
+// that never draw a globe. Injecting it here means the shell (top bar, clocks,
+// side panel, rail) paints first and the globe fills in behind it.
+//
+// Two things have to happen in order, which is why this is not just a dynamic
+// import: globe/SatEntity.js evaluates Cesium.* at MODULE SCOPE, so the global
+// has to exist before that module is even imported — hence await the script tag
+// first, then import the subtree. Getting this backwards throws a ReferenceError
+// during import and leaves the globe permanently blank.
+let _globeMod = null, _globeLoading = null;
+
+function _loadCesiumScript() {
+  if (window.Cesium) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const css = document.createElement('link');
+    css.rel  = 'stylesheet';
+    css.href = '/cesium/Widgets/widgets.css';
+    document.head.appendChild(css);
+    const js = document.createElement('script');
+    js.src     = '/cesium/Cesium.js';
+    js.async   = false; // preserve execution order if this ever gains siblings
+    js.onload  = () => resolve();
+    js.onerror = () => reject(new Error('/cesium/Cesium.js failed to load'));
+    document.head.appendChild(js);
+  });
+}
+
+function ensureGlobe() {
+  if (_globeMod) return Promise.resolve(_globeMod);
+  if (!_globeLoading) {
+    _globeLoading = _loadCesiumScript()
+      .then(() => import('./globe/GlobeView.js'))
+      .then(mod => {
+        mod.initGlobe();
+        _globeMod = mod;
+        // initGlobe reads store.currentTime/satellites itself, but the visibility
+        // flag is main.js's state, so hand it over now that there is something
+        // to tell.
+        mod.setGlobeVisible(document.body.classList.contains('tracking-active') && activeSubtab === 'globe');
+        return mod;
+      })
+      .catch(err => {
+        _globeLoading = null;
+        console.error('[main] failed to load the globe:', err);
+        return null;
+      });
+  }
+  return _globeLoading;
+}
 
 // Tab switching
 const tabBtns   = document.querySelectorAll('[data-tab]');
@@ -36,8 +153,13 @@ document.body.classList.add('tracking-active');
 // away from and back to the Visualizer tab restores the right one.
 let activeSubtab = 'globe'; // matches index.html's default active subtab
 function _applyTrackingVisibility(isTracking) {
-  setGlobeVisible(isTracking && activeSubtab === 'globe');
-  setMapVisible(isTracking && activeSubtab === 'map');
+  // Both views are loaded on demand, so "not loaded" is itself the correct
+  // gated state — there is no per-frame work to switch off yet.
+  if (isTracking && activeSubtab === 'globe') ensureGlobe();
+  _globeMod?.setGlobeVisible(isTracking && activeSubtab === 'globe');
+  // Optional-call: until someone opens the 2D subtab there is no map to gate,
+  // and "not loaded" already means "doing no per-frame work".
+  _mapMod?.setMapVisible(isTracking && activeSubtab === 'map');
 }
 
 // Extracted out of the tab-button click handler so it can also be triggered
@@ -45,6 +167,7 @@ function _applyTrackingVisibility(isTracking) {
 // the startup hash-restore all need to land on a specific pass/satellite,
 // not just flip the tab to its empty state the way a plain button click does.
 function switchTab(target) {
+  ensureView(target); // no-op for eager views; loads + inits a lazy one on first visit
   const hideSide    = target === 'fleet' || target === 'schedule' || target === 'settings' || target === 'analyzer' || target === 'scheduler' || target === 'alerts';
   const isTracking  = target === 'tracking';
   closeAddPointPanel(); // slide-in shouldn't persist across a tab change — it's tied to the sat panel, which just hid
@@ -67,14 +190,16 @@ tabBtns.forEach(btn => {
 // the intent).
 document.addEventListener('pda:open-pass', e => {
   switchTab('analyzer');
-  setAnalyzerSelection(e.detail.sat, e.detail.pass);
+  // The Analyzer may be loading for the first time, so the selection has to wait
+  // for its module rather than being applied against nothing.
+  ensureView('analyzer').then(m => m?.setSelection(e.detail.sat, e.detail.pass));
 });
 
 // Dispatched by passTooltip.js's own "Schedule procedures" button (future
 // passes only) — same announce-the-intent shape as pda:open-pass above.
 document.addEventListener('sch:open-pass', e => {
   switchTab('scheduler');
-  setSchedulerSelection(e.detail.sat, e.detail.pass);
+  ensureView('scheduler').then(m => m?.setSchedulerSelection(e.detail.sat, e.detail.pass));
 });
 
 // Dispatched by passTooltip.js's own "View in Fleet" button — same
@@ -88,7 +213,9 @@ document.addEventListener('sch:open-pass', e => {
 document.addEventListener('fleet:focus-sat', e => {
   const fleetBtn = [...tabBtns].find(b => b.dataset.tab === 'fleet');
   fleetBtn?.click();
-  focusSatRow(e.detail.satId);
+  // Fleet's rows only exist once its module has loaded AND rendered, so the
+  // scroll-to has to follow the module rather than race it.
+  ensureView('fleet').then(m => m?.focusSatRow(e.detail.satId));
 });
 
 // Tracking internal subtabs (3D / 2D)
@@ -100,23 +227,25 @@ trackSubtabBtns.forEach(btn => {
     trackSubtabBtns.forEach(b => b.classList.toggle('active', b.dataset.tracksubtab === sub));
     trackContents.forEach(c  => c.classList.toggle('active', c.id === `${sub}-view`));
     activeSubtab = sub;
-    if (sub === 'map') invalidateMapSize();
+    if (sub === 'map') {
+      // Built on first open. invalidateMapSize still runs on every later switch:
+      // the container was display:none until now, so Leaflet has to re-measure.
+      ensureMap().then(m => {
+        m?.invalidateMapSize();
+        _applyTrackingVisibility(document.body.classList.contains('tracking-active'));
+      });
+    }
     _applyTrackingVisibility(document.body.classList.contains('tracking-active'));
   });
 });
 
-// Init all modules
+// Init the persistent shell only. The seven view modules in LAZY_VIEWS/ensureMap
+// above initialise themselves on first activation instead — see their comment
+// for why, and for what stays eager.
 initTimePlayer();
 initInputPanel();
 initSttPovWidget();
-initGlobe();
-initMap();
 initSatInfo();
-initChadOps();
-initWeeklySchedule();
-initPassAnalyzer();
-initAlertAnalyzer();
-initScheduler();
 initNavClocks();
 initTopSummary();
 initProfileMenu();
@@ -157,8 +286,8 @@ function _restorePassSelection(tab, satNameSlug, passStartMs) {
     if (sat && pass) {
       done = true;
       switchTab(tab);
-      if (tab === 'analyzer') setAnalyzerSelection(sat, pass);
-      else restoreSchedulerSelection(sat, pass);
+      if (tab === 'analyzer') ensureView('analyzer').then(m => m?.setSelection(sat, pass));
+      else                     ensureView('scheduler').then(m => m?.restoreSchedulerSelection(sat, pass));
       return true;
     }
     if (Date.now() > deadline) { done = true; return true; }
@@ -195,6 +324,11 @@ if (_schedulerHash) {
 } else {
   const _initBtn = [...tabBtns].find(b => b.dataset.tab === _initHash);
   if (_initBtn) _initBtn.click();
+  // No hash (or one that names no tab) means the markup's own default stays:
+  // the Visualizer, 3D subtab. Nothing clicked, so nothing has asked for the
+  // globe yet — and since both views load on demand now, "nobody asked" would
+  // otherwise mean an empty Visualizer on a plain load of "/".
+  else _applyTrackingVisibility(document.body.classList.contains('tracking-active'));
 }
 
 loadInitialState().then(() => { startApiPoller(); initSatPing(); initVpnGuard(); initPassNotify(); });

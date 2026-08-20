@@ -242,6 +242,68 @@ export function computePolarMarkers(pts, rxMask) {
   return { aos, los, apogee, maskEntry, maskExit };
 }
 
+// Elevation floor for the Fleet row's mask window (degrees). Operationally
+// nothing is worked below this even where the antenna's own rx_mask allows
+// it, so it's the LOWER BOUND on the mask, not a replacement for it:
+// max(rx_mask[az], 5) — a station whose mask already sits above 5° at that
+// azimuth keeps its own (higher) value there.
+export const MASK_FLOOR_DEG = 5;
+
+/**
+ * Mask entry/exit for one pass, floored at `floorDeg`. Deliberately SEPARATE
+ * from computePolarMarkers above rather than a flag on it: this floor applies
+ * only to the Fleet row's progress-bar ticks (ChadOps.js), and folding it into
+ * computePolarMarkers would silently move the polar plot's, the Cartesian
+ * plot's, the hover tooltip's and the Eb/N0 chart's own ▲/▼ markers too.
+ *
+ * The floor also makes a missing rx_mask a non-special case: with no mask the
+ * threshold is a flat 5° everywhere, so a station GNM has no mask for still
+ * gets a usable window rather than nothing at all.
+ *
+ * Returns {entry, exit} (each {t, az, el}) or null when this pass never
+ * clears the threshold at all — a grazing pass whose whole track stays under
+ * 5° has no usable window, and that's a real answer, not a failure.
+ */
+export function computeMaskWindow(pass, sat, lat, lon, rxMask, floorDeg = MASK_FLOOR_DEG) {
+  if (!sat?.satrec || lat == null || lon == null) return null;
+  const pts = computePolarPoints(pass, sat, lat, lon);
+  if (!pts.length) return null;
+
+  const maskVals = Array.isArray(rxMask) && rxMask.length >= 360 ? rxMask : null;
+  const minElAt  = az => Math.max(floorDeg, maskVals?.[(((Math.round(az) % 360) + 360) % 360)] ?? 0);
+  const inside   = p => p != null && p.el >= minElAt(p.az);
+
+  let iEntry = -1, iExit = -1;
+  pts.forEach((p, i) => { if (inside(p)) { if (iEntry < 0) iEntry = i; iExit = i; } });
+  if (iEntry < 0) return null;
+
+  // computePolarPoints samples every 30s, which on a ~10min pass quantises a
+  // crossing to ~5% of the progress bar's width — visibly off for a tick
+  // whose whole purpose is marking WHERE in the pass the window opens.
+  // Bisecting the one 30s gap the crossing falls in costs 8 extra
+  // propagations per edge (once per pass, then cached by the caller) and
+  // brings that under a second. `tIn` always holds an inside time, so this
+  // works for the exit edge too, where tOut is the LATER of the two.
+  const refine = (tOut, tIn) => {
+    for (let k = 0; k < 8; k++) {
+      const mid = (tOut + tIn) / 2;
+      if (inside(_azel(sat.satrec, lat, lon, new Date(mid)))) tIn = mid;
+      else                                                    tOut = mid;
+    }
+    return tIn;
+  };
+
+  // No earlier/later sample to bisect against means the satellite was already
+  // inside the mask at the pass's own first/last sampled point — the crossing
+  // is that endpoint, nothing to refine.
+  const tEntry = iEntry > 0                ? refine(pts[iEntry - 1].t, pts[iEntry].t) : pts[iEntry].t;
+  const tExit  = iExit  < pts.length - 1   ? refine(pts[iExit  + 1].t, pts[iExit ].t) : pts[iExit ].t;
+
+  const at = t => { const ae = _azel(sat.satrec, lat, lon, new Date(t)); return ae ? { t, az: ae.az, el: ae.el } : null; };
+  const entry = at(tEntry), exit = at(tExit);
+  return entry && exit ? { entry, exit } : null;
+}
+
 /**
  * Build the polar plot SVG given explicit lat/lon and optional rx_mask array.
  * rxMask: 360-element array where rxMask[az] = min elevation (deg) at that azimuth.

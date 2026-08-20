@@ -324,10 +324,28 @@ export async function hydrateScheduledProcedures(el, pass, sat) {
 // pass.
 const _statusDotGen = new WeakMap();
 
+// Dwell before the two fetches below. They are the most expensive thing any
+// hover in this app triggers — fetchTcPackets alone measured 10MB/~2.6s for one
+// busy pass — and they hang off plain mouseenter on pass dots that sit
+// shoulder-to-shoulder: a Fleet row carries one per pass across the whole ±5-day
+// window, so sweeping a mouse across a row used to fire a request per dot
+// crossed, dozens deep, none of which anyone asked to see.
+//
+// 300ms is above a sweep and below a look. A deliberate hover is unaffected: the
+// tooltip's static content (satellite, station, timing, procedures) still paints
+// instantly on mouseenter — this only delays the two async status dots.
+const STATUS_DOT_DWELL_MS = 300;
+
 export async function hydratePassStatusDots(el, pass, sat) {
   if (pass.future || !sat) return;
   const myGen = (_statusDotGen.get(el) ?? 0) + 1;
   _statusDotGen.set(el, myGen);
+  // The generation counter already tracks "is this still the current hover", so
+  // re-checking it after the dwell is what makes a sweep free: every dot the
+  // mouse passed through has been superseded by the next one and bails here,
+  // before spending a request.
+  await new Promise(r => setTimeout(r, STATUS_DOT_DWELL_MS));
+  if (_statusDotGen.get(el) !== myGen || el.style.display === 'none') return;
   const startMs = pass.start.getTime(), endMs = pass.end.getTime();
   const [tmCounter, tcPackets] = await Promise.all([
     sat.noradId ? fetchTmPacketsCounterSeries(sat.noradId, startMs, endMs) : Promise.resolve(null),

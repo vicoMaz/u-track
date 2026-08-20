@@ -13,6 +13,7 @@ import {
   hydratePassStatusDots,
   fmtDateTimeShort,
 } from './passTooltip.js';
+import { fetchPassGsCoords, computeMaskWindow } from './passPolar.js';
 import { MITIGATION_WINDOW_DAYS } from '../satGnssMitigation.js';
 import { wireSatActionsIcon } from './satActionsMenu.js';
 import { getAlertWindowDays, setAlertWindowDays } from '../alertWindow.js';
@@ -266,6 +267,113 @@ function _passProgress(pass, now) {
   return span > 0 ? Math.min(1, Math.max(0, (now - pass.start) / span)) : 1;
 }
 
+// ── Mask window (progress-bar ticks) ──────────────────────────────────────
+
+// Cache key → { entryFrac, exitFrac } | null, where null means "resolved, but
+// this pass has no window" (station coords never resolved, or the whole track
+// stays under the 5° floor). Distinguished from "not resolved yet" by .has(),
+// so an unresolvable pass is asked for exactly once instead of re-fetching on
+// every 10s tick for the rest of the pass.
+const _maskWindow  = new Map();
+const _maskPending = new Set();
+
+// pass.id alone would be the obvious key, but it's whatever SCC's own events
+// endpoint assigned (see satPasses.js) — unique within one satellite's SCC,
+// not across the fleet's several independent ones, and absent entirely if an
+// event ever arrives without one. Prefixing the satellite and falling back to
+// the pass's own start time keeps two satellites' passes from sharing an
+// entry, which would otherwise put one satellite's ticks on the other's row.
+const _maskKey = (sat, pass) => `${sat.id}:${pass.id ?? pass.start.getTime()}`;
+
+// Fractions along the pass (0 = aos0, 1 = los0) where the mask window opens
+// and closes — the same 0-1 axis --pass-progress itself runs on, so the ticks
+// and the sweep can't disagree about where they are. Synchronous: returns
+// undefined until the (cached, deduped) station-coords + rx_mask lookup
+// resolves, then re-applies itself to the live row via _applyMaskWindow.
+function _maskWindowFracs(sat, pass) {
+  const key = _maskKey(sat, pass);
+  if (_maskWindow.has(key))  return _maskWindow.get(key);
+  if (_maskPending.has(key)) return undefined;
+  _maskPending.add(key);
+  fetchPassGsCoords(sat, pass, store.groundStations)
+    .then(coords => {
+      const span = pass.end - pass.start;
+      const w = coords ? computeMaskWindow(pass, sat, coords.lat, coords.lon, coords.rxMask) : null;
+      _maskWindow.set(key, w && span > 0 ? {
+        entryFrac: Math.min(1, Math.max(0, (w.entry.t - pass.start) / span)),
+        exitFrac:  Math.min(1, Math.max(0, (w.exit.t  - pass.start) / span)),
+        // The satellite's own elevation AT the crossing, not the mask's
+        // threshold there — same choice buildPolarSVG's ▲/▼ labels make, and
+        // for the same reason (see its comment): with the track sampled
+        // discretely the two are close but not equal, and labelling the
+        // threshold would have this disagree with every other view of the
+        // same crossing.
+        entryEl:   w.entry.el,
+        exitEl:    w.exit.el,
+      } : null);
+    })
+    .catch(() => _maskWindow.set(key, null))
+    .finally(() => {
+      _maskPending.delete(key);
+      // The row this was resolved for is almost certainly still on screen and
+      // still live (a pass runs minutes; this lookup takes at most a few
+      // seconds), but it was painted without ticks because the answer wasn't
+      // known yet — paint them now rather than leaving it blank until the
+      // next _tick up to 10s later.
+      const row = document.querySelector(`#co-tbody tr[data-sat-id="${sat.id}"]`);
+      if (row?.classList.contains('co-row-live')) _applyMaskWindow(row, sat, pass);
+    });
+  return undefined;
+}
+
+// Writes (or clears) the two tick positions on a live row. Kept as one
+// function used by both the per-tick update and the post-rebuild restore so
+// there's a single place that decides what a row's tick state should be.
+function _applyMaskWindow(row, sat, pass) {
+  const w = pass ? _maskWindowFracs(sat, pass) : null;
+  if (!w) {
+    row.classList.remove('co-row-mask');
+    row.style.removeProperty('--mask-entry');
+    row.style.removeProperty('--mask-exit');
+    row.style.removeProperty('--mask-aos-label');
+    row.style.removeProperty('--mask-los-label');
+    return;
+  }
+  row.style.setProperty('--mask-entry', w.entryFrac.toFixed(4));
+  row.style.setProperty('--mask-exit',  w.exitFrac.toFixed(4));
+  row.style.setProperty('--mask-aos-label', _maskLabel('AOS', w.entryEl));
+  row.style.setProperty('--mask-los-label', _maskLabel('LOS', w.exitEl));
+  row.classList.add('co-row-mask');
+}
+
+// Same two custom properties as _applyMaskWindow above, but as an inline-style
+// string for the initial _rowHTML build — only ever non-empty for a pass whose
+// window is ALREADY cached (a rebuild mid-pass, which is the common case: a
+// telemetry/GNSS update rebuilds the tbody several times a minute). A
+// first-ever paint returns '' here and gets its ticks from the async
+// resolution above instead.
+function _maskWindowStyle(sat, pass) {
+  const w = pass ? _maskWindowFracs(sat, pass) : null;
+  return w
+    ? `--mask-entry:${w.entryFrac.toFixed(4)};--mask-exit:${w.exitFrac.toFixed(4)}`
+      + `;--mask-aos-label:${_maskLabel('AOS', w.entryEl)};--mask-los-label:${_maskLabel('LOS', w.exitEl)}`
+    : '';
+}
+
+// The tick labels' text. Delivered as a CSS custom property holding a QUOTED
+// string, because the pseudo-elements that draw it hang off the row's first
+// cell (they can't hang off the row — see .co-table in style.css) and attr()
+// there would read that CELL's attributes, not the row's; custom properties
+// inherit down to the cell, attributes don't. The quotes are part of the
+// value: content: var(--x) needs --x to be a CSS <string>, not a bare word.
+// SINGLE-quoted, not double: _rowHTML below emits this same value inside a
+// style="..." attribute, so a double-quoted CSS string would close the
+// attribute early and mangle the row. Safe to embed unescaped either way —
+// the only interpolated part is a rounded number.
+// "AOS"/"LOS" rather than "entry"/"exit": mask AOS/LOS is what passTooltip.js
+// and the polar plot already call these two crossings.
+const _maskLabel = (kind, el) => `'${kind} ${Math.round(el)}°'`;
+
 // ── Ping cell ────────────────────────────────────────────────────
 
 function _buildPingCell(satId) {
@@ -477,6 +585,11 @@ function _rowHTML(sat, now, eclipse) {
   const rowStyleProps = [];
   if (sat.color)    rowStyleProps.push(`--scc-color:${sat.color}`);
   if (currentPass)  rowStyleProps.push(`--pass-progress:${_passProgress(currentPass, now).toFixed(3)}`);
+  // Mask entry/exit ticks on that same bar (see _maskWindowStyle) — only
+  // present here when this pass's window is already cached; otherwise the
+  // async resolution paints them onto the row a moment later.
+  const maskStyle = currentPass ? _maskWindowStyle(sat, currentPass) : '';
+  if (maskStyle)    rowStyleProps.push(maskStyle);
   const rowStyle = rowStyleProps.length ? ` style="${rowStyleProps.join(';')}"` : '';
 
   // Just a static glowing tag now — no more internal progress fill (that
@@ -557,7 +670,7 @@ function _rowHTML(sat, now, eclipse) {
     ? `<a class="co-sat-name-link" href="${synopticUrl}" target="_blank" rel="noopener" title="Open ${sat.name}'s synoptic view">${sat.name}<span class="co-sat-name-ext">↗</span></a>`
     : sat.name;
 
-  return `<tr class="co-row${inPass ? ' co-row-live' : ''}" data-sat-id="${sat.id}"${rowStyle}>
+  return `<tr class="co-row${inPass ? ' co-row-live' : ''}${maskStyle ? ' co-row-mask' : ''}" data-sat-id="${sat.id}"${rowStyle}>
     <td class="co-name-cell">
       <div class="co-name-row co-name-main-row">${trackBtn}<button type="button" class="co-actions-btn" data-sat-id="${sat.id}" title="More actions">⋮</button>${nameHTML}${liveBadge}</div>
       ${simuBadgeLine}
@@ -597,6 +710,22 @@ export function focusSatRow(satId) {
 export function initChadOps() {
   const tbody = document.getElementById('co-tbody');
   if (!tbody) return;
+
+  // The mask labels sit at a fraction of the ROW's width but are positioned
+  // against the row's first CELL (see .co-row-mask td:first-child in
+  // style.css), so their offset can't be expressed as a percentage — a
+  // percentage there would resolve against that one cell. Publishing the
+  // table's own pixel width lets the CSS do the arithmetic itself, which keeps
+  // the per-row work to the two fractions and means a resize corrects every
+  // live row at once rather than waiting on the next 10s tick. Setting a
+  // custom property doesn't affect layout, so this can't re-trigger itself.
+  const table = tbody.closest('table');
+  const _syncTableWidth = () => {
+    if (table) table.style.setProperty('--co-table-w', `${table.getBoundingClientRect().width}px`);
+  };
+  const _tableRO = table && typeof ResizeObserver !== 'undefined'
+    ? new ResizeObserver(_syncTableWidth)
+    : null;
 
   const tooltip = document.createElement('div');
   tooltip.className   = 'co-tooltip';
@@ -955,6 +1084,10 @@ export function initChadOps() {
         }
         if (currentPass) row.style.setProperty('--pass-progress', _passProgress(currentPass, now).toFixed(3));
         else              row.style.removeProperty('--pass-progress');
+        // Mask-window ticks live on the same row and the same 0-1 axis — set
+        // (or cleared) alongside the sweep so a pass ending can't leave its
+        // ticks stranded on a row that's no longer a progress bar.
+        _applyMaskWindow(row, sat, currentPass);
       }
 
       // TLE freshness (recomputed from epoch on every tick so the age counter advances)
@@ -1003,8 +1136,19 @@ export function initChadOps() {
   });
 
   function start() {
+    // Idempotent. Without this, a second start() overwrote _timer/_agoTimer with
+    // fresh handles and orphaned the previous pair — uncancellable for the life
+    // of the tab, each one re-running _tick's per-satellite SGP4 + innerHTML
+    // writes and a 1Hz querySelectorAll sweep against a table that may not even
+    // be visible. Two routine paths reach it twice: clicking the already-active
+    // Fleet link (the listener is per-button, not per-change), and every "View in
+    // Fleet" tooltip button, which main.js implements as fleetBtn.click().
+    if (_active) return;
     _active   = true;
     render();
+    // Observing fires the callback once immediately, which is what seeds
+    // --co-table-w; the explicit call covers the no-ResizeObserver case.
+    if (_tableRO) _tableRO.observe(table); else _syncTableWidth();
     _timer    = setInterval(_tick,    10000);
     _agoTimer = setInterval(_tickAgo, 1000);
   }
@@ -1013,6 +1157,7 @@ export function initChadOps() {
     if (_timer)       { clearInterval(_timer);    _timer    = null; }
     if (_agoTimer)    { clearInterval(_agoTimer); _agoTimer = null; }
     if (_renderTimer) { clearTimeout(_renderTimer); _renderTimer = null; }
+    _tableRO?.disconnect(); // the Fleet tab is hidden — nothing to keep measuring
     tooltip.style.display = 'none';
   }
 

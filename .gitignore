@@ -33,3 +33,6 @@ public/manual
 *.njsproj
 *.sln
 *.sw?
+
+# Vendored at install/build time by scripts/sync-cesium.mjs — 20MB of Cesium build output
+public/cesium/

@@ -34,14 +34,29 @@ function* _eclipseWork(satrec, t0, t1) {
 
 // Calls onDone(windows) once, asynchronously — [] immediately if the
 // satellite has no propagatable TLE at all.
+//
+// Returns a cancel function, and callers are expected to use it. This walks a
+// 7-day window at a 60s step — ~10,080 propagate + sunDirectionECI + isInEclipse
+// evaluations — spread over ~40-60 macrotasks that each hold the main thread for
+// 8ms. Guarding only the CALLBACK (which is all AlertAnalyzer used to do) throws
+// the result away but lets the work run to completion, so switching satellites a
+// few times in a row stacked several full chains on top of each other and
+// saturated the main thread for results all but one of which were discarded.
+// The two other copies of this chunked-generator pattern (Scheduler.js,
+// TimePlayer.js) both check a generation token inside step(); this is the same
+// idea, expressed as a handle so the caller doesn't need module state.
 export function computeEclipseWindows(sat, t0, t1, onDone) {
-  if (!sat.satrec) { onDone([]); return; }
+  if (!sat.satrec) { onDone([]); return () => {}; }
   const gen = _eclipseWork(sat.satrec, t0, t1);
+  let cancelled = false;
   (function step() {
+    if (cancelled) return;
     const budgetStart = performance.now();
     let result;
     do { result = gen.next(); } while (!result.done && performance.now() - budgetStart < 8);
+    if (cancelled) return; // may have been cancelled during this slice
     if (result.done) onDone(result.value);
     else setTimeout(step, 0);
   })();
+  return () => { cancelled = true; };
 }

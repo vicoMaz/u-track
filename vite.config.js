@@ -115,6 +115,15 @@ export default defineConfig({
         server.middlewares.use(createApiMiddleware());
         startTleRefresher();
       },
+      // Same middleware under `vite preview`, which is what `npm start` serves
+      // (see package.json) — operators run the built app, not the dev server.
+      // Without this hook preview serves the static bundle only: /api/satellites,
+      // /api/attitude and /api/feed all 404, so the app boots with an empty
+      // fleet and no amount of reloading fixes it.
+      configurePreviewServer(server) {
+        server.middlewares.use(createApiMiddleware());
+        startTleRefresher();
+      },
     },
   ],
   // Cesium is loaded via CDN script tag — treat it as an external global

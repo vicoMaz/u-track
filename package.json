@@ -4,21 +4,24 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "start": "vite build && vite preview",
+    "prestart": "node scripts/sync-cesium.mjs",
     "dev": "vite",
+    "predev": "node scripts/sync-cesium.mjs",
     "build": "vite build",
+    "prebuild": "node scripts/sync-cesium.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "check:gnm": "node scripts/check-gnm-api.mjs",
     "check:mic": "node scripts/check-mic-api.mjs"
   },
   "devDependencies": {
+    "cesium": "1.114.0",
     "vite": "^8.0.12",
     "vitest": "^3.2.3"
   },
   "dependencies": {
     "leaflet": "^1.9.4",
-    "satellite.js": "^7.0.1",
-    "suncalc": "^1.9.0",
-    "xlsx": "^0.18.5"
+    "satellite.js": "^7.0.1"
   }
 }

@@ -24,7 +24,7 @@ const MAX_HITS = 200;
 // Copied from procedureReport.js's _queryLoki rather than imported — kept as
 // its own small copy, matching how satPasses.js/satGroundEvents.js each keep
 // their own _ctrl Map rather than sharing one between unrelated fetch modules.
-async function _queryLoki(grafanaHost, logql, startMs, endMs, limit) {
+async function _queryLoki(grafanaHost, logql, startMs, endMs, limit, signal) {
   const params = new URLSearchParams({
     host:  grafanaHost,
     query: logql,
@@ -33,7 +33,7 @@ async function _queryLoki(grafanaHost, logql, startMs, endMs, limit) {
     limit: String(limit),
   });
   try {
-    const res = await fetch(`/api/grafana-loki?${params}`);
+    const res = await fetch(`/api/grafana-loki?${params}`, { signal });
     if (!res.ok) return null;
     const data = await res.json();
     const lines = [];
@@ -71,7 +71,11 @@ export async function fetchSatGnssMitigation(sat) {
   try {
     const end   = Date.now();
     const start = end - WINDOW_MS;
-    const hits  = await _queryLoki(grafanaHost, MATCH_QUERY, start, end, MAX_HITS);
+    // The signal has to travel: without it the AbortController and its 15s timer
+    // below were inert — the request ran to completion regardless, and the abort
+    // only flipped a flag that got checked afterwards. A superseded or timed-out
+    // poll therefore kept a 30-day Loki scan running on the SCC-RO box's Grafana.
+    const hits  = await _queryLoki(grafanaHost, MATCH_QUERY, start, end, MAX_HITS, ctrl.signal);
     if (ctrl.signal.aborted || hits === null) return; // superseded, timed out, or request failed — keep showing the last resolved value
     store.setSatGnssMitigation(sat.id, deriveGnssMitigationState(hits, start));
   } catch { /* offline or aborted */ }

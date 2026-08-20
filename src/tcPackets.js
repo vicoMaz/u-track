@@ -75,7 +75,33 @@ export function extract114Args(raw) {
   return (ssid != null || date != null) ? { ssid, date } : null;
 }
 
+// `${noradId}|${startMs}|${endMs}` → Promise<Array|null>. This was the only
+// per-pass fetch helper in the codebase without one — every sibling has the
+// same map (scheduledProcedures.js, ebn0.js, satBoardEventTm.js,
+// procedureCatalog.js, passPolar.js) — and it is also the heaviest: each packet
+// echoes its full field/container schema, so one real 14-minute pass measured
+// 10MB in ~2.6s (see the header above), and a single page load was observed
+// pulling the SAME 503KB response twice because TimePlayer and Scheduler each
+// asked for the same pass independently.
+//
+// The promise is stored BEFORE it settles, so simultaneous callers — the four
+// surfaces that request per-pass TC data, plus a mouse crossing several pass
+// dots at once — share one request instead of racing several.
+const _cache = new Map();
+
+// Only past passes are cached. A live pass is still accumulating packets, so a
+// cached answer for it would freeze the TC list mid-pass.
+const _cacheable = endMs => endMs < Date.now();
+
 export async function fetchTcPackets(sat, startMs, endMs) {
+  const key = `${sat.noradId}|${startMs}|${endMs}`;
+  if (_cacheable(endMs) && _cache.has(key)) return _cache.get(key);
+  const promise = _fetchTcPacketsUncached(sat, startMs, endMs);
+  if (_cacheable(endMs)) _cache.set(key, promise);
+  return promise;
+}
+
+async function _fetchTcPacketsUncached(sat, startMs, endMs) {
   const origin = satSubsystemOrigin(sat.noradId, 'sccRo');
   if (!origin) return null;
   const params = new URLSearchParams({

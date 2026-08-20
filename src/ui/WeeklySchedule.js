@@ -299,6 +299,7 @@ export function initWeeklySchedule() {
   }
 
   function start() {
+    if (_active) return; // idempotent — see ChadOps.js's start() for why this matters
     _active = true;
     render();
     _timer  = setInterval(_updateNow, 60000);

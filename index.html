@@ -5,12 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>chadOps</title>
-    <script>
-      window.CESIUM_BASE_URL = 'https://unpkg.com/cesium@1.114.0/Build/Cesium/';
-    </script>
-    <script src="https://unpkg.com/cesium@1.114.0/Build/Cesium/Cesium.js"></script>
-    <link rel="stylesheet" href="https://unpkg.com/cesium@1.114.0/Build/Cesium/Widgets/widgets.css" />
+    <!-- Same-origin stylesheet first: it is small and render-blocking, so it
+         should not queue behind a 1.4 MB cross-origin script. -->
     <link rel="stylesheet" href="/style.css" />
+    <!-- The basemap tiles are still remote, so the handshake for them is worth
+         starting early. Cesium itself is no longer remote — see below. -->
+    <link rel="preconnect" href="https://services.arcgisonline.com" crossorigin />
+    <script>
+      // Served from public/cesium, vendored out of node_modules by
+      // scripts/sync-cesium.mjs (a pre* hook on dev/build/start). Cesium fetches
+      // Workers/, Assets/ and ThirdParty/ from this base lazily at runtime, so it
+      // has to be a directory we actually host.
+      window.CESIUM_BASE_URL = '/cesium/';
+    </script>
+    <!-- Cesium.js and widgets.css are NOT loaded here. They are ~4.97MB of parsed
+         JS plus a stylesheet that only the 3D globe needs, and loading them from
+         <head> — even deferred — put them in front of the app shell on every
+         load, including for the six views that never touch a globe. main.js's
+         ensureGlobe() injects both when the 3D subtab is actually shown, which
+         for the default landing tab means right after the shell has painted
+         rather than before it. -->
   </head>
   <body>
     <div id="app">

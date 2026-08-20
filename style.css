@@ -2604,10 +2604,48 @@ body.gantt-collapsed .gantt-rows { display: none; }
    progress bar" should read as a subtle wash, not a loud fill, especially
    since it's sitting directly behind every badge/indicator in the row. */
 .co-row-live {
+  /* Transparent unless .co-row-mask (below) names a real color — see the layer
+     comment above background-image for why the two tick layers always EXIST
+     even on a row that has no mask window to show. One shared color, not two:
+     entry and exit are told apart by which side of the row they're on, so
+     there's nothing for a second hue to carry. */
+  --mask-tick-color: transparent;
   background-color: rgba(45,184,114,0.06);
-  background-image: linear-gradient(rgba(45,184,114,0.15), rgba(45,184,114,0.15));
+  /* Three layers, first painted on top: mask-entry tick, mask-exit tick, then
+     the sweep itself. The two ticks mark where the pass crosses the ground
+     station's rx_mask floored at 5° (computeMaskWindow in passPolar.js) — the
+     part of the pass that's actually workable, as opposed to aos0/los0, which
+     is where the bar itself starts and ends.
+
+     The tick layers are declared unconditionally, hidden by a transparent
+     color rather than by being absent, because background-size below is
+     TRANSITIONED: it's a repeatable list, so a row gaining/losing tick layers
+     would change that list's length, and CSS pads the shorter list by
+     repeating it to interpolate. Going from 1 layer to 3 therefore reads as
+     [sweep, sweep, sweep] → [2px, 2px, sweep], i.e. two full-width bars
+     visibly shrinking to 2px over the transition's 10s. Constant layer count
+     keeps the interpolation element-wise, so only the sweep animates; the
+     color swap that reveals a tick isn't transitioned at all (background-image
+     isn't in the transition list) and so lands instantly. */
+  background-image:
+    linear-gradient(var(--mask-tick-color), var(--mask-tick-color)),
+    linear-gradient(var(--mask-tick-color), var(--mask-tick-color)),
+    linear-gradient(rgba(45,184,114,0.15), rgba(45,184,114,0.15));
   background-repeat: no-repeat;
-  background-size: calc(var(--pass-progress, 0) * 100%) 100%;
+  background-size:
+    1px 100%,
+    1px 100%,
+    calc(var(--pass-progress, 0) * 100%) 100%;
+  /* Percentage background-position on a 1px-wide layer resolves to
+     fraction × (row width − 1px), so a tick at 0 or 1 sits flush inside the
+     row's own edge instead of being half-clipped by it. --mask-entry/--mask-exit
+     are the same 0-1 fraction-of-pass axis --pass-progress runs on (both set
+     in ChadOps.js), so a tick and the sweep edge meeting means the pass has
+     genuinely reached that crossing. */
+  background-position:
+    calc(var(--mask-entry, 0) * 100%) 0,
+    calc(var(--mask-exit,  0) * 100%) 0,
+    0 0;
   /* 10s, matching ChadOps.js's own _tick interval (setInterval(_tick,
      10000)) that updates --pass-progress — NOT an arbitrary "smooth-looking"
      duration. JS only writes a new value once every 10s, so a shorter
@@ -2617,6 +2655,75 @@ body.gantt-collapsed .gantt-rows { display: none; }
      each 10s transition is still gliding when the NEXT value arrives and
      retriggers it, so it never actually stops moving. */
   transition: background-size 10s linear;
+}
+/* Reveals the two tick layers declared above. A darker shade of the same green
+   the sweep itself is drawn in (rgba(45,184,114) above) rather than the polar
+   plot's cyan/orange MARKER_COLORS for these two crossings: at 1px, sitting
+   directly behind live text and badges, two saturated contrasting hues read as
+   damage to the row rather than as an annotation on it. Deliberately NOT
+   lighter than the sweep — it has to stay legible against both the swept and
+   unswept halves, and the row is dark enough that going darker separates it
+   from both. */
+.co-row-live.co-row-mask {
+  --mask-tick-color: #1a7a4a;
+}
+/* "AOS 5°" / "LOS 5°" — the satellite's elevation where the pass crosses the
+   floored mask, pinned to each tick.
+
+   Hung off the row's FIRST CELL, which is made the containing block here.
+   Neither of the two more obvious anchors works: positioning the <tr> visibly
+   re-solves this table's auto column widths, so a satellite going into pass
+   would knock every column out of line with the header; and leaving `top`
+   auto to inherit each pseudo-element's static position drops the ::after a
+   line below the ::before, since the name cell's content is a block. The cell
+   pins both labels to the same `top`, and its padding box starts at the row's
+   own left edge, so offsets measured from it are offsets into the row.
+
+   That leaves the horizontal offset, which can't be a percentage (it would
+   resolve against this one CELL rather than the row) — hence --co-table-w, the
+   table's pixel width, published by ChadOps.js and kept current by a
+   ResizeObserver. The −1px mirrors what the tick's own percentage
+   background-position resolves to, so label and tick can't disagree by a pixel
+   at the right-hand end of the row.
+
+   Text comes from a custom property rather than attr(), since attr() on a
+   cell's pseudo-element would read the CELL's attributes, and these describe
+   the pass, not the name column — custom properties inherit down to the cell,
+   attributes don't.
+
+   Both labels point INWARD, into the window they bound (AOS right of its tick,
+   LOS left of its), which also keeps them on the row when a crossing sits at
+   fraction 0 or 1. Nudged into the row's top edge so they annotate it rather
+   than colliding with its text, and inert to the mouse so they can't eat a
+   click meant for the row underneath. */
+.co-row-live.co-row-mask > td:first-child {
+  position: relative;
+}
+.co-row-live.co-row-mask > td:first-child::before,
+.co-row-live.co-row-mask > td:first-child::after {
+  position: absolute;
+  top: 1px;
+  font-family: inherit;
+  font-size: 8px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  /* Lighter than --mask-tick-color: an 8px glyph carries far less ink than a
+     full-height rule, so the line's own dark green would leave it unreadable
+     against the same background the line reads fine against. */
+  color: #3fae74;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.co-row-live.co-row-mask > td:first-child::before {
+  content: var(--mask-aos-label, "");
+  left: calc(var(--mask-entry, 0) * (var(--co-table-w, 0px) - 1px));
+  margin-left: 3px;
+}
+.co-row-live.co-row-mask > td:first-child::after {
+  content: var(--mask-los-label, "");
+  left: calc(var(--mask-exit, 0) * (var(--co-table-w, 0px) - 1px));
+  transform: translateX(-100%);
+  margin-left: -3px;
 }
 /* A live row's first-child used to also get its own green inset box-shadow
    here, layered on top of .co-row td:first-child's own --scc-color border —

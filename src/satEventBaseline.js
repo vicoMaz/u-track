@@ -40,7 +40,12 @@ async function _queryAt(origin, param, endMs, signal) {
 const _ctrl = new Map(); // satId → AbortController
 
 export async function fetchSatEventBaseline(sat) {
-  const origin = satSubsystemOrigin(sat.noradId, 'scc');
+  // sccRo, not scc — same reasoning as satGnss.js and satGroundEvents.js: these
+  // are read-only /api/v1/parameters queries, confirmed live to return
+  // byte-identical results on the read-only mirror, so there's no reason to put
+  // four of them per cycle on the write-capable box. Also keeps the Alerts
+  // column populated for a client whose VPN only reaches SCC RO.
+  const origin = satSubsystemOrigin(sat.noradId, 'sccRo');
   if (!origin) return;
 
   _ctrl.get(sat.id)?.abort();

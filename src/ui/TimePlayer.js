@@ -622,13 +622,34 @@ function applyTime() {
   _updateGanttCursor();
 }
 
+// Minimum wall-clock gap between applyTime() calls during playback. applyTime
+// leads to store.setTime → notify('currentTime') → a synchronous pass over all
+// ~16 store subscribers, a forced layout in _updateGanttCursor, and on the
+// Visualizer a full SatEntity.update (SGP4 + orientation + arrows + STT cones)
+// per satellite. At 60fps that was ~216,000 rAF ticks/hour and ~3.5M listener
+// invocations/hour to animate something that, at 1x speed and world zoom, moves
+// a LEO satellite well under 0.1px per frame — and the clock readout only has
+// second resolution anyway.
+//
+// This meters most of the app's per-frame cost, so 200ms takes ~92% off it.
+// Deliberately bypassed above 10x, where the motion IS the point, and it never
+// affects scrubbing (which calls applyTime directly, not through here).
+const MIN_APPLY_MS = 200;
+const FAST_SPEED   = 10;
+let lastApplyTs = 0;
+
 function tick(ts) {
   if (!playing) return;
   if (lastTs !== null) {
     const dt = (ts - lastTs) / 1000;
     scrubOffsetSec += dt * speed;
     scrubOffsetSec = Math.max(-MAX_SPAN_SEC / 2, Math.min(MAX_SPAN_SEC / 2, scrubOffsetSec));
-    applyTime();
+    // scrubOffsetSec still accumulates every frame, so elapsed time stays exact
+    // regardless of how often it is published — only the publishing is throttled.
+    if (speed > FAST_SPEED || ts - lastApplyTs >= MIN_APPLY_MS) {
+      lastApplyTs = ts;
+      applyTime();
+    }
   }
   lastTs = ts;
   lastRaf = requestAnimationFrame(tick);
@@ -638,6 +659,7 @@ function startPlay() {
   playing = true;
   store.setPlaying(true); // see store.js's own comment — satAttitudeReal.js's speed cutoff needs this, not just playbackSpeed
   lastTs = null;
+  lastApplyTs = 0; // publish on the first frame rather than waiting out a throttle window
   playBtn.textContent = '⏸';
   playBtn.classList.add('playing');
   lastRaf = requestAnimationFrame(tick);
@@ -649,6 +671,9 @@ function stopPlay() {
   playBtn.textContent = '▶';
   playBtn.classList.remove('playing');
   if (lastRaf) cancelAnimationFrame(lastRaf);
+  // Flush, so pausing lands on the exact accumulated time instead of wherever
+  // the last throttled publish left it (up to MIN_APPLY_MS behind).
+  applyTime();
 }
 
 // ── Gantt helpers ────────────────────────────────────────────────────────────
@@ -1593,11 +1618,22 @@ export function initTimePlayer() {
   // TMR fetch helper — debounced so rapid satPasses updates don't abort each other.
   // Fetches every source (BUS/PAY — see tmrData.js's TMR_SOURCES) independently,
   // each landing in its own gantt row via store.setTmrWindows(satId, source, ...).
+  // _tmrFetchKey guards this exactly as _timetagFetchKey guards _triggerTimetag:
+  // 'satPasses' fires every 2 minutes per satellite with no satId and no change
+  // detection, and each notification used to re-arm the whole gap scan (76-124
+  // requests to SCC — one backward walk per interpass void, two sources). The
+  // 400ms debounce collapses Scheduler's and this one's simultaneous calls, but
+  // notifications 2 minutes apart can't coalesce. Completed passes change a few
+  // times a day, so an unchanged key means a byte-identical answer.
+  let _tmrFetchKey = null;
   const _triggerTmr = () => {
     const sat = store.trackedSat;
     if (!sat) return;
     const past = (store.satPasses[sat.id] ?? []).filter(p => !p.future);
     if (!past.length) return;
+    const key = `${sat.id}:${past.length}:${past[past.length - 1].start.getTime()}`;
+    if (_tmrFetchKey === key) return;
+    _tmrFetchKey = key;
     for (const source of Object.keys(TMR_SOURCES)) {
       scheduleTmrFetch(sat, past, source, windows => store.setTmrWindows(sat.id, source, windows));
     }

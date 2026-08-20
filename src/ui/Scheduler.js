@@ -292,6 +292,15 @@ let _nowLineEl        = null;
 let _crosshairEl      = null;
 let _crosshairLabelEl = null;
 
+// True only while the Scheduler tab is the visible one. Gates the gantt
+// renders, the 1Hz overlay tick and the TMR gap scan — all of which used to run
+// from page load whether or not this tab was ever opened. Module-level (not
+// inside initScheduler) because _applySelection below is module-level too and
+// has to be able to flip it: arriving from a pass tooltip goes through
+// main.js's switchTab(), which changes the view WITHOUT clicking the tab
+// button, so the click listener that normally calls _activate never fires.
+let _active = false;
+let _pendingSelect = false; // a boot-time auto-pick _renderSelector deferred until first open
 let _satId = null;
 let _selectedPass = null; // the actual pass object, not just a start-time key — read directly by later features
 let _winT0 = null, _winT1 = null; // HARD outer bounds, frozen at satellite-selection time — see _selectSatellite. Eclipse/Plan data is fetched/computed for exactly this span, so zoom/pan (below) is clamped to it — past this edge there's simply no data to show, on ANY row, the same "one consistent boundary" reasoning TimePlayer.js's own VIEW_HALF_SEC comment gives.
@@ -339,6 +348,17 @@ function _sat() {
 // current state directly rather than taking sat/pass params since its
 // callers below don't all have a `sat` object already in hand locally.
 function _updateHash() {
+  // Only the visible tab owns the URL. Without this guard the chain was:
+  // initScheduler -> _renderSelector -> (satellites not loaded yet)
+  // -> _selectSatellite(null) -> here -> location.hash = 'scheduler'; and then
+  // main.js's startup hash-restore, which runs AFTER every initX(), read that
+  // back as "the tab the user was last on" and clicked it. Net effect: the app
+  // booted into the Scheduler instead of the Visualizer on every single load,
+  // which is also what dragged in the procedure catalog, the per-pass
+  // scheduled-procedure lookups, the +/-5-day eclipse/STT precompute and the
+  // TMR gap scan at startup. Confirmed by reading the rendered DOM: #scheduler
+  // -view carried .active on a plain load of "/".
+  if (!_active) return;
   const sat = _sat();
   location.hash = (sat && _selectedPass)
     ? `scheduler/${encodeURIComponent(sat.name.toLowerCase())}/pass/${_selectedPass.start.getTime()}`
@@ -483,11 +503,29 @@ function _scheduleEclipseWork(sat, t0, t1) {
 // comment describes. Needs at least one PAST pass to anchor its query range
 // (see tmrData.js's _fetchTmrWindows) — a satellite with none yet just shows
 // an empty row until one exists, same as TimePlayer.js's own _triggerTmr.
+// _tmrFetchKey guards this the same way _timetagFetchKey guards _triggerTimetag
+// below. It matters more here: store.setSatPasses notifies a bare 'satPasses'
+// key with no satId and no change detection, every 2 minutes per satellite, and
+// this used to re-arm the ENTIRE gap scan on each one — one _hasAnyData probe
+// over ~6 days plus one backward walk per interpass void, six-wide, across two
+// sources. Measured shape: 76-124 /api/v1/parameters requests per scan, and
+// _fetchTmrWindows aborts the previous scan on entry, so on a multi-satellite
+// fleet most scans were killed before finishing. The work was done, thrown
+// away, and the row frequently never painted.
+//
+// The inputs are completed passes, which change a few times a day, so keying on
+// "which past passes do I have" is enough — a recomputation with the same key
+// returns a byte-identical answer.
+let _tmrFetchKey = null;
+
 function _triggerTmr() {
   const sat = _sat();
   if (!sat) return;
   const past = _passes().filter(p => !p.future);
   if (!past.length) return;
+  const key = `${sat.id}:${past.length}:${past[past.length - 1].start.getTime()}`;
+  if (_tmrFetchKey === key) return; // same satellite, same completed passes — nothing to recompute
+  _tmrFetchKey = key;
   for (const source of Object.keys(TMR_SOURCES)) {
     scheduleTmrFetch(sat, past, source, windows => store.setTmrWindows(sat.id, source, windows));
   }
@@ -2992,7 +3030,16 @@ let _pendingOffsetCorrectionSatId = null;
 // the eclipse computation and the plan fetch against it, and clears any
 // selection carried over from a different satellite (which would otherwise
 // be actively misleading, not just harmless leftover state).
-function _selectSatellite(satId) {
+// `userInitiated` gates the one side effect that reaches outside this module:
+// store.setTrackedSat below. False for the boot-time auto-pick of
+// store.satellites[0], true when a person actually chose this satellite (the
+// selector's change event, or arriving from a pass tooltip / a URL hash).
+// GlobeView.js's own comment spells out why that distinction matters —
+// "no satellite should be tracked by default, since tracking drives extra
+// background requests (TMR gap scan) that shouldn't fire until the user
+// actually picks a satellite" — and this auto-pick was the only startup path
+// that set it. Safe to gate: Scheduler writes trackedSatId but never reads it.
+function _selectSatellite(satId, userInitiated = false) {
   _satId = satId;
   _selectedPass = null;
   _updateHash();
@@ -3014,7 +3061,8 @@ function _selectSatellite(satId) {
   // switching tabs mid-task (e.g. to eyeball where it is right now before
   // queuing a procedure) should land on the right one, not whatever was
   // tracked last. Same store call Fleet's own one-click "track" icon uses.
-  store.setTrackedSat(sat.id);
+  // Only on a deliberate choice, though — see the userInitiated comment above.
+  if (userInitiated) store.setTrackedSat(sat.id);
   // satEffectiveNow, not Date.now(): satPasses.js fetches this satellite's
   // own pass data centered on ITS effective now (real Date.now() for a
   // normal satellite, clock-offset-corrected for a simulated one — see
@@ -3055,10 +3103,16 @@ function _recheckPendingOffsetCorrection() {
 // land on the same satellite+pass, just gated differently for their two
 // different callers (see each one's own comment).
 function _applySelection(sat, pass) {
+  // Reached via switchTab(), which doesn't click the tab button, so the gate has
+  // to be opened here or the gantt would stay blank on a view the user is
+  // looking at. Nothing is owed afterwards — the _selectSatellite below does
+  // the same work _activate would have.
+  _active = true;
+  _pendingSelect = false;
   if (_satId !== sat.id) {
     const select = document.getElementById('sch-sat-select');
     if (select) select.value = sat.id;
-    _selectSatellite(sat.id);
+    _selectSatellite(sat.id, true); // arrived here from a tooltip button or a URL hash — a real choice
   }
   // Re-resolved from THIS module's own _passes() rather than trusting the
   // passed-in pass object directly — by identity it's already the same
@@ -3198,11 +3252,29 @@ export function initScheduler() {
     const stillThere = prev && store.satellites.some(s => s.id === prev);
     const nextId = stillThere ? prev : store.satellites[0].id;
     select.value = nextId;
+    // Options are up to date; the expensive part waits. _selectSatellite pulls
+    // the procedure catalog, MIC plans and +/-5 days of eclipse/STT geometry, so
+    // while this tab has never been opened all that is owed rather than done —
+    // _activate() settles the debt on first open.
+    if (!_active) { _pendingSelect = true; return; }
     if (nextId !== prev) _selectSatellite(nextId);
     else _renderGantt();
   }
 
-  select.addEventListener('change', () => _selectSatellite(select.value || null));
+  // First open of the Scheduler tab: pay off whatever _renderSelector deferred,
+  // then behave normally from here on.
+  function _activate() {
+    if (_active) return; // idempotent: clicking the already-active tab must not redo the work
+    _active = true;
+    if (_pendingSelect) {
+      _pendingSelect = false;
+      _selectSatellite(select.value || null); // auto-pick, so NOT user-initiated — see _selectSatellite
+    } else {
+      _renderGantt();
+    }
+  }
+
+  select.addEventListener('change', () => _selectSatellite(select.value || null, true));
 
   passTrack.addEventListener('click', e => {
     const bar = e.target.closest('.gantt-bar[data-start]');
@@ -3267,7 +3339,10 @@ export function initScheduler() {
   _nowLineEl        = document.getElementById('sch-gantt-now-full');
   _crosshairEl      = document.getElementById('sch-gantt-crosshair');
   _crosshairLabelEl = document.getElementById('sch-gantt-crosshair-label');
-  setInterval(() => { _updateNowLine(); _updateSelPassCountdown(); _recheckPendingOffsetCorrection(); }, 1000);
+  setInterval(() => {
+    if (!_active) return; // all three only move pixels on a gantt that isn't on screen
+    _updateNowLine(); _updateSelPassCountdown(); _recheckPendingOffsetCorrection();
+  }, 1000);
 
   // Right column: the catalog dropdown floats open only while actively
   // searching — shown on focus (rendering whatever's already fetched, even
@@ -3288,10 +3363,28 @@ export function initScheduler() {
   });
 
   store.subscribe(key => {
+    // _renderSelector stays ungated: it only rebuilds the <select>'s options
+    // (and defers the actual selection when inactive — see its own comment), so
+    // the dropdown is correct the instant the tab opens. Everything else here
+    // renders a gantt nobody is looking at, and _triggerTmr in particular
+    // re-arms the TMR gap scan — 76-124 requests to SCC per run.
     if (key === 'satellites') _renderSelector();
+    if (!_active) return;
     if (key === 'satPasses')  { _renderGantt(); _triggerTmr(); _triggerTimetag(); }
     if (key === 'plans')      _renderGantt();
     if (key === 'tmrData')    _renderGantt();
+  });
+
+  // Tab gate. Mirrors ChadOps.js's own start()/stop() wiring — this module used
+  // to do all of the below at boot regardless of whether the Scheduler was ever
+  // opened: auto-select satellite[0], track it, fetch the whole SCC procedure
+  // catalog, fetch MIC plans, precompute +/-5 days of eclipse/star-tracker
+  // geometry, and issue one scheduled-procedure lookup per future pass.
+  document.querySelectorAll('[data-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.tab === 'scheduler') _activate();
+      else _active = false;
+    });
   });
 
   _renderSelector();
