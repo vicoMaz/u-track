@@ -631,11 +631,26 @@ function applyTime() {
 // a LEO satellite well under 0.1px per frame — and the clock readout only has
 // second resolution anyway.
 //
-// This meters most of the app's per-frame cost, so 200ms takes ~92% off it.
-// Deliberately bypassed above 10x, where the motion IS the point, and it never
-// affects scrubbing (which calls applyTime directly, not through here).
-const MIN_APPLY_MS = 200;
-const FAST_SPEED   = 10;
+// The budget is SIMULATED time, not wall-clock time, because that is what
+// governs how far anything visibly jumps between updates: the Earth's rotation
+// and every satellite's motion advance by (speed x gap), so a fixed wall-clock
+// gap makes the judder scale with speed. A flat 200ms gap with a `speed > 10`
+// bypass looked fine at 1x (0.2s of rotation per step) and fine at 60x (no
+// throttle at all) but was badly staggered at exactly 10x — 2 full seconds of
+// rotation per step, on the wrong side of the cutoff.
+//
+// Budgeting sim time removes the special case: the gap shrinks as speed rises,
+// so the step on screen stays the same size and high speeds fall through to
+// every frame on their own.
+//   1x    -> 100ms gap (10Hz, ~83% fewer publishes than 60fps)
+//   10x   ->  10ms gap -> every frame
+//   60x+  ->   <2ms    -> every frame
+// The saving is therefore real only at low speed, which is also where the app
+// sits by default (1x) and spends nearly all of its time.
+//
+// Scrubbing is unaffected either way — it calls applyTime directly, not through
+// tick().
+const MAX_SIM_STEP_MS = 100;
 let lastApplyTs = 0;
 
 function tick(ts) {
@@ -646,7 +661,8 @@ function tick(ts) {
     scrubOffsetSec = Math.max(-MAX_SPAN_SEC / 2, Math.min(MAX_SPAN_SEC / 2, scrubOffsetSec));
     // scrubOffsetSec still accumulates every frame, so elapsed time stays exact
     // regardless of how often it is published — only the publishing is throttled.
-    if (speed > FAST_SPEED || ts - lastApplyTs >= MIN_APPLY_MS) {
+    const minGapMs = MAX_SIM_STEP_MS / Math.max(1, Math.abs(speed));
+    if (ts - lastApplyTs >= minGapMs) {
       lastApplyTs = ts;
       applyTime();
     }
@@ -671,9 +687,13 @@ function stopPlay() {
   playBtn.textContent = '▶';
   playBtn.classList.remove('playing');
   if (lastRaf) cancelAnimationFrame(lastRaf);
-  // Flush, so pausing lands on the exact accumulated time instead of wherever
-  // the last throttled publish left it (up to MIN_APPLY_MS behind).
-  applyTime();
+  // Deliberately does NOT flush applyTime() here. applyTime writes scrub.value
+  // back from scrubOffsetSec, and the scrubber's own 'input' handler calls
+  // stopPlay() BEFORE reading scrub.value — so flushing inside stopPlay reset
+  // the thumb to the pre-drag position on every input event, making the
+  // scrubber impossible to move. The flush belongs to the pause BUTTON, which
+  // is the only caller that isn't about to call applyTime itself; see its
+  // listener.
 }
 
 // ── Gantt helpers ────────────────────────────────────────────────────────────
@@ -1483,7 +1503,14 @@ export function initTimePlayer() {
 
   _wireTimetagFilterBtn();
 
-  playBtn.addEventListener('click', () => playing ? stopPlay() : startPlay());
+  playBtn.addEventListener('click', () => {
+    if (!playing) { startPlay(); return; }
+    stopPlay();
+    // Land on the exact accumulated time rather than wherever the throttled
+    // publish left it (up to one sim-step behind). Safe here, unlike inside
+    // stopPlay itself — nothing is mid-drag.
+    applyTime();
+  });
 
   // NOW — jumps the cursor to the current UTC time and re-centers the view on
   // it, but leaves the current zoom (view span) exactly as the user left it.
