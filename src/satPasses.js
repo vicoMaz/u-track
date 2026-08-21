@@ -16,6 +16,21 @@ function _passOutcome(procs) {
   return 'SUCCESS';
 }
 
+// The argument VALUES a historical run actually used. procedure-history's
+// own field name for them isn't confirmed — same caveat Scheduler.js's
+// _findProcParams documents for GET /api/v1/procedure — so probe the same
+// candidate names instead of assuming one, and return null (not []) when
+// none match, so "no schema in the response" stays distinguishable from
+// "genuinely parameterless". Scheduler.js's past-pass rows read these back
+// as the argument form's initial values, to review a run and replay it onto
+// a later pass.
+function _procParams(p) {
+  for (const k of ['parameters', 'procedureParameters', 'params', 'arguments', 'args']) {
+    if (Array.isArray(p?.[k])) return p[k];
+  }
+  return null;
+}
+
 // Cancel a satellite's still-running fetch rather than let it pile up
 // alongside a new one — see satTelemetry.js's _ctrl for the same rationale.
 const _ctrl = new Map(); // satId → AbortController
@@ -76,6 +91,11 @@ export async function fetchSatPasses(sat) {
       const endMs   = notStarted ? null : (comp?.time ? new Date(comp.time).getTime() : startMs + 60_000);
       return {
         name: p.name.split('.').pop(),
+        // Full dotted name kept alongside the display one: replaying this
+        // run onto another pass POSTs it back to procedure-scheduler, which
+        // wants the same fully-qualified name SCC gave us, not the tail.
+        fullName: p.name,
+        parameters: _procParams(p),
         status,
         notStarted,
         time: new Date(p.generationTime).getTime(),

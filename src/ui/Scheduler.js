@@ -1382,12 +1382,16 @@ let _scheduledProcsForPass = null; // the array fetchScheduledProcedures last re
 function _pastProcListHTML(pass) {
   const procs = pass.procedures ?? [];
   if (!procs.length) return '<div class="sch-empty-inline">No procedures executed on this pass.</div>';
-  return procs.map(p => {
+  return procs.map((p, i) => {
     const color = _OUTCOME_COLOR[p.status] ?? _OUTCOME_COLOR.SUCCESS;
     const time  = p.startMs != null ? fmtTimeOnly(p.startMs).slice(0, 8) : '—';
-    return `<div class="sch-proc-row">
+    // data-idx indexes straight back into pass.procedures — same
+    // index-as-identity approach the scheduled rows use, and these entries
+    // likewise carry no id of their own worth keying on.
+    return `<div class="sch-proc-row sch-proc-row-pick" data-idx="${i}"
+      title="${escapeHtml(p.fullName ?? p.name)} — click to review the arguments this run used">
       <span class="sch-proc-dot" style="background:${color}"></span>
-      <span class="sch-proc-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</span>
+      <span class="sch-proc-name">${escapeHtml(p.name)}</span>
       <span class="sch-proc-time">${time}</span>
     </div>`;
   }).join('');
@@ -1575,6 +1579,45 @@ function _renderProcedurePanel(pass, sat) {
   _scheduledProcsForPass = null;
   body.innerHTML = _pastProcListHTML(pass)
     + `<button type="button" class="sch-nav-btn sch-open-analyzer-btn" id="sch-open-analyzer-btn">Open in Pass Analyzer 🔬</button>`;
+
+  // Click an executed run to load the arguments it actually used into the
+  // right column's form — the same column, and the same _selectedProc /
+  // _procArgValues path, a FUTURE pass's scheduled rows already use above,
+  // so there's one argument editor rather than a separate read-only viewer.
+  //
+  // Replay is deliberately two-step: the Schedule button stays disabled
+  // while a past pass is selected (see _renderProcDetailView's canSchedule,
+  // which gates on _selectedPass.future), so reviewing here can't
+  // accidentally schedule anything. Selecting an upcoming pass afterwards
+  // leaves _selectedProc and its loaded values alone — only the pass
+  // changes — which re-enables the button with these arguments still in the
+  // form. That's the replay flow.
+  body.querySelectorAll('.sch-proc-row-pick').forEach(row => {
+    row.addEventListener('click', () => {
+      const p = (pass.procedures ?? [])[Number(row.dataset.idx)];
+      if (!p) return;
+      body.querySelectorAll('.sch-proc-row-pick').forEach(r =>
+        r.classList.toggle('sch-proc-row-picked', r === row));
+      // Shaped like a procedure-scheduler entry so _procName/_findProcParams
+      // read it with no conversion, exactly as the future-pass rows do. The
+      // recorded values ride on each param's own .value, which
+      // _procParamSchemaDefault already treats as that field's initial
+      // value — which is why _procArgValues starts empty here too rather
+      // than being pre-seeded.
+      //
+      // `parameters` is only set when satPasses.js actually found a
+      // parameter array in the history response: assigning [] regardless
+      // would make _findProcParams report "genuinely parameterless" for a
+      // procedure whose arguments we simply failed to locate, and the form
+      // would confidently say it takes none.
+      const entry = { name: p.fullName ?? p.name };
+      if (p.parameters) entry.parameters = p.parameters;
+      _selectedProc = entry;
+      _procArgValues = {};
+      _procListRowCounts = {};
+      _renderProcDetailView();
+    });
+  });
   // Dispatched, not a direct import of PassAnalyzer.js/main.js — same
   // decoupling passTooltip.js's own "Open with Pass Analyzer" button uses
   // (see there); main.js already listens for this to switch tabs + set the
