@@ -364,10 +364,17 @@ const SLOW_KEY_SPREAD_MS     = 45_000;
 //     GNSS column's cycle count sat blank for up to the full spread.
 //   - antennas: the Visualizer's satellite panel groups ground stations by
 //     network from this roster, so the groups appeared late and empty.
+//   - globals: carries sccColor. Every satellite dot, Fleet row accent and gantt
+//     bar is drawn in it (satGlobals.js -> store.setSatColor). It persists to
+//     localStorage once confirmed, so a browser that has loaded the app before
+//     looks right immediately — which is exactly why this was easy to miss. On a
+//     FRESH profile the dots sat on store.js's nextPlaceholderColor palette
+//     until this landed, i.e. every satellite showed the wrong colour for up to
+//     the full spread.
 // What's left is safe: tle only refreshes an age the Fleet already derives from
-// the satrec loaded with /api/satellites, and globals/versions/subsystemProbe
-// only decorate link badges and distinguish a read-only VPN.
-const SLOW_KEYS = ['tle', 'globals', 'versions', 'subsystemProbe'];
+// the satrec loaded with /api/satellites, and versions/subsystemProbe only
+// decorate link badges and distinguish a read-only VPN.
+const SLOW_KEYS = ['tle', 'versions', 'subsystemProbe'];
 
 // _due() compares against CADENCE_MS, so backdating _lastFetchMs to
 // (now - cadence + delay) makes the key come due exactly `delay` from now.

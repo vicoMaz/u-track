@@ -20,27 +20,29 @@ export async function fetchSatGlobals(sat) {
       sccVersion:         data.sccVersion ?? null,
       sccColor,
     });
-    // Color is captured from SCC exactly once — normally right at creation
-    // (InputPanel.js's finaliseSatellite makes an immediate one-off call
-    // here for that), with this periodic poll only as a backstop for a
-    // satellite that didn't have a CONFIRMED one yet by the time this ran
-    // (e.g. SCC was unreachable, off-VPN, at creation — it's carrying
-    // store.js's nextPlaceholderColor placeholder until then). The VALUE
-    // itself, not just a done flag, is what's persisted — every other view
-    // (Fleet, Settings, the Visualizer sidebar, globe/map entities) reads
-    // this same static sat.color, and apiPoller.js's initial load restores
-    // it straight from here on a later page reload too, rather than needing
-    // to re-fetch. Gated on the *confirmed* flag, not merely on the color
-    // key existing — the key alone would already be set to a placeholder,
-    // which must still lose to a real SCC value the first time one shows
-    // up. Once confirmed, never touched again: no point re-fetching a color
-    // that's already permanent.
-    const colorKey          = `sat-color-${sat.noradId}`;
-    const colorConfirmedKey = `sat-color-confirmed-${sat.noradId}`;
-    if (sccColor && !localStorage.getItem(colorConfirmedKey)) {
+    // SCC is the source of truth for the color; localStorage is only a cache so
+    // a reload paints the right color immediately (apiPoller.js's initial load
+    // reads it back via store.js's nextPlaceholderColor) instead of flashing a
+    // placeholder until this poll lands. Every other view — Fleet rows, Settings,
+    // the Visualizer sidebar, globe/map entities — reads that same sat.color.
+    //
+    // Written whenever it DIFFERS, which is the fix for a real bug: this used to
+    // be gated on a one-shot `sat-color-confirmed-<norad>` flag, on the stated
+    // assumption that "no point re-fetching a color that's already permanent".
+    // It isn't permanent — an operator can change it in SCC — and once that flag
+    // was set the app cached the old value forever. Confirmed live: SCC reported
+    // dfaf4b / ff6b5b / f08ddc for LEONAV-1 / PANDORE / SOAP while browsers that
+    // had confirmed an earlier palette were still drawing the stale one, with no
+    // way to pick up the change short of clearing localStorage.
+    //
+    // Costs nothing: this response is already being fetched on its own cadence
+    // for bdsVersion/proceduresVersion/sccVersion, so using the color that came
+    // with it is free. The confirmed flag is no longer written or read; an
+    // existing one in a browser is simply ignored.
+    const colorKey = `sat-color-${sat.noradId}`;
+    if (sccColor && localStorage.getItem(colorKey) !== sccColor) {
       store.setSatColor(sat.id, sccColor);
       localStorage.setItem(colorKey, sccColor);
-      localStorage.setItem(colorConfirmedKey, '1');
     }
   } catch { /* offline or aborted */ }
   finally { clearTimeout(timer); }
