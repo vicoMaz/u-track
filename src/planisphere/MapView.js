@@ -1,5 +1,6 @@
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
+import { mapStyle, onMapStyleChange } from '../mapStyle.js';
 import * as satjs from 'satellite.js';
 import { store } from '../store.js';
 import { SatMarker } from './SatMarker.js';
@@ -48,12 +49,17 @@ export function initMap() {
   L.control.zoom({ position: 'topright' }).addTo(map);
 
   const TILE_DARK  = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
-  const TILE_LIGHT = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
   const TILE_ATTR  = '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, © <a href="https://carto.com/">CARTO</a>';
   const TILE_OPTS  = { attribution: TILE_ATTR, subdomains: 'abcd', noWrap: false };
 
-  let _darkMode  = true;
-  let _tileLayer = L.tileLayer(TILE_DARK, TILE_OPTS).addTo(map);
+  // Satellite photography for the Visualizer's "Satellite" basemap — same Esri
+  // endpoint the 3D globe uses for that choice, so both subtabs show the same
+  // Earth. No subdomains and no {r} here: this is a plain ArcGIS REST tile
+  // service, not CARTO's multi-host scheme.
+  const TILE_SAT      = 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+  const TILE_SAT_OPTS = { attribution: 'Imagery: Esri, Maxar, Earthstar Geographics', maxZoom: 19, noWrap: false };
+
+  let _tileLayer = null;
 
   // Night shadow sits between tile layer (z 200) and overlay layer (z 400)
   map.createPane('nightPane');
@@ -98,29 +104,30 @@ export function initMap() {
   });
   new HomeControl().addTo(map);
 
-  const ThemeControl = L.Control.extend({
-    options: { position: 'topright' },
-    onAdd() {
-      const btn = L.DomUtil.create('button', 'leaflet-bar map-theme-btn');
-      const update = () => {
-        btn.textContent = _darkMode ? 'Light' : 'Dark';
-        btn.title = _darkMode ? 'Switch to light map' : 'Switch to dark map';
-        _tileLayer.remove();
-        _tileLayer = L.tileLayer(_darkMode ? TILE_DARK : TILE_LIGHT, TILE_OPTS).addTo(map);
-        tilePaneEl.style.filter = _darkMode ? 'brightness(3)' : '';
-      };
-      update();
-      L.DomEvent.on(btn, 'click', (e) => {
-        L.DomEvent.stopPropagation(e);
-        _darkMode = !_darkMode;
-        update();
-      });
-      return btn;
-    },
-  });
   const tilePaneEl = map.getPane('tilePane');
-  new ThemeControl().addTo(map);
-  tilePaneEl.style.filter = 'brightness(3)'; // dark mode default
+
+  // Rebuilds the tile layer for the current basemap choice (Visualizer dropdown,
+  // src/mapStyle.js) and light/dark preference. The brightness(3) filter belongs
+  // to CARTO's very dark raster only — satellite photography is already bright,
+  // and lifting it that far washes the ground tracks out completely.
+  // Dark only — the light basemap and its toggle are gone. This is a night-ops
+  // console and the light variant was never the right ground for bright orbit
+  // tracks and station pins.
+  //
+  // The two filters are not interchangeable: brightness(3) lifts CARTO's very
+  // dark raster into legibility, while satellite photography is already bright
+  // and needs pulling DOWN so it stops competing with the overlays.
+  function _applyTiles() {
+    if (_tileLayer) _tileLayer.remove();
+    const sat = mapStyle() === 'satellite';
+    _tileLayer = sat
+      ? L.tileLayer(TILE_SAT, TILE_SAT_OPTS).addTo(map)
+      : L.tileLayer(TILE_DARK, TILE_OPTS).addTo(map);
+    tilePaneEl.style.filter = sat ? 'brightness(0.8) saturate(0.85)' : 'brightness(3)';
+  }
+
+  _applyTiles();                      // initial layer for the stored choice
+  onMapStyleChange(() => _applyTiles());
 
   // Redraw night canvas whenever the map view changes (pan or zoom)
   // Also invalidate lat/lon cache since pixel→coord mapping changed

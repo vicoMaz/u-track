@@ -2,6 +2,7 @@ import { store } from '../store.js';
 import { SatEntity } from './SatEntity.js';
 import { GroundStation } from './GroundStation.js';
 import { satIsSimulated } from '../satSimu.js';
+import { mapStyle, onMapStyleChange } from '../mapStyle.js';
 
 /* global Cesium */
 
@@ -25,12 +26,6 @@ export function setGlobeVisible(v) {
 export function initGlobe() {
   // Suppress Ion token requirement — we use our own tile providers
   Cesium.Ion.defaultAccessToken = '';
-
-  const darkGray = new Cesium.UrlTemplateImageryProvider({
-    url: 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
-    credit: 'Esri, HERE, Garmin, © OpenStreetMap contributors',
-    maximumLevel: 16,
-  });
 
   try {
     viewer = new Cesium.Viewer('globe-view', {
@@ -61,9 +56,10 @@ export function initGlobe() {
       terrainProvider: new Cesium.EllipsoidTerrainProvider(),
       // Provide our own imagery at construction time so Cesium never creates
       // a default Ion layer (which would fire a 401 with an empty token).
-      baseLayer: Cesium.ImageryLayer.fromProviderAsync(
-        Promise.resolve(darkGray), {}
-      ),
+      // `false`, then _applyMapStyle adds the layer for whichever basemap the
+      // dropdown has selected. Passing one here instead would mean building the
+      // layer twice on any startup where the stored choice isn't the default.
+      baseLayer: false,
     });
   } catch (e) {
     console.error('[GlobeView] Cesium init failed:', e);
@@ -78,6 +74,9 @@ export function initGlobe() {
   // Freeze it and drive it ourselves from updatePositions() instead.
   viewer.clock.shouldAnimate = false;
   viewer.clock.currentTime   = Cesium.JulianDate.fromDate(store.currentTime);
+
+  _applyMapStyle();
+  onMapStyleChange(_applyMapStyle);
 
   // Click on a satellite model in the 3D scene → track it
   const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
@@ -109,6 +108,46 @@ export function initGlobe() {
     // the updatePositions path costs nothing.
     viewer?.scene.requestRender();
   });
+}
+
+// The two basemaps the dropdown offers. Both are Esri/ArcGIS REST endpoints,
+// which need no API key — unlike Cesium's own default (Cesium World Imagery via
+// ion), which requires a token this app deliberately clears.
+//
+//   base      the muted grey cartography this globe has always used: labels and
+//             coastlines without imagery detail, so orbit tracks and station pins
+//             stay the brightest thing on screen.
+//   satellite true aerial/satellite photography down to street level.
+//
+// 'offline' is disabled in the dropdown and never reaches here; mapStyle() folds
+// anything unrecognized back to 'base'.
+const MAP_STYLE_IMAGERY = {
+  base: () => new Cesium.UrlTemplateImageryProvider({
+    url: 'https://services.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    credit: 'Esri, HERE, Garmin, © OpenStreetMap contributors',
+    maximumLevel: 16,
+  }),
+  satellite: () => new Cesium.UrlTemplateImageryProvider({
+    url: 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    credit: 'Esri, Maxar, Earthstar Geographics',
+    maximumLevel: 19,
+  }),
+};
+
+// Swaps the base imagery layer in place. Satellite photography is much brighter
+// and more colourful than the grey base map, enough to compete with the overlays
+// drawn on top, so it gets dimmed and desaturated to keep the tracks and pins
+// readable.
+function _applyMapStyle() {
+  if (!viewer) return;
+  const style = mapStyle();
+  const make  = MAP_STYLE_IMAGERY[style] ?? MAP_STYLE_IMAGERY.base;
+  const layers = viewer.imageryLayers;
+  layers.removeAll();
+  layers.addImageryProvider(make());
+  const base = layers.get(0);
+  if (base && style === 'satellite') { base.brightness = 0.8; base.saturation = 0.85; }
+  viewer.scene.requestRender();
 }
 
 function syncEntities() {

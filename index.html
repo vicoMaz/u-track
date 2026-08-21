@@ -166,6 +166,35 @@
           <button class="track-subtab active" data-tracksubtab="globe">3D Globe</button>
           <button class="track-subtab" data-tracksubtab="map">2D Planisphere</button>
           <div class="track-subtab-controls">
+            <!-- Basemap picker, shared by both subtabs (see src/mapStyle.js).
+                 Google-Maps-shaped: the current basemap is a labelled thumbnail,
+                 and hovering it slides out the alternatives as thumbnails of
+                 their own. "Offline" is present but disabled — a placeholder for
+                 a local tile pyramid that does not exist yet.
+                 Buttons, not a <select>, because the whole point is showing what
+                 each choice LOOKS like; wired in main.js. -->
+            <div class="map-picker" id="map-picker">
+              <button type="button" class="map-picker-current" id="map-picker-current"
+                      aria-haspopup="true" aria-expanded="false" title="Basemap">
+                <span class="map-picker-caption" id="map-picker-caption">Base</span>
+                <span class="map-picker-caret" aria-hidden="true">▾</span>
+              </button>
+              <div class="map-picker-menu" id="map-picker-menu" role="menu">
+                <button type="button" class="map-picker-opt" role="menuitem" data-style="base">
+                  <span class="map-picker-thumb map-thumb-base"></span>
+                  <span class="map-picker-label">Base</span>
+                </button>
+                <button type="button" class="map-picker-opt" role="menuitem" data-style="satellite">
+                  <span class="map-picker-thumb map-thumb-satellite"></span>
+                  <span class="map-picker-label">Satellite</span>
+                </button>
+                <button type="button" class="map-picker-opt" role="menuitem" data-style="offline" disabled
+                        title="Local basemap — not available yet">
+                  <span class="map-picker-thumb map-thumb-offline"></span>
+                  <span class="map-picker-label">Offline</span>
+                </button>
+              </div>
+            </div>
             <label class="tp-label">Scale</label>
             <input id="scale-slider" type="range" min="1" max="1000" value="500" step="1" style="width:72px;accent-color:#c77dff" />
             <input id="scale-field" type="number" min="1" max="1000" value="500" step="1" class="tp-num-field" style="color:#c77dff" />

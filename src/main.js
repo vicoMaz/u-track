@@ -11,6 +11,7 @@ import { initTopSummary }       from './ui/TopSummary.js';
 import { initProfileMenu }      from './ui/ProfileMenu.js';
 import { closeAddPointPanel }   from './ui/AddPointPanel.js';
 import { store }                from './store.js';
+import { mapStyle, setMapStyle } from './mapStyle.js';
 
 // eslint-disable-next-line no-undef -- injected by vite.config.js's `define`
 document.getElementById('app-version').textContent = __APP_VERSION__;
@@ -167,6 +168,10 @@ function _applyTrackingVisibility(isTracking) {
 // the startup hash-restore all need to land on a specific pass/satellite,
 // not just flip the tab to its empty state the way a plain button click does.
 function switchTab(target) {
+  // Ahead of ensureView so a read-only client never even fetches the lazy
+  // Settings bundle. Covers every entry point at once — the rail click
+  // below, the startup hash restore, and any programmatic switchTab.
+  if (target === 'settings' && store.readOnlyVpn) return; // see _applySettingsAccess
   ensureView(target); // no-op for eager views; loads + inits a lazy one on first visit
   const hideSide    = target === 'fleet' || target === 'schedule' || target === 'settings' || target === 'analyzer' || target === 'scheduler' || target === 'alerts';
   const isTracking  = target === 'tracking';
@@ -181,8 +186,56 @@ function switchTab(target) {
 }
 
 tabBtns.forEach(btn => {
-  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  btn.addEventListener('click', e => {
+    // The rail entries are real <a href="#settings"> anchors, so letting the
+    // default through would leave the URL on #settings while switchTab
+    // declined to actually go there — and the next reload would then try to
+    // restore a tab this user can't open.
+    if (btn.dataset.tab === 'settings' && store.readOnlyVpn) { e.preventDefault(); return; }
+    switchTab(btn.dataset.tab);
+  });
 });
+
+// ── Settings access (operator VPN only) ──────────────────────────────────
+// Settings is the one tab that edits SHARED state — it adds and removes
+// satellites from the fleet every other user sees, and rewrites their base
+// IPs. A colleague whose VPN carries only the SCC RO (.5) monitoring subnet
+// is there to watch, not to re-shape the fleet, so the tab is gated on the
+// same store.readOnlyVpn signal ProfileMenu.js already shows them as
+// "Read-only access" — one source of truth, so the rail and the popover can
+// never disagree about what kind of access this is.
+//
+// NOTE this is a UI guard, not enforcement: the server API is still open
+// (see server/api.js's route table). It stops the accident — the misclicked
+// × with no confirmation dialog — not a determined curl.
+//
+// Deliberately fails OPEN. store.readOnlyVpn is false both before the
+// subsystem probes have landed and while the VPN is fully down (see its
+// getter in store.js), and that's the behaviour we want: Settings is also
+// the RECOVERY surface — it's where a wrong base IP gets corrected — so a
+// reachability failure must never be the thing that locks someone out of
+// repairing it. Only a POSITIVE read-only determination closes the tab.
+const _settingsLink = [...tabBtns].find(b => b.dataset.tab === 'settings');
+function _applySettingsAccess() {
+  const locked = store.readOnlyVpn;
+  if (!_settingsLink) return;
+  _settingsLink.classList.toggle('rail-link-locked', locked);
+  _settingsLink.setAttribute('aria-disabled', String(locked));
+  _settingsLink.title = locked
+    ? 'Settings — operator access required. Your VPN reaches only the SCC RO subnet.'
+    : 'Settings';
+  // Already on the tab when access dropped away (the probes resolve a few
+  // seconds after load, so this is the normal path for a read-only user who
+  // opened straight onto #settings) — don't strand them on a view the rail
+  // now says they can't reach.
+  if (locked && document.getElementById('settings-view')?.classList.contains('active')) {
+    switchTab('tracking');
+  }
+}
+store.subscribe(key => {
+  if (key === 'satSubsystemReachable' || key === 'satAccessible' || key === 'satellites') _applySettingsAccess();
+});
+_applySettingsAccess();
 
 // Dispatched by passTooltip.js's own "Open with Pass Analyzer" button (not an
 // import from there, to avoid a circular dependency — that module doesn't
@@ -217,6 +270,48 @@ document.addEventListener('fleet:focus-sat', e => {
   // scroll-to has to follow the module rather than race it.
   ensureView('fleet').then(m => m?.focusSatRow(e.detail.satId));
 });
+
+// Basemap dropdown in the Visualizer's subtab bar. Lives here rather than in
+// either view because it drives BOTH — mapStyle.js holds the choice and notifies
+// whichever of the globe/planisphere is currently loaded (see its own comment for
+// why it isn't a GlobeView export). Selecting it before either view has loaded is
+// fine: the value is persisted, and each view reads it when it initialises.
+const mapPicker = document.getElementById('map-picker');
+if (mapPicker) {
+  const trigger = document.getElementById('map-picker-current');
+  const caption = document.getElementById('map-picker-caption');
+  const opts    = [...mapPicker.querySelectorAll('.map-picker-opt')];
+  const LABELS  = { base: 'Base', satellite: 'Satellite', offline: 'Offline' };
+
+  // Collapsed, the trigger is just the active basemap's NAME — the subtab bar has
+  // no room for a thumbnail beside the Scale/Alt controls. The thumbnails live in
+  // the open menu, where there is room to see what each choice looks like.
+  const paint = () => {
+    const cur = mapStyle();
+    caption.textContent = LABELS[cur] ?? cur;
+    for (const o of opts) o.classList.toggle('is-active', o.dataset.style === cur);
+  };
+  const close = () => { mapPicker.classList.remove('is-open'); trigger.setAttribute('aria-expanded', 'false'); };
+  const open  = () => { mapPicker.classList.add('is-open');    trigger.setAttribute('aria-expanded', 'true');  };
+
+  trigger.addEventListener('click', e => {
+    e.stopPropagation(); // else the document handler below closes it immediately
+    mapPicker.classList.contains('is-open') ? close() : open();
+  });
+  for (const o of opts) {
+    o.addEventListener('click', e => {
+      e.stopPropagation();
+      // setMapStyle returns false for a style that isn't implemented (Offline),
+      // in which case nothing changes and the menu stays put — matching the
+      // disabled attribute rather than contradicting it.
+      if (setMapStyle(o.dataset.style)) { paint(); close(); }
+    });
+  }
+  // Click-away and Escape, same convention as the app's other popovers.
+  document.addEventListener('click', () => close());
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+  paint();
+}
 
 // Tracking internal subtabs (3D / 2D)
 const trackSubtabBtns = document.querySelectorAll('[data-tracksubtab]');
