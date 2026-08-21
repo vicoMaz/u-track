@@ -2194,6 +2194,14 @@ body.gantt-collapsed .gantt-rows { display: none; }
   padding: 0 8px;
   gap: 2px;
   flex-shrink: 0;
+  /* Above the views below it, so a popover dropped from this bar (the basemap
+     picker) paints over them. Needed for the 2D planisphere specifically:
+     Leaflet's panes carry z-index 200-1000 and #map-view is position:relative
+     with z-index:auto, so it creates no stacking context and those panes compete
+     directly with the menu's. Without this the menu opened but was painted
+     completely behind the map — it looked like the picker did nothing in 2D. */
+  position: relative;
+  z-index: 1100;
 }
 
 .track-subtab {
@@ -6172,7 +6180,9 @@ a.co-link:hover {
   border: 1px solid #2a2a3e;
   border-radius: 5px;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55);
-  z-index: 60;
+  /* Above Leaflet's highest pane (control corners, 1000) — see the z-index note
+     on .track-subtab-bar. */
+  z-index: 1200;
 }
 .map-picker.is-open .map-picker-menu { display: flex; }
 

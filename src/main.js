@@ -294,13 +294,11 @@ if (mapPicker) {
   const close = () => { mapPicker.classList.remove('is-open'); trigger.setAttribute('aria-expanded', 'false'); };
   const open  = () => { mapPicker.classList.add('is-open');    trigger.setAttribute('aria-expanded', 'true');  };
 
-  trigger.addEventListener('click', e => {
-    e.stopPropagation(); // else the document handler below closes it immediately
+  trigger.addEventListener('click', () => {
     mapPicker.classList.contains('is-open') ? close() : open();
   });
   for (const o of opts) {
-    o.addEventListener('click', e => {
-      e.stopPropagation();
+    o.addEventListener('click', () => {
       // setMapStyle returns false for a style that isn't implemented (Offline),
       // in which case nothing changes and the menu stays put — matching the
       // disabled attribute rather than contradicting it.
@@ -308,7 +306,12 @@ if (mapPicker) {
     });
   }
   // Click-away and Escape, same convention as the app's other popovers.
-  document.addEventListener('click', () => close());
+  //
+  // CAPTURE phase, and skipping clicks inside the picker rather than relying on
+  // stopPropagation in the handlers above: Leaflet stops propagation of clicks
+  // landing on the 2D map, so a bubble-phase listener here never sees them and
+  // the menu would stay open when you clicked the planisphere to dismiss it.
+  document.addEventListener('click', e => { if (!mapPicker.contains(e.target)) close(); }, true);
   document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
   paint();
 }
