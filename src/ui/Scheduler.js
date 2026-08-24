@@ -12,8 +12,9 @@ import { schedulePlanFetch } from '../planData.js';
 import { scheduleTmrFetch, TMR_SOURCES } from '../tmrData.js';
 import { requestTmrGapDownload, findMatchingGapProcedure, fetchNextPassProcedures, TMTC_LINK_TEMPLATE } from '../tmrGapDownload.js';
 import { satSubsystemOrigin } from '../satSubsystems.js';
+import { satNameSccLinkHTML, satSynopticUrl } from './sccLink.js';
 import { satIsSimulated, satEffectiveNow, hasSatTimeOffset } from '../satSimu.js';
-import { fetchTcPackets, matchScheduledTargets, collectArguments, argUnitLabel, TC_114_NAME_RE, tcAckStatus } from '../tcPackets.js';
+import { fetchTcPackets, matchScheduledTargets, argUnitLabel, TC_114_NAME_RE, tcAckStatus } from '../tcPackets.js';
 import { fetchTmPacket, extractTmParam } from '../satTelemetry.js';
 import {
   fmtDuration, fmtTimeOnly, passSimpleTooltipContent, positionTooltip,
@@ -23,6 +24,7 @@ import { escapeHtml } from './logView.js';
 import { fetchPassGsCoords, computePolarPoints, computePolarMarkers } from './passPolar.js';
 import { fetchScheduledProcedures, invalidateScheduledProcedures, invalidateAllScheduledProcedures } from './scheduledProcedures.js';
 import { fetchProcedureCatalog, scheduleProcedure, unscheduleProcedure, reorderScheduledProcedure } from './procedureCatalog.js';
+import { argValueError } from './procArgTypes.js';
 import { showActionToast, showWarningToast } from './actionToast.js';
 
 // ±5 days — matches satPasses.js's own fetch window exactly, so the Pass row
@@ -182,13 +184,21 @@ function _passLabel(pass) {
   return pass.groundStationId ? `${pass.groundStationId} (${_fmtDT(pass.start)})` : _fmtDT(pass.start);
 }
 
+// Same three band messages TimePlayer.js's own _GAP_URGENCY_STATUS carries,
+// trimmed to this narrower tooltip — keep the two in sync.
+const _TMR_GAP_STATUS = {
+  fresh: 'Under 24 h old — inside the onboard TM buffer, still recoverable.',
+  warn:  'Over 24 h old — download it in the next pass; the buffer measured 26 h 47 m deep.',
+  lost:  'Over 36 h old — past the onboard TM buffer, almost certainly overwritten onboard.',
+};
+
 function _tmrGapTooltipHTML(gap, match, pass) {
+  // "Oldest part" whenever the gap spans more than one band — the bar already
+  // shows both colours, so this line must not read as a verdict on all of it.
+  const bands       = _tmrGapBands(gap);
   const urgency     = _tmrGapUrgency(gap);
-  const urgencyHtml = urgency
-    ? `<div class="co-tt-gap-status co-tt-gap-${urgency}">${urgency === 'lost'
-        ? 'Past the ~3-day onboard TM buffer limit — likely already overwritten onboard.'
-        : 'Approaching the ~3-day onboard TM buffer limit.'}</div>`
-    : '';
+  const lead        = bands.length > 1 ? 'Oldest part: ' : '';
+  const urgencyHtml = `<div class="co-tt-gap-status co-tt-gap-${urgency}">${lead}${_TMR_GAP_STATUS[urgency]}</div>`;
   const hdr   = `<div class="co-tt-header">TMR GAP</div>`;
   const times = `<div class="co-tt-time-row"><span class="co-tt-time-lbl">FROM</span>${_fmtDT(new Date(gap.start))}</div>`
               + `<div class="co-tt-time-row"><span class="co-tt-time-lbl">TO</span>${_fmtDT(new Date(gap.end))}</div>`
@@ -540,7 +550,8 @@ function _triggerTmr() {
 // not "when was it uplinked". Colored by SSID (OBSW_AR_S11_SUBSCHEDULE_ID) so
 // a glance says which subschedule a command lives in; the last-known
 // ENABLED/DISABLED status per SSID comes from the latest live HK_CCSW packet
-// (OBSW_AM_S11_STSUB_<n>) — both field sets confirmed live against sccRo,
+// (OBSW_AM_S11_STSUB_<n>), as does each subschedule's own onboard TC count
+// (OBSW_AM_S11_NBTCSUB_<n>) — both field sets confirmed live against sccRo,
 // 2026-07-29/30.
 //
 // Only "the previous pass" is ever analyzed (not the currently selected one,
@@ -571,13 +582,16 @@ function _previousPass() {
   return past.length ? past[past.length - 1] : null;
 }
 
-// Latest known per-SSID enable state, straight off HK_CCSW — a plain object
-// {1: 'ENABLED', 2: 'DISABLED', ...}, only for whichever slots the packet
-// actually reported. HK_CCSW only downlinks during a pass (like all HK), so
+// Latest known per-SSID state, straight off HK_CCSW — a plain object
+// {1: {status: 'ENABLED', nbTc: 4}, ...}, only for whichever slots the packet
+// actually reported. status is OBSW_AM_S11_STSUB_<n>, nbTc the subschedule's
+// own onboard TC count (OBSW_AM_S11_NBTCSUB_<n>) — the two live side by side
+// in the same packet, so both come out of one fetch rather than two.
+// HK_CCSW only downlinks during a pass (like all HK), so
 // this looks back 5 days (matches satPasses.js's own ±5d fetch window) rather
 // than a short "now-ish" window, in case the satellite's last contact wasn't
 // recent. null if no HK_CCSW packet was found at all in that window.
-async function _fetchCcswSubscheduleStatus(sat) {
+async function _fetchCcswSubscheduleState(sat) {
   const origin = satSubsystemOrigin(sat.noradId, 'sccRo');
   if (!origin) return null;
   // satEffectiveNow: plain Date.now() for a real satellite (see satSimu.js);
@@ -592,12 +606,21 @@ async function _fetchCcswSubscheduleStatus(sat) {
   try {
     const pkt = await fetchTmPacket(origin, HK_CCSW_PACKET, { start, end }, ctrl.signal);
     if (!pkt) return null;
-    const status = {};
+    const state = {};
     for (let n = 1; n <= HK_CCSW_MAX_SSID; n++) {
-      const p = extractTmParam(pkt, `OBSW_AM_S11_STSUB_${n}`);
-      if (p?.value != null) status[n] = String(p.value).toUpperCase();
+      const st = extractTmParam(pkt, `OBSW_AM_S11_STSUB_${n}`);
+      const nb = extractTmParam(pkt, `OBSW_AM_S11_NBTCSUB_${n}`);
+      if (st?.value == null && nb?.value == null) continue; // slot not reported at all by this packet
+      // nbTc guarded on != null rather than passed straight to Number():
+      // Number(null) is 0, which would read as a confirmed "this
+      // subschedule is empty" when the packet never reported the slot.
+      const nbTc = nb?.value != null ? Number(nb.value) : NaN;
+      state[n] = {
+        status: st?.value != null ? String(st.value).toUpperCase() : 'UNKNOWN',
+        nbTc:   Number.isFinite(nbTc) ? nbTc : null,
+      };
     }
-    return status;
+    return state;
   } catch {
     return null;
   } finally {
@@ -646,8 +669,7 @@ async function _buildTimetagEntries(sat, pass) {
     const dateRaw = p.args114?.date;
     const dateMs = typeof dateRaw === 'number' ? dateRaw : Date.parse(dateRaw);
     if (!Number.isFinite(dateMs)) continue; // no scheduled time found to place this at — nothing to draw
-    const args = [];
-    collectArguments(target.raw?.spacePacket?.rootContainer, args);
+    const args = target.args ?? []; // decoded up front by tcPackets.js's _lightPacket, which drops the packet's schema echo it came from
     const key = _timetagGroupKey(target.name, args, dateMs);
     let entry = groups.get(key);
     if (!entry) {
@@ -661,7 +683,7 @@ async function _buildTimetagEntries(sat, pass) {
 }
 
 let _timetagEntries  = null; // grouped entries for _timetagFetchKey's pass, or null before the first fetch / on fetch failure
-let _timetagCcsw     = null; // {ssid: 'ENABLED'|'DISABLED'} from the latest HK_CCSW snapshot, or null
+let _timetagCcsw     = null; // {ssid: {status: 'ENABLED'|'DISABLED'|'UNKNOWN', nbTc: number|null}} from the latest HK_CCSW snapshot, or null
 let _timetagFetchKey = null; // `${satId}:${previousPass.start}` this data was actually fetched for — re-fetched only when it changes
 
 // Same "fetch once per selection, patch the row when it resolves" shape as
@@ -682,7 +704,7 @@ async function _triggerTimetag() {
   _timetagFetchKey = key;
   const [entries, ccsw] = await Promise.all([
     _buildTimetagEntries(sat, prev),
-    _fetchCcswSubscheduleStatus(sat),
+    _fetchCcswSubscheduleState(sat),
   ]);
   if (_timetagFetchKey !== key) return; // superseded while in flight — a newer call already owns the row
   _timetagEntries = entries;
@@ -697,7 +719,7 @@ async function _triggerTimetag() {
 // arbitrary.
 function _timetagLineColor(ssids) {
   if (!ssids.length) return _SSID_COLOR_FALLBACK;
-  const enabled = ssids.find(s => _timetagCcsw?.[s] === 'ENABLED');
+  const enabled = ssids.find(s => _timetagCcsw?.[s]?.status === 'ENABLED');
   return _ssidColor(enabled ?? ssids.slice().sort((a, b) => a - b)[0]);
 }
 
@@ -717,7 +739,7 @@ function _timetagTooltipHTML(entry) {
   const date = `<div class="co-tt-time-row"><span class="co-tt-time-lbl">SCHED</span>${_fmtDT(new Date(entry.dateMs))}</div>`;
   const ssidRows = entry.ssids.length
     ? entry.ssids.slice().sort((a, b) => a - b).map(s => {
-        const status = _timetagCcsw?.[s] ?? 'UNKNOWN';
+        const status = _timetagCcsw?.[s]?.status ?? 'UNKNOWN';
         const cls = status === 'ENABLED' ? 'co-tt-ok' : status === 'DISABLED' ? 'co-tt-fail' : '';
         return `<div class="co-tt-time-row"><span class="co-tt-time-lbl">SSID ${s}</span><span class="${cls}">${status}</span></div>`;
       }).join('')
@@ -818,12 +840,19 @@ function _timetagFilterMenuHTML() {
     // show — lets an operator tell "hidden because I don't care about it
     // right now" (checkbox) apart from "hidden because it's DISABLED
     // onboard and won't fire anyway" (status) without opening a tooltip.
-    const status    = _timetagCcsw?.[s] ?? 'UNKNOWN';
+    const ccsw      = _timetagCcsw?.[s];
+    const status    = ccsw?.status ?? 'UNKNOWN';
     const statusCls = status === 'ENABLED' ? 'co-tt-ok' : status === 'DISABLED' ? 'co-tt-fail' : '';
+    // Last-known onboard TC count for this subschedule (NBTCSUB_<n> out of
+    // the same HK_CCSW snapshot the status comes from) — an em dash when the
+    // packet didn't report the slot, so "0 TC" always means a genuinely
+    // empty subschedule rather than "no telemetry".
+    const nbTc = ccsw?.nbTc == null ? '&mdash;' : `${ccsw.nbTc} TC`;
     return `<label class="sch-ssid-filter-row">
       <input type="checkbox" data-ssid="${s}"${checked ? ' checked' : ''} />
       <span class="sch-ssid-filter-swatch" style="background:${_ssidColor(s)}"></span>
       SSID ${s}
+      <span class="sch-ssid-filter-tc">${nbTc}</span>
       <span class="sch-ssid-filter-status ${statusCls}">${status}</span>
     </label>`;
   }).join('');
@@ -891,19 +920,33 @@ function _wireTimetagFilterBtn() {
   });
 }
 
-// Same "~3-day onboard TM buffer" urgency thresholds TimePlayer.js's own
-// _gapUrgency uses (duplicated, not exported there either — same "not
-// exported there either" precedent _PLAN_STATUS_COLOR above already
-// follows). Judged from real wall-clock time against the gap's own end, not
-// the (view-only, non-scrubbing) time axis — the onboard buffer ages in the
-// real world regardless of what span this gantt happens to be zoomed to.
-const TMR_GAP_WARN_MS = 2 * 86_400_000; // 2 days: getting close to being overwritten
-const TMR_GAP_LOST_MS = 3 * 86_400_000; // 3 days: the buffer's approximate hold time
+// Same onboard-TM-buffer age bands TimePlayer.js's own _gapBands/_gapUrgency
+// use (duplicated, not exported there either — same "not exported there
+// either" precedent _PLAN_STATUS_COLOR above already follows) — keep the two
+// in sync; see GAP_WARN_MS's own comment there for where 24 h / 36 h come from
+// (measured against a real dump, not the ~3-day figure these two used to
+// carry). Judged from real wall-clock time, not the (view-only, non-scrubbing)
+// time axis — the onboard buffer ages in the real world regardless of what
+// span this gantt happens to be zoomed to.
+const TMR_GAP_WARN_MS = 24 * 3_600_000; // 24 h: yellow from here — download it, don't sit on it
+const TMR_GAP_LOST_MS = 36 * 3_600_000; // 36 h: red — comfortably past the measured buffer depth
+
+// One entry per age band the gap actually spans, oldest (worst) first — a gap
+// long enough to straddle a threshold gets drawn as one bar per band instead
+// of one bar in one colour. See TimePlayer.js's _gapBands for the full why.
+function _tmrGapBands(gap, now = Date.now()) {
+  const tLost = now - TMR_GAP_LOST_MS; // instants older than this are red...
+  const tWarn = now - TMR_GAP_WARN_MS; // ...older than this, yellow; newer than it, green
+  const segs = [];
+  const push = (band, start, end) => { if (end > start) segs.push({ band, start, end }); };
+  push('lost',  gap.start,                  Math.min(gap.end, tLost));
+  push('warn',  Math.max(gap.start, tLost), Math.min(gap.end, tWarn));
+  push('fresh', Math.max(gap.start, tWarn), gap.end);
+  return segs;
+}
+
 function _tmrGapUrgency(gap) {
-  const age = Date.now() - gap.end;
-  if (age >= TMR_GAP_LOST_MS) return 'lost';
-  if (age >= TMR_GAP_WARN_MS) return 'warn';
-  return null;
+  return _tmrGapBands(gap)[0]?.band ?? 'fresh';
 }
 
 // ── Rendering ────────────────────────────────────────────────────
@@ -1220,9 +1263,9 @@ function _passBarHTML(p, t0, t1) {
 // overlays second (never clear the green, just paint over it), grey "not
 // checked yet" last:
 //   1. green bar spanning [rangeStart, rangeEnd] — the queried range itself
-//   2. dark/amber/red/green-dashed bars for actual gapWindows, by
-//      _tmrGapUrgency and (green-dashed, overriding amber) whether a
-//      matching download is already pending — see the isPending check below
+//   2. green/amber/red-dashed bars for actual gapWindows, one per age band
+//      the gap spans (_tmrGapBands), overridden by bright-green dashes where
+//      a matching download is already pending — see the isPending check below
 //   3. grey bar from rangeEnd (or any still-open trailing gap, whichever is
 //      earlier) to the end of the view — real future time AND a gap that
 //      hasn't had a chance to close yet both read as "not known", not as a
@@ -1261,25 +1304,28 @@ function _renderGanttTmr(container, source, t0, t1) {
   for (const gap of gapWindows) {
     const { start, end } = gap;
     if (end >= rangeEnd - 1000) { greyStart = Math.min(greyStart, start); continue; }
-    const urgency   = _tmrGapUrgency(gap);
     const isPending = !!findMatchingGapProcedure(sccData?.scheduled, gap, source);
-    const l  = (start - t0) / rangeMs * 100;
-    const r  = (end   - t0) / rangeMs * 100;
-    const lc = Math.max(0, l);
-    const rc = Math.min(100, r);
-    if (rc - lc < 0.01) continue;
-    const bar = document.createElement('div');
-    const cls = urgency === 'lost' ? 'gantt-bar-gap-lost'
-              : isPending          ? 'gantt-bar-gap-pending'
-              : urgency === 'warn' ? 'gantt-bar-gap-warn'
-              : 'gantt-bar-gap';
-    bar.className = `gantt-bar ${cls}`;
-    bar.style.left  = `${lc.toFixed(3)}%`;
-    bar.style.width = `${(rc - lc).toFixed(3)}%`;
-    if (cls === 'gantt-bar-gap') bar.style.background = '#12121e';
-    bar.addEventListener('mouseenter', e => _showTmrGapTooltip(e, gap, sat, source));
-    bar.addEventListener('mouseleave', _hideTooltipSoon);
-    container.appendChild(bar);
+    // One bar per age band (_tmrGapBands), so a gap straddling a threshold
+    // shows both colours. Every segment hovers as the ONE underlying gap —
+    // the tooltip and its download button still take the whole `gap`.
+    for (const seg of _tmrGapBands(gap)) {
+      const l  = (seg.start - t0) / rangeMs * 100;
+      const r  = (seg.end   - t0) / rangeMs * 100;
+      const lc = Math.max(0, l);
+      const rc = Math.min(100, r);
+      if (rc - lc < 0.01) continue;
+      const bar = document.createElement('div');
+      const cls = seg.band === 'lost' ? 'gantt-bar-gap-lost'
+                : isPending           ? 'gantt-bar-gap-pending'
+                : seg.band === 'warn' ? 'gantt-bar-gap-warn'
+                : 'gantt-bar-gap-fresh';
+      bar.className = `gantt-bar ${cls}`;
+      bar.style.left  = `${lc.toFixed(3)}%`;
+      bar.style.width = `${(rc - lc).toFixed(3)}%`;
+      bar.addEventListener('mouseenter', e => _showTmrGapTooltip(e, gap, sat, source));
+      bar.addEventListener('mouseleave', _hideTooltipSoon);
+      container.appendChild(bar);
+    }
   }
 
   if (t1 > greyStart) {
@@ -1896,6 +1942,78 @@ function _procParamTypeLabel(p) {
   return _scalarTypeLabel(p?.type, p?.valueType);
 }
 
+// ── Argument type checking ────────────────────────────────────────────────
+// Every argument carries a declared type (the chip beside its name), but the
+// fields are free text: nothing stopped a Long taking "abc" or an enum taking a
+// value that isn't in its own list. That only surfaced as a 500 from SCC after
+// the schedule request went out — sometimes as a bare "argument type mismatch"
+// with no hint as to which argument. These check the value against the declared
+// type as it's typed, and again before the request is allowed out.
+//
+// The actual rules live in procArgTypes.js (pure, unit-tested). Everything here
+// is the bridge from a rendered field to the schema it was rendered from.
+
+// The kind string argValueError expects for one field, which is exactly the
+// label its own type chip shows. The seconds-offset box beside a date/time field
+// is the one field with no schema of its own — it is this app's widget, not an
+// SCC parameter, and it holds a whole number of seconds.
+function _argFieldKind(el, schema) {
+  if (el.dataset.argSubkey === 'offsetSec') return 'int';
+  return _scalarTypeLabel(schema?.type, schema?.valueType);
+}
+
+// What to call this field when reporting it. A list row's key already reads well
+// enough on its own (sampleRatesToAdd[2].value); a top-level field uses the
+// parameter's real name rather than the key, which may have been derived.
+function _argFieldLabel(key, schema) {
+  return key.includes('[') ? key : (schema?.name ?? key);
+}
+
+// The type error for one rendered field, or null. `live` tolerates values still
+// being typed — see PARTIAL_NUMBER and the enum prefix case in procArgTypes.js.
+//
+// The date/time text field is skipped: it parses and reformats on every commit
+// and reverts anything unparseable to its last good value, so it is never left
+// holding a bad string, and judging its half-typed text mid-edit would fight
+// that widget rather than help.
+function _argFieldError(el, { live = false } = {}) {
+  if (el.classList.contains('sch-proc-arg-dt')) return null;
+  const key = el.dataset.argKey;
+  if (!key) return null;
+  const schema = el.dataset.argSubkey === 'offsetSec' ? null : _procArgSchemas.get(key);
+  if (!schema && el.dataset.argSubkey !== 'offsetSec') return null; // nothing declared to check against
+  return argValueError(_argFieldKind(el, schema), el.value, {
+    live,
+    enumValues: Array.isArray(schema?.enumValues) ? schema.enumValues : null,
+  });
+}
+
+// Marks one field good or bad. The reason goes in title= as well as turning the
+// field red, so hovering says what's actually expected instead of just "wrong".
+function _paintArgFieldValidity(el, { live = false } = {}) {
+  const err = _argFieldError(el, { live });
+  el.classList.toggle('sch-proc-arg-invalid', !!err);
+  if (err) el.title = err;
+  else el.removeAttribute('title');
+  return err;
+}
+
+// Every field in the argument form, painted. Returns one entry per bad field,
+// which is also what the Schedule button's own check consumes.
+function _paintAllArgValidity({ live = false } = {}) {
+  const detailView = document.getElementById('sch-proc-detail-view');
+  if (!detailView) return [];
+  const bad = [];
+  detailView.querySelectorAll('input[data-arg-key], select[data-arg-key]').forEach(el => {
+    const err = _paintArgFieldValidity(el, { live });
+    if (err) {
+      const key = el.dataset.argKey;
+      bad.push({ el, key, label: _argFieldLabel(key, _procArgSchemas.get(key)), error: err });
+    }
+  });
+  return bad;
+}
+
 // datetime-local inputs have no timezone of their own (the spec treats the
 // value as bare wall-clock, no zone) — every OTHER timestamp in this app is
 // UTC (fmtDateTimeShort etc. all label it explicitly), so this reads/writes
@@ -2129,6 +2247,14 @@ function _comboOptionsHTML(enumValues, query) {
 // call so a stale entry from a previous procedure/render never lingers.
 let _procComboEnums = new Map();
 
+// key (the same data-arg-key every field carries) → that field's own parameter
+// schema, so a value can be checked against its declared type without having to
+// walk the parameter list again from a DOM element. Populated by the field
+// builders below as they render, and reset per render exactly like
+// _procComboEnums above — a stale entry here would type-check a field against
+// whatever procedure was selected before.
+let _procArgSchemas = new Map();
+
 // One argument row's HTML — a true/false <select> for a detected boolean, a
 // type-to-search combo (_procEnumComboHTML) for an enum, a datetime picker +
 // seconds-offset + quick-fill buttons for a detected date/time param, a
@@ -2228,6 +2354,7 @@ function _procDateTimeFieldHTML(p, key, { compact = false } = {}) {
 // field on the SAME line as the collapsible group's own toggle, instead of
 // duplicating this select/combo/input logic a second time.
 function _procScalarFieldHTML(p, key, value) {
+  _procArgSchemas.set(key, p);
   if (_isProcParamBoolean(p)) {
     const boolValue = typeof value === 'boolean' ? value : value === 'true';
     return `<select class="sch-proc-arg-select" data-arg-key="${escapeHtml(key)}">
@@ -2282,6 +2409,7 @@ function _procGateHeaderHTML(gateParam, gateKey, value) {
 // wired in _renderProcDetailView picks these up for free — no separate event
 // plumbing needed for a nested field, same as every top-level scalar field.
 function _procListFieldInputHTML(f, fieldKey) {
+  _procArgSchemas.set(fieldKey, f);
   const value = _procArgValues[fieldKey] ?? f.value ?? '';
   if (_isProcParamBoolean(f)) {
     const boolValue = typeof value === 'boolean' ? value : value === 'true';
@@ -2380,6 +2508,7 @@ function _renderProcDetailView() {
   const detailView = document.getElementById('sch-proc-detail-view');
   if (!detailView) return;
   _procComboEnums = new Map(); // fresh per render — see its own comment
+  _procArgSchemas = new Map(); // ditto
   if (!_selectedProc) {
     detailView.innerHTML = '<div class="sch-empty-inline">Search above and pick a procedure to configure its arguments.</div>';
     _procScheduleGroupForProc = null;
@@ -2462,7 +2591,14 @@ function _renderProcDetailView() {
       } else {
         _procArgValues[key] = el.value;
       }
+      // Type check as it's typed, in the lenient mode — a half-written number
+      // or a partly-typed enum isn't wrong yet (see _argFieldError).
+      _paintArgFieldValidity(el, { live: true });
     });
+    // Leaving the field is the point where a half-written value stops being
+    // half-written, so this pass is the strict one: "-" or "SEND_" survives the
+    // keystrokes above but goes red once focus moves on.
+    el.addEventListener('blur', () => _paintArgFieldValidity(el));
   });
   // Type-to-search dropdown for every enum combo just drawn (see
   // _procEnumComboHTML) — purely the SHOW/FILTER/CLOSE behavior; the input's
@@ -2697,6 +2833,11 @@ function _renderProcDetailView() {
     });
   });
   document.getElementById('sch-proc-schedule-btn')?.addEventListener('click', _onScheduleProcClick);
+  // Paint the whole form once: values restored from a previous run (replaying a
+  // past pass's arguments) or shipped as catalog defaults get checked too, not
+  // just what the operator types in this session. Lenient, so a field the
+  // operator hasn't touched yet isn't accused of being half-typed.
+  _paintAllArgValidity({ live: true });
   if (_procCalendarKey) _positionCalendarPicker();
 }
 
@@ -2769,6 +2910,23 @@ function _loadProcedureCatalog(sat) {
 async function _onScheduleProcClick() {
   const sat = _sat();
   if (!sat || !_selectedPass || !_selectedProc) return;
+
+  // Nothing goes out until every argument matches its declared type. Strict pass
+  // (not the lenient live one): this is the last point at which a half-typed
+  // value can still be caught locally, and past here SCC's own reflective
+  // invocation rejects a mismatch with an "argument type mismatch" 500 that
+  // doesn't say WHICH argument was wrong. The fields go red and stay red, so the
+  // toast names the first one and the form shows the rest.
+  const bad = _paintAllArgValidity();
+  if (bad.length) {
+    const first = bad[0];
+    showWarningToast(bad.length === 1
+      ? `Not scheduled — ${first.label}: ${first.error}`
+      : `Not scheduled — ${first.label}: ${first.error} (and ${bad.length - 1} more invalid argument${bad.length > 2 ? 's' : ''})`);
+    first.el.focus();
+    return;
+  }
+
   const btn = document.getElementById('sch-proc-schedule-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Scheduling…'; }
   try {
@@ -3064,7 +3222,7 @@ function _renderGantt() {
         <button class="sch-nav-btn" id="sch-pass-prev-btn" title="Previous pass"${atFirst ? ' disabled' : ''}>‹</button>
         <button class="sch-nav-btn" id="sch-pass-next-btn" title="Next pass"${atLast ? ' disabled' : ''}>›</button>
       </div>
-      <div class="co-tt-time-row"><span class="co-tt-time-lbl">SAT</span>${sat.name}</div>
+      <div class="co-tt-time-row"><span class="co-tt-time-lbl">SAT</span><span class="co-tt-sat-name" style="color:${sat.color}">${satNameSccLinkHTML(sat)}</span></div>
       <div class="co-tt-time-row"><span class="co-tt-time-lbl">DUR</span>${fmtDuration(_selectedPass.end - _selectedPass.start)}</div>
       <div class="co-tt-time-row"><span class="co-tt-time-lbl">STN</span>${_selectedPass.station ?? '—'}${_selectedPass.network ? `<span class="co-tt-network">${_selectedPass.network}</span>` : ''}</div>
       <div class="co-tt-time-row"><span class="co-tt-time-lbl">DATE</span>${_fmtDT(_selectedPass.start)}</div>
@@ -3164,21 +3322,22 @@ let _pendingOffsetCorrectionSatId = null;
 // to SCC's own view of it without hunting for the IP.
 //
 // Same destination and same read-only fallback the Fleet row's satellite name
-// already uses (ChadOps.js's _synopticUrl): SCC's synoptic, or SCC RO's when
-// store.readOnlyVpn says this client can't reach the write-capable subnet at
-// all. Hidden rather than left dead when no satellite is selected or neither
-// subsystem IP is configured — a link that goes nowhere is worse than no link.
+// already uses — both go through sccLink.js's satSynopticUrl: SCC's synoptic,
+// or SCC RO's when store.readOnlyVpn says this client can't reach the
+// write-capable subnet at all. Hidden rather than left dead when no satellite
+// is selected or neither subsystem IP is configured — a link that goes
+// nowhere is worse than no link.
 function _updateSccLink() {
   const a = document.getElementById('sch-scc-link');
   if (!a) return;
-  const sat    = _sat();
-  const origin = sat ? satSubsystemOrigin(sat.noradId, store.readOnlyVpn ? 'sccRo' : 'scc') : '';
-  if (!sat || !origin) {
+  const sat = _sat();
+  const url = sat ? satSynopticUrl(sat.noradId) : null;
+  if (!url) {
     a.hidden = true;
     a.removeAttribute('href');
     return;
   }
-  a.href   = `${origin}/synoptic`;
+  a.href   = url;
   a.title  = `Open ${sat.name}'s SCC page ↗`;
   a.hidden = false;
 }
@@ -3271,24 +3430,25 @@ function _applySelection(sat, pass) {
   _renderGantt();
 }
 
-// Entry point for the pass tooltip's "Schedule procedures" button
-// (passTooltip.js's _procedureListHTML), dispatched as sch:open-pass and
-// wired up centrally in main.js — same shape as PassAnalyzer.js's own
-// setSelection/pda:open-pass pair. Only meaningful for a future pass (the
-// button itself is gated the same way _procedureListHTML gates on
-// pass.future) — a past pass has nothing here to schedule.
+// Entry point for the pass tooltip's two jump-here buttons (passTooltip.js's
+// _procedureListHTML), dispatched as sch:open-pass and wired up centrally in
+// main.js — same shape as PassAnalyzer.js's own setSelection/pda:open-pass
+// pair. Deliberately NOT future-gated any more: "📅 Schedule procedures" on a
+// future pass and "📅 See scheduled procedures" on a past one are both this
+// event, and a past pass has plenty to land on here — the pass list and gantt
+// let you select one to review what actually ran and replay its arguments
+// onto a later pass. The gate used to drop past passes silently.
 export function setSchedulerSelection(sat, pass) {
-  if (!sat || !pass?.future) return;
+  if (!sat || !pass) return;
   _applySelection(sat, pass);
 }
 
 // Entry point for main.js's startup hash-restore, reading back the
-// "scheduler/<sat>/pass/<ms>" shape _updateHash below writes. Deliberately
-// NOT future-gated like setSchedulerSelection above — unlike the
-// sch:open-pass bridge (always "queue something on this specific upcoming
-// pass"), a reload/shared link can just as legitimately point at a past
-// pass someone was reviewing (the pass list and gantt bars both let you
-// pick either).
+// "scheduler/<sat>/pass/<ms>" shape _updateHash below writes. Same past-or-
+// future latitude setSchedulerSelection above now has, for its own reason: a
+// reload/shared link can just as legitimately point at a past pass someone
+// was reviewing. Kept as its own export rather than folded into the one
+// above purely so each caller's intent stays readable at the call site.
 export function restoreSchedulerSelection(sat, pass) {
   if (!sat || !pass) return;
   _applySelection(sat, pass);

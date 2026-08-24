@@ -1041,10 +1041,10 @@ body.gantt-collapsed .gantt-rows { display: none; }
   cursor: help;
 }
 /* A gap with a matching PUS-15 downlink already scheduled on SCC's next pass
-   (see TimePlayer.js's _getSccPassCheck/findMatchingGapProcedure) — green
-   diagonal dashes, contained to the gap's own bounds. Reverts to
-   .gantt-bar-gap's plain dark fill if that pass passes without the gap
-   actually clearing. */
+   (see TimePlayer.js's _getSccPassCheck/findMatchingGapProcedure) — bright
+   green diagonal dashes, contained to the gap's own bounds. Falls back to its
+   plain age-band color (below) if that pass passes without the gap actually
+   clearing. */
 .gantt-bar-gap-pending {
   cursor: help;
   background: repeating-linear-gradient(
@@ -1054,9 +1054,28 @@ body.gantt-collapsed .gantt-rows { display: none; }
   ), #12121e;
   border: 1px solid #00cc6688;
 }
-/* Onboard TM buffer is a ~3-day circular store — these two flag a gap by how
-   close it is to (or past) that overwrite limit (see TimePlayer.js's
-   GAP_WARN_MS/GAP_LOST_MS/_gapUrgency). */
+/* The onboard TM store is a circular buffer, so a gap's recoverability is
+   purely a matter of its age — these three flag it by which side of the
+   overwrite limit it sits on: green under 24 h, yellow 24-36 h, red past 36 h
+   (see TimePlayer.js's GAP_WARN_MS/GAP_LOST_MS/_gapBands, whose comment
+   carries the dump measurement those numbers come from). A gap long enough to
+   straddle a threshold is drawn as one bar per band, so two of these colors
+   can sit side by side within what is really one gap.
+
+   Deliberately NOT .gantt-bar-gap-pending's #00cc66: a fresh gap and an
+   already-requested one would otherwise be the same green. Duller, with
+   thinner and more widely spaced dashes, so "young" and "handled" stay
+   distinguishable at a glance — the same reason the coverage bar keeps the
+   bright green to itself. */
+.gantt-bar-gap-fresh {
+  cursor: help;
+  background: repeating-linear-gradient(
+    45deg,
+    #2e9e63 0, #2e9e63 2px,
+    transparent 2px, transparent 9px
+  ), #12121e;
+  border: 1px solid #2e9e6366;
+}
 .gantt-bar-gap-warn {
   cursor: help;
   background: repeating-linear-gradient(
@@ -1201,7 +1220,13 @@ body.gantt-collapsed .gantt-rows { display: none; }
   pointer-events: none;
 }
 #gantt-sat-info.hidden { display: none; }
+/* flex, not a plain text line, since SatInfo.js renders the name as an
+   .sat-scc-link anchor (name + ↗) — the flex item's min-width:0 is what lets
+   the NAME ellipsise inside max-width while the arrow stays visible; the
+   div's own text-overflow can't tell the two children apart. */
 #gsi-name {
+  display: flex;
+  align-items: baseline;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.03em;
@@ -1231,6 +1256,13 @@ body.gantt-collapsed .gantt-rows { display: none; }
   text-overflow: ellipsis;
   max-width: 160px;
 }
+/* Third of the three interactive things inside #gantt-sat-info, which is
+   deliberately pointer-events:none (see its own comment above) — like
+   .gsi-att-toggle and .gsi-next-link below, the name's ↗ link needs the
+   explicit override or it renders and simply never takes a click. Scoped to
+   this strip rather than put on .sat-scc-link itself: the Pass Analyzer's
+   copy of the same link sits in an ordinary panel and needs no override. */
+#gsi-name .sat-scc-link { pointer-events: auto; }
 /* #gantt-sat-info (the ancestor) is deliberately pointer-events:none, same
    as .gsi-att-toggle above — this needs the same explicit override to be
    clickable at all (jumps to Scheduler for the shown next pass). */
@@ -2520,11 +2552,19 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .sch-ssid-filter-row:hover { background: #24243c; color: #fff; }
 .sch-ssid-filter-swatch { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+/* Last-known onboard TC count for this subschedule, straight off the same
+   HK_CCSW snapshot (Scheduler.js's _timetagFilterMenuHTML). This is the one
+   carrying margin-left: auto for the whole right-hand group — it's always
+   rendered (an em dash when unreported), so the status badge beside it stays
+   pinned to the row's right edge without needing an auto margin of its own
+   (two competing autos would split the free space and strand both mid-row).
+   Muted: it's context for the SSID, not a state the eye needs pulled to. */
+.sch-ssid-filter-tc { margin-left: auto; flex-shrink: 0; font-size: 9.5px; color: #8a8aa8; padding-left: 8px; }
 /* Latest HK_CCSW ENABLED/DISABLED/UNKNOWN for this SSID (Scheduler.js's
-   _timetagFilterMenuHTML) — pinned to the row's own right edge, reusing the
-   same co-tt-ok/co-tt-fail colors the Timetag tooltip's per-SSID rows use,
-   just smaller to fit this tighter row. */
-.sch-ssid-filter-status { margin-left: auto; flex-shrink: 0; font-size: 9.5px; font-weight: 600; letter-spacing: 0.03em; padding-left: 8px; }
+   _timetagFilterMenuHTML) — sits at the row's own right edge after the TC
+   count above, reusing the same co-tt-ok/co-tt-fail colors the Timetag
+   tooltip's per-SSID rows use, just smaller to fit this tighter row. */
+.sch-ssid-filter-status { flex-shrink: 0; font-size: 9.5px; font-weight: 600; letter-spacing: 0.03em; padding-left: 8px; }
 /* This satellite's own current time (see _rowHTML/_tick's simuTimeLine,
    ChadOps.js) — every "ago"/"next"/TLE-age label in this same row is
    silently anchored to it, so it needs to be visible, not just correct.
@@ -2854,9 +2894,9 @@ body.gantt-collapsed .gantt-rows { display: none; }
 }
 .co-next-link:hover { color: #00d4ff; text-decoration: underline; }
 
-/* Brief highlight when jumped-to via the shared tooltip's "View in Fleet"
-   button (see ChadOps.js's focusSatRow) — confirms which row the operator
-   landed on in a table that can run to dozens of satellites. */
+/* Brief highlight when a row is jumped-to via fleet:focus-sat (see
+   ChadOps.js's focusSatRow) — confirms which row the operator landed on in a
+   table that can run to dozens of satellites. */
 @keyframes co-row-focus-flash-kf {
   0%, 100% { background-color: transparent; }
   25%, 75% { background-color: rgba(0, 212, 255, 0.22); }
@@ -3295,8 +3335,9 @@ body.gantt-collapsed .gantt-rows { display: none; }
   color: #00cc66;
   font-family: 'Courier New', monospace;
 }
-.co-tt-gap-warn { color: #ffcc00; }
-.co-tt-gap-lost { color: #ff4466; }
+.co-tt-gap-fresh { color: #2e9e63; }
+.co-tt-gap-warn  { color: #ffcc00; }
+.co-tt-gap-lost  { color: #ff4466; }
 
 /* ── Slide-in panel chrome — vertical panel from the right (currently just
    AddPointPanel.js). Not a modal — no backdrop — so it reads as a
@@ -5022,6 +5063,21 @@ a.co-link:hover {
   font-style: italic;
 }
 
+/* Same line, while the pass is still being paged in (see PassAnalyzer.js's
+   _tcWalkDone): brighter than the "some of this pass is missing" version
+   above, because this one resolves on its own and isn't a warning — plus a
+   slow pulse so a list that's still growing doesn't read as a finished one
+   that happens to end there. */
+.pa-tc-trunc-loading {
+  color: #7a8296;
+  animation: pa-tc-trunc-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pa-tc-trunc-pulse {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 1; }
+}
+
 /* ═══════════════════════════════════════════════════════════════
    Scheduler (new feature, step 1 — satellite+pass picker)
    ═══════════════════════════════════════════════════════════════ */
@@ -5594,6 +5650,21 @@ a.co-link:hover {
    .sch-proc-arg-row-list above) — fills whatever's left of the row past the
    label's own fixed width. */
 .sch-proc-arg-field { flex: 1; min-width: 0; }
+/* Fill that field half instead of sitting at the browser's own ~20-character
+   intrinsic width — confirmed live: a 145px text box inside a ~700px field
+   half, truncating ordinary values (a patch folder path, a JSON filename)
+   mid-string with hundreds of pixels going spare to its right, while the enum
+   combo one row below it (.sch-combo-input, already width:100%) filled the
+   same space properly. Direct children only: a datetime row's inputs live
+   inside .sch-proc-arg-datetime and keep their own fixed widths
+   (.sch-proc-arg-dt / .sch-proc-arg-offset) so the pickers and quickfills
+   sharing that line still fit; list rows have their own .sch-proc-list-input. */
+.sch-proc-arg-field > .sch-proc-arg-input { width: 100%; }
+/* Not width:100% — a true/false select has nothing to show across 700px, and
+   the caret would strand itself at the far right of an empty box. Just wide
+   enough that it isn't the one cramped control in a column of full-width
+   fields. */
+.sch-proc-arg-field > .sch-proc-arg-select { min-width: 120px; }
 .sch-proc-arg-input, .sch-proc-arg-select {
   background: #1a1a28;
   border: 1px solid #33334a;
@@ -5608,6 +5679,22 @@ a.co-link:hover {
   outline: none;
   border-color: #4a8cff;
   background: #1e1e30;
+}
+/* A value that doesn't match the argument's declared type (Scheduler.js's
+   _paintArgFieldValidity — the reason is on the field's own title=). Red border
+   plus a red wash: the border alone reads as a focus ring on a dark field, and
+   several of these rows can be wrong at once. Kept ahead of :focus in weight so
+   the field the operator is fixing stays visibly the wrong one until it is. */
+.sch-proc-arg-input.sch-proc-arg-invalid,
+.sch-proc-arg-select.sch-proc-arg-invalid {
+  border-color: #e0483d;
+  background: #2a1618;
+  color: #ffd9d5;
+}
+.sch-proc-arg-input.sch-proc-arg-invalid:focus,
+.sch-proc-arg-select.sch-proc-arg-invalid:focus {
+  border-color: #ff5c4d;
+  background: #33191b;
 }
 /* Type-to-search combo for a (sometimes very long — confirmed live, 759
    entries) enumValues list (Scheduler.js's _procEnumComboHTML) — same
@@ -6135,6 +6222,48 @@ a.co-link:hover {
 }
 .sch-scc-link:hover,
 .sch-scc-link:focus-visible { color: #4aa3ff; }
+
+/* ── Coloured satellite name → that satellite's SCC synoptic ───────────────
+   sccLink.js's satNameSccLinkHTML, used wherever a satellite's name is
+   already painted in its own accent colour: the Visualizer gantt's
+   tracked-satellite strip (#gsi-name) and the Pass Analyzer's pass header
+   (.co-tt-sat-name). Deliberately NOT the blue of .co-link / .sch-scc-link —
+   colour is the identity of the satellite in those two places, so both the
+   name and its ↗ inherit it and the arrow is dimmed by opacity instead,
+   keeping the pair readable as one coloured name rather than a name plus a
+   foreign blue link. (The Fleet table's own name link keeps .co-sat-name-link
+   above: its name is not colour-coded, so a fixed grey ↗ works there.) */
+.sat-scc-link {
+  display: inline-flex;
+  align-items: baseline;
+  min-width: 0;
+  max-width: 100%;
+  color: inherit;
+  text-decoration: none;
+}
+/* min-width:0 + overflow here, rather than on the anchor, so a long name
+   truncates and the ↗ beside it does not. */
+.sat-scc-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* em-relative so the same glyph sits right in the gantt strip's 12px bold
+   monospace name and in the Pass Analyzer's larger header. flex:0 0 auto
+   keeps it from being the thing that shrinks. */
+.sat-scc-ext {
+  flex: 0 0 auto;
+  margin-left: 3px;
+  font-size: 0.82em;
+  font-weight: 400;
+  opacity: 0.55;
+  transition: opacity 0.12s;
+}
+.sat-scc-link:hover .sat-scc-name,
+.sat-scc-link:focus-visible .sat-scc-name { text-decoration: underline; }
+.sat-scc-link:hover .sat-scc-ext,
+.sat-scc-link:focus-visible .sat-scc-ext { opacity: 1; }
 
 /* ── Basemap picker (Visualizer subtab bar) ─────────────────────────────────
    Google-Maps-shaped. Collapsed it is just the active basemap's NAME, because

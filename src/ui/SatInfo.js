@@ -4,6 +4,7 @@ import { satJwt } from '../satPing.js';
 import { satAttitudeMode, setSatAttitudeMode, attitudeDisplayState, scheduleAttitudeFetch } from '../satAttitudeReal.js';
 import { scheduleTelemetryFetch, telemetryDisplayState } from '../satTelemetryReal.js';
 import { positionTooltip } from './passTooltip.js';
+import { satNameSccLinkHTML, satSynopticUrl } from './sccLink.js';
 
 const strip        = document.getElementById('gantt-sat-info');
 const nameEl        = document.getElementById('gsi-name');
@@ -173,6 +174,22 @@ function _updateTelemetryFields(sat, atMs) {
   battEl.className   = battSoc != null ? _monCls(sample.battVoltage?.status) : 'gsi-nil';
 }
 
+// #gsi-name is the tracked satellite's name in its own colour, linking out to
+// that satellite's SCC synoptic (sccLink.js — same destination the Fleet
+// table's row name and the Scheduler's panel-title ↗ already use).
+//
+// Rewritten only when the satellite, its name or its link target actually
+// changes, unlike the rest of this strip: update() runs on every clock tick,
+// and re-writing the anchor that often would rebuild the element under the
+// operator's cursor mid-hover — and mid-click.
+let _renderedNameKey = null;
+function _updateName(sat) {
+  const key = `${sat.id}|${sat.name}|${satSynopticUrl(sat.noradId) ?? ''}`;
+  if (key === _renderedNameKey) return;
+  _renderedNameKey = key;
+  nameEl.innerHTML = satNameSccLinkHTML(sat);
+}
+
 function update() {
   const sat = store.trackedSat; // O(1) Map lookup
   if (!sat) { strip.classList.add('hidden'); return; }
@@ -184,7 +201,7 @@ function update() {
   strip.classList.remove('hidden');
   strip.style.setProperty('--sat-color', sat.color);
 
-  nameEl.textContent = sat.name;
+  _updateName(sat);
   posEl.textContent  = `${fmt(pos.lat)}° ${fmt(pos.lon)}° ${pos.alt.toFixed(0)}km`;
 
   const nowMs = store.currentTime.getTime();

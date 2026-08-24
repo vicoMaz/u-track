@@ -12,7 +12,7 @@ import { passSimpleTooltipContent, hydratePassGeometry, hydrateScheduledProcedur
 import { invalidateAllScheduledProcedures } from './scheduledProcedures.js';
 import { escapeHtml }                   from './logView.js';
 import { satSubsystemOrigin }           from '../satSubsystems.js';
-import { fetchTcPackets, matchScheduledTargets, collectArguments, argUnitLabel, TC_114_NAME_RE, tcAckStatus } from '../tcPackets.js';
+import { fetchTcPackets, matchScheduledTargets, argUnitLabel, TC_114_NAME_RE, tcAckStatus } from '../tcPackets.js';
 import { fetchTmPacket, extractTmParam } from '../satTelemetry.js';
 
 
@@ -404,31 +404,61 @@ function _passLabel(pass) {
   return pass.groundStationId ? `${pass.groundStationId} (${_fmtDT(pass.start)})` : _fmtDT(pass.start);
 }
 
-// The onboard TM store is a circular buffer holding ~3 days before newer
-// telemetry starts overwriting the oldest — so an ungrounded gap becomes
-// increasingly urgent to download as it approaches that limit, then (once
-// past it) is likely gone for good. Judged from real wall-clock time against
-// the gap's own end (the most recent moment still missing), not the
-// simulated/scrubbed time — the buffer ages in the real world regardless of
-// what the timeline is currently scrubbed to.
-const GAP_WARN_MS = 2 * 86_400_000; // 2 days: getting close to being overwritten
-const GAP_LOST_MS = 3 * 86_400_000; // 3 days: the buffer's approximate hold time
+// The onboard TM store is a circular buffer — once it wraps, newer telemetry
+// overwrites the oldest, so an ungrounded gap becomes increasingly urgent to
+// download as it approaches that limit, then (once past it) is likely gone
+// for good. Judged instant by instant against real wall-clock time (see
+// _gapBands), not the simulated/scrubbed time — the buffer ages in the real
+// world regardless of what the timeline is currently scrubbed to.
+//
+// Thresholds were 2 days / 3 days, which was optimistic by a wide margin.
+// Measured against a real dump (SOAP, 24/08/2026 15:52 request for the
+// 23/08 08:16:44 gap): the satellite returned nothing older than
+// 23/08 13:05:18, i.e. the store held 26 h 47 m of recording, and the same
+// pass's second request for a ~50 h-old window came back completely empty.
+// Confirmed from the other side too — that gap was still recoverable at the
+// 24/08 01:06 pass (16.8 h old) and gone by the next one.
+//
+// Worth knowing when reading a yellow bar: 24-36 h straddles that measured
+// 26 h 47 m, so the older end of the yellow band can already be gone. The
+// depth is also size-bounded rather than time-bounded, so it shrinks whenever
+// the TM rate goes up (a chatty payload, a higher HK cadence) — green up to
+// 24 h is the only band the measurement actually backs as recoverable.
+const GAP_WARN_MS = 24 * 3_600_000; // 24 h: yellow from here — download it, don't sit on it
+const GAP_LOST_MS = 36 * 3_600_000; // 36 h: red — comfortably past the measured buffer depth
 
-function _gapAgeMs(gap) {
-  return Date.now() - gap.end;
+// A gap that is hours long ages ACROSS a threshold: its start can be past the
+// red limit while its end is still green. Judging the whole bar by one instant
+// (this used to read gap.end, the most optimistic edge) flattened that away and
+// painted a mixed gap in a single colour. So the band belongs to each instant
+// inside the gap, not to the gap as a whole — this cuts the span at the two
+// boundary instants and returns the pieces in chronological order, oldest
+// (worst) first, so _renderGanttTmr can draw one bar per piece and show every
+// colour the gap actually spans. Boundaries move with wall-clock time, not with
+// the scrubbed/simulated time — the buffer ages in the real world regardless of
+// where the timeline is parked.
+function _gapBands(gap, now = Date.now()) {
+  const tLost = now - GAP_LOST_MS; // instants older than this are red...
+  const tWarn = now - GAP_WARN_MS; // ...older than this, yellow; newer than it, green
+  const segs = [];
+  const push = (band, start, end) => { if (end > start) segs.push({ band, start, end }); };
+  push('lost',  gap.start,                  Math.min(gap.end, tLost));
+  push('warn',  Math.max(gap.start, tLost), Math.min(gap.end, tWarn));
+  push('fresh', Math.max(gap.start, tWarn), gap.end);
+  return segs;
 }
 
-// null (not yet urgent) | 'warn' (2-3 days) | 'lost' (past 3 days)
+// The worst band the gap touches, for the tooltip's own one-line summary —
+// _gapBands is oldest-first, so that's just its first segment. 'fresh' as the
+// fallback covers a zero-length gap, which has no segments at all.
 function _gapUrgency(gap) {
-  const age = _gapAgeMs(gap);
-  if (age >= GAP_LOST_MS) return 'lost';
-  if (age >= GAP_WARN_MS) return 'warn';
-  return null;
+  return _gapBands(gap)[0]?.band ?? 'fresh';
 }
 
 const _GAP_URGENCY_STATUS = {
-  warn: 'Approaching the ~3-day onboard TM buffer limit — download soon or this data will be overwritten.',
-  lost: 'Past the ~3-day onboard TM buffer limit — this data has likely already been overwritten onboard.',
+  fresh: 'Under 24 h old — inside the onboard TM buffer, still recoverable.',
+  warn:  'Over 24 h old — download it in the next pass. The buffer measured 26 h 47 m deep, so the older end of this may already be gone.',
+  lost:  'Over 36 h old — past the onboard TM buffer; this data has almost certainly been overwritten onboard.',
 };
 
 // `match` is a scheduled-procedure object from findMatchingGapProcedure (or
@@ -443,8 +473,13 @@ function _gapTooltipHTML(gap, match, pass) {
   const hdr   = `<div class="co-tt-header">TMR GAP · ${_fmtGapDuration(end - start)}</div>`;
   const times = `<div class="co-tt-time-row"><span class="co-tt-time-lbl">FROM</span>${_fmtDT(start)}</div>`
               + `<div class="co-tt-time-row"><span class="co-tt-time-lbl">TO</span>${_fmtDT(end)}</div>`;
+  // Mixed-band gaps get their worst band named as such — the bar already shows
+  // both colours, and "Oldest part" is what stops that line from reading as a
+  // verdict on the whole span.
+  const bands       = _gapBands(gap);
   const urgency     = _gapUrgency(gap);
-  const urgencyHtml = urgency ? `<div class="co-tt-gap-status co-tt-gap-${urgency}">${_GAP_URGENCY_STATUS[urgency]}</div>` : '';
+  const lead        = bands.length > 1 ? 'Oldest part: ' : '';
+  const urgencyHtml = `<div class="co-tt-gap-status co-tt-gap-${urgency}">${lead}${_GAP_URGENCY_STATUS[urgency]}</div>`;
   if (match) {
     const status = `<div class="co-tt-gap-status">TMR was requested in pass ${_passLabel(pass)}</div>`;
     const btn = `<button type="button" class="co-tt-gap-btn" disabled>Download Gap TMR</button>`;
@@ -932,7 +967,10 @@ function _renderGanttTmr(container, source) {
     container.appendChild(cov);
   }
 
-  // Dark overlay bars for gap periods — appended directly, never clears the green bar.
+  // Overlay bars for gap periods — appended directly, never clears the green bar.
+  // Each gap is drawn as one bar per age band it spans (green <24 h, yellow
+  // 24-36 h, red past 36 h — see _gapBands), so a long gap sitting across a
+  // threshold shows both of its colours rather than one averaged verdict.
   // A gap already requested (a matching PUS-15 downlink scheduled on SCC's
   // next pass — see _getSccPassCheck/findMatchingGapProcedure) renders
   // green/diagonal-dashed, contained to the gap's own bounds (no extension).
@@ -955,25 +993,33 @@ function _renderGanttTmr(container, source) {
   for (const { start, end } of gapWindows) {
     if (end >= rangeEnd - 1000) { greyStart = Math.min(greyStart, start); continue; }
     const isPending = !!findMatchingGapProcedure(sccData?.scheduled, { start, end }, source);
-    const urgency   = _gapUrgency({ start, end });
 
-    const l  = (start - tMin) / rangeMs * 100;
-    const r  = (end   - tMin) / rangeMs * 100;
-    const lc = Math.max(0, l);
-    const rc = Math.min(100, r);
-    if (rc - lc < 0.01) continue;
-    const bar = document.createElement('div');
-    const cls = urgency === 'lost' ? 'gantt-bar-gap-lost'
-              : isPending          ? 'gantt-bar-gap-pending'
-              : urgency === 'warn' ? 'gantt-bar-gap-warn'
-              : 'gantt-bar-gap';
-    bar.className = `gantt-bar ${cls}`;
-    bar.style.left  = `${lc.toFixed(3)}%`;
-    bar.style.width = `${(rc - lc).toFixed(3)}%`;
-    if (cls === 'gantt-bar-gap') bar.style.background = '#12121e';
-    bar.addEventListener('mouseenter', e => _showGapTooltip(e, { start, end }, sat, source));
-    bar.addEventListener('mouseleave', _hidePassTooltipSoon);
-    container.appendChild(bar);
+    // One bar per band the gap spans (see _gapBands) instead of one bar for the
+    // whole gap — a gap straddling a threshold shows green AND yellow, or yellow
+    // AND red, cut at the instant the age actually crosses over. Every segment
+    // hovers as the ONE underlying gap: the tooltip (and its download button)
+    // still takes the full {start, end}, since that's what gets requested.
+    for (const seg of _gapBands({ start, end })) {
+      const l  = (seg.start - tMin) / rangeMs * 100;
+      const r  = (seg.end   - tMin) / rangeMs * 100;
+      const lc = Math.max(0, l);
+      const rc = Math.min(100, r);
+      if (rc - lc < 0.01) continue;
+      const bar = document.createElement('div');
+      // Per-segment, but the same precedence as before: lost beats pending (the
+      // data being probably-already-gone outranks "a request is in flight"),
+      // pending beats the two live bands.
+      const cls = seg.band === 'lost' ? 'gantt-bar-gap-lost'
+                : isPending           ? 'gantt-bar-gap-pending'
+                : seg.band === 'warn' ? 'gantt-bar-gap-warn'
+                : 'gantt-bar-gap-fresh';
+      bar.className = `gantt-bar ${cls}`;
+      bar.style.left  = `${lc.toFixed(3)}%`;
+      bar.style.width = `${(rc - lc).toFixed(3)}%`;
+      bar.addEventListener('mouseenter', e => _showGapTooltip(e, { start, end }, sat, source));
+      bar.addEventListener('mouseleave', _hidePassTooltipSoon);
+      container.appendChild(bar);
+    }
   }
 
   // Grey "not available yet" bar — covers both real future time (the
@@ -1005,8 +1051,8 @@ function _renderGanttTmr(container, source) {
 // PUS(11,4) "insert TC in subschedule" command found in the satellite's most
 // recent PAST pass, placed at the target TC's OWN scheduled execution time,
 // colored by SSID (OBSW_AR_S11_SUBSCHEDULE_ID), with the last-known
-// ENABLED/DISABLED status per SSID coming from the latest live HK_CCSW
-// packet. Rendered here via plain createElement (this file's own convention
+// ENABLED/DISABLED status and onboard TC count per SSID coming from the
+// latest live HK_CCSW packet. Rendered here via plain createElement (this file's own convention
 // — see _renderGanttEclipse/_renderGanttTmr above) rather than Scheduler.js's
 // innerHTML-string _barHTML, but the data layer underneath is otherwise the
 // same, duplicated rather than shared (same "not exported there either"
@@ -1033,12 +1079,13 @@ function _previousPass(sat) {
   return past.length ? past[past.length - 1] : null;
 }
 
-// Latest known per-SSID enable state, straight off HK_CCSW. Windowed off
+// Latest known per-SSID state (enable status + onboard TC count), straight
+// off HK_CCSW — same shape as Scheduler.js's own version. Windowed off
 // plain Date.now() (not EPOCH/scrubOffsetSec) — same real-wall-clock
-// reasoning this file's own _gapAgeMs/_getSccPassCheck already use for "how
+// reasoning this file's own _gapBands/_getSccPassCheck already use for "how
 // fresh is this": HK_CCSW's own last-known state doesn't depend on wherever
 // the timeline happens to be scrubbed to.
-async function _fetchCcswSubscheduleStatus(sat) {
+async function _fetchCcswSubscheduleState(sat) {
   const origin = satSubsystemOrigin(sat.noradId, 'sccRo');
   if (!origin) return null;
   const nowMs = Date.now();
@@ -1049,12 +1096,21 @@ async function _fetchCcswSubscheduleStatus(sat) {
   try {
     const pkt = await fetchTmPacket(origin, HK_CCSW_PACKET, { start, end }, ctrl.signal);
     if (!pkt) return null;
-    const status = {};
+    const state = {};
     for (let n = 1; n <= HK_CCSW_MAX_SSID; n++) {
-      const p = extractTmParam(pkt, `OBSW_AM_S11_STSUB_${n}`);
-      if (p?.value != null) status[n] = String(p.value).toUpperCase();
+      const st = extractTmParam(pkt, `OBSW_AM_S11_STSUB_${n}`);
+      const nb = extractTmParam(pkt, `OBSW_AM_S11_NBTCSUB_${n}`);
+      if (st?.value == null && nb?.value == null) continue; // slot not reported at all by this packet
+      // nbTc guarded on != null rather than passed straight to Number():
+      // Number(null) is 0, which would read as a confirmed "this
+      // subschedule is empty" when the packet never reported the slot.
+      const nbTc = nb?.value != null ? Number(nb.value) : NaN;
+      state[n] = {
+        status: st?.value != null ? String(st.value).toUpperCase() : 'UNKNOWN',
+        nbTc:   Number.isFinite(nbTc) ? nbTc : null,
+      };
     }
-    return status;
+    return state;
   } catch {
     return null;
   } finally {
@@ -1085,8 +1141,7 @@ async function _buildTimetagEntries(sat, pass) {
     const dateRaw = p.args114?.date;
     const dateMs = typeof dateRaw === 'number' ? dateRaw : Date.parse(dateRaw);
     if (!Number.isFinite(dateMs)) continue; // no scheduled time found to place this at — nothing to draw
-    const args = [];
-    collectArguments(target.raw?.spacePacket?.rootContainer, args);
+    const args = target.args ?? []; // decoded up front by tcPackets.js's _lightPacket, which drops the packet's schema echo it came from
     const key = _timetagGroupKey(target.name, args, dateMs);
     let entry = groups.get(key);
     if (!entry) {
@@ -1100,7 +1155,7 @@ async function _buildTimetagEntries(sat, pass) {
 }
 
 let _timetagEntries  = null; // grouped entries for _timetagFetchKey's pass, or null before the first fetch / on fetch failure
-let _timetagCcsw     = null; // {ssid: 'ENABLED'|'DISABLED'} from the latest HK_CCSW snapshot, or null
+let _timetagCcsw     = null; // {ssid: {status: 'ENABLED'|'DISABLED'|'UNKNOWN', nbTc: number|null}} from the latest HK_CCSW snapshot, or null
 let _timetagFetchKey = null; // `${satId}:${previousPass.start}` this data was actually fetched for — re-fetched only when it changes
 
 // Same "fetch once per selection, patch the row when it resolves" shape as
@@ -1120,7 +1175,7 @@ async function _triggerTimetag() {
   _timetagFetchKey = key;
   const [entries, ccsw] = await Promise.all([
     _buildTimetagEntries(sat, prev),
-    _fetchCcswSubscheduleStatus(sat),
+    _fetchCcswSubscheduleState(sat),
   ]);
   if (_timetagFetchKey !== key) return; // superseded while in flight — a newer call already owns the row
   _timetagEntries = entries;
@@ -1132,7 +1187,7 @@ async function _triggerTimetag() {
 // number" rule as Scheduler.js's own _timetagLineColor.
 function _timetagLineColor(ssids) {
   if (!ssids.length) return _SSID_COLOR_FALLBACK;
-  const enabled = ssids.find(s => _timetagCcsw?.[s] === 'ENABLED');
+  const enabled = ssids.find(s => _timetagCcsw?.[s]?.status === 'ENABLED');
   return _ssidColor(enabled ?? ssids.slice().sort((a, b) => a - b)[0]);
 }
 
@@ -1148,7 +1203,7 @@ function _timetagTooltipHTML(entry) {
   const date = `<div class="co-tt-time-row"><span class="co-tt-time-lbl">SCHED</span>${_fmtDT(new Date(entry.dateMs))}</div>`;
   const ssidRows = entry.ssids.length
     ? entry.ssids.slice().sort((a, b) => a - b).map(s => {
-        const status = _timetagCcsw?.[s] ?? 'UNKNOWN';
+        const status = _timetagCcsw?.[s]?.status ?? 'UNKNOWN';
         const cls = status === 'ENABLED' ? 'co-tt-ok' : status === 'DISABLED' ? 'co-tt-fail' : '';
         return `<div class="co-tt-time-row"><span class="co-tt-time-lbl">SSID ${s}</span><span class="${cls}">${status}</span></div>`;
       }).join('')
@@ -1229,12 +1284,19 @@ function _timetagFilterMenuHTML() {
   if (!ssids.length) return `<div class="sam-menu-section">Filter by SSID</div><div class="co-tt-note" style="padding:4px 8px 6px;">No SSIDs in the current pass</div>`;
   const rows = ssids.map(s => {
     const checked = !_timetagHiddenSsids.has(s);
-    const status    = _timetagCcsw?.[s] ?? 'UNKNOWN';
+    const ccsw      = _timetagCcsw?.[s];
+    const status    = ccsw?.status ?? 'UNKNOWN';
     const statusCls = status === 'ENABLED' ? 'co-tt-ok' : status === 'DISABLED' ? 'co-tt-fail' : '';
+    // Last-known onboard TC count for this subschedule (NBTCSUB_<n> out of
+    // the same HK_CCSW snapshot the status comes from) — an em dash when the
+    // packet didn't report the slot, so "0 TC" always means a genuinely
+    // empty subschedule rather than "no telemetry".
+    const nbTc = ccsw?.nbTc == null ? '&mdash;' : `${ccsw.nbTc} TC`;
     return `<label class="sch-ssid-filter-row">
       <input type="checkbox" data-ssid="${s}"${checked ? ' checked' : ''} />
       <span class="sch-ssid-filter-swatch" style="background:${_ssidColor(s)}"></span>
       SSID ${s}
+      <span class="sch-ssid-filter-tc">${nbTc}</span>
       <span class="sch-ssid-filter-status ${statusCls}">${status}</span>
     </label>`;
   }).join('');
@@ -1689,15 +1751,23 @@ export function initTimePlayer() {
     // almost always one of those descendants, never the <button> itself.
     // The other two are plain text-content buttons, where a text node click
     // still reports the button element as e.target, so === already worked —
-    // left as-is rather than changed speculatively. #gsi-attitude-toggle
-    // (SatInfo.js) lives inside #gantt-sat-info, itself positioned inside
-    // #timeline-gantt (same reasoning as the STT POV panel below) — exempted
-    // by selector rather than an element reference for the same reason.
+    // left as-is rather than changed speculatively.
+    //
+    // #gantt-sat-info (SatInfo.js's strip) is positioned inside
+    // #timeline-gantt, so its controls' clicks bubble here too. Exempted
+    // WHOLESALE rather than one selector per control — it used to list only
+    // #gsi-attitude-toggle, which silently left the strip's other two
+    // (.gsi-next-link, and the satellite name's ↗ SCC link) dead on click.
+    // Safe to match the whole strip because the strip itself is
+    // pointer-events:none (see style.css — so hovering it still reaches the
+    // gantt row labels underneath): the only descendants that can ever BE an
+    // event target are the ones that explicitly opt back in with
+    // pointer-events:auto, i.e. exactly the controls that want this exemption.
     // Timetag row's own funnel icon (opens the SSID filter menu) needs the
     // same exemption Scheduler.js's own pan-pointerdown handler already
     // gives its .sch-timetag-filter-btn, for the identical reason.
     if (e.target === ganttToggleBtn || e.target === ganttSttCollapseBtn || sttPovOpenBtn?.contains(e.target)
-      || e.target.closest?.('.stt-pov-panel') || e.target.closest?.('#gsi-attitude-toggle')
+      || e.target.closest?.('.stt-pov-panel') || e.target.closest?.('#gantt-sat-info')
       || e.target.closest?.('.sch-timetag-filter-btn')) return;
     e.preventDefault();
     ganttEl.setPointerCapture(e.pointerId);

@@ -4,19 +4,18 @@
 // the procedure history + routine report, and the actual list of TC packets
 // sent.
 //
-// The TC list comes from SCC's own /api/v1/tc-packets endpoint — confirmed
-// live to exist on sccRo (172.17.208.5:15500), same read-only mirror every
-// other per-pass fetch in this app already uses. It's a real, structured
-// ledger (id, generation/reception time, the decoded packet name+description)
-// rather than something scraped from logs — but confirmed live it's also
-// genuinely slow at volume: it echoes each packet's FULL field/container
-// schema, not just its value, so one real 14-minute pass (392 packets) came
-// back as a 10MB response in ~2.6s. Kept to a modest maxLimit here for that
-// reason — see TC_MAX_LIMIT below.
+// The TC list comes from SCC's own /api/v1/tc-packets endpoint (see
+// tcPackets.js for what that endpoint is and the three awkward things about
+// it — schema echo, newest-first truncation, no offset parameter — that the
+// fetch there works around). It is walked to completion, however many pages
+// that takes: this list is where someone goes to find the one command that
+// misbehaved, and a silently clipped list is worse than a slow one. The
+// pages land progressively (fetchTcPackets' onPage) so a dense pass fills
+// the panel in as it arrives instead of after.
 import { store } from '../store.js';
 import { satSubsystemHost, satSubsystemOrigin } from '../satSubsystems.js';
 import { satEffectiveNow } from '../satSimu.js';
-import { TC_MAX_LIMIT, TC_114_NAME_RE, fetchTcPackets, matchScheduledTargets, collectArguments, argUnitLabel, tcAckStatus as _tcAckStatus, tcPacketsAcked } from '../tcPackets.js';
+import { TC_MAX_PACKETS, TC_114_NAME_RE, fetchTcPackets, matchScheduledTargets, argUnitLabel, tcAckStatus as _tcAckStatus, tcPacketsAcked } from '../tcPackets.js';
 import { fetchPassGsCoords, buildPolarSVG, computePolarPoints, computePolarMarkers } from './passPolar.js';
 import { fetchProcedureReport, procedureReportHTML } from './procedureReport.js';
 import { fetchEbn0Series, fetchTcEbn0Series, fetchTmPacketsCounterSeries, tmPacketsReceived, ebn0HTML, copyEbn0ChartPNG, PROC_BAR_STRIP_H, PAD_B, nearestByTime } from './ebn0.js';
@@ -25,6 +24,7 @@ import { openAzElModal } from './passAzElModal.js';
 import { fmtDuration, fmtDateTimeShort, fmtTimeOnly, grafanaLokiUrl, grafanaModalTitle, LOKI_PROC_PAD_MS, passEclipseBarHTML, positionTooltip } from './passTooltip.js';
 import { queryLoki } from './lokiQuery.js';
 import { renderLogRows, createErrorNav } from './logView.js';
+import { satNameSccLinkHTML } from './sccLink.js';
 import './grafanaModal.js'; // side-effect import: registers the click-to-popup handler used by the co-tt-link anchors below
 
 // fmtTimeOnly (passTooltip.js) only goes down to whole seconds — TC packets
@@ -363,7 +363,33 @@ function _findEchoedSeqCount(node) {
 // AND carries a code (see _fetchTm18PacketWindowed's comment for why both
 // checks matter, not just whether a record came back at all); only falls
 // back to the slower windowed search when that fast path comes up short.
-async function _resolveFailureCode(sat, apid, sourceSeqCount, onBoardTimeISO) {
+// Memoised per (satellite, packet, report time) — the TC list now redraws
+// once per fetched PAGE rather than once per pass (see fetchTcPackets'
+// onPage), and _hydrateFailurePills fires a lookup for every failed row on
+// every redraw. Without this, a long walk re-asked the same question about
+// the same rows once per page. Keyed on the same three values the request
+// itself is built from, so two different rows can never share an answer;
+// the values cached are short reason-code strings, and the map is capped
+// (oldest-out, like tcPackets.js's own caches) rather than growing for the
+// life of the tab.
+const _failureCodeCache = new Map();
+const _FAILURE_CODE_CACHE_MAX = 500;
+
+function _resolveFailureCode(sat, apid, sourceSeqCount, onBoardTimeISO) {
+  const key = `${sat?.noradId}|${apid}|${sourceSeqCount}|${onBoardTimeISO}`;
+  if (_failureCodeCache.has(key)) return _failureCodeCache.get(key);
+  const promise = _resolveFailureCodeUncached(sat, apid, sourceSeqCount, onBoardTimeISO)
+    // A null here means "no TM(1,8) report found" — which for a past pass is
+    // a real, stable answer, but for a failure that just happened may simply
+    // be the report not having arrived yet. Not cached, so a later redraw
+    // asks again; a resolved code is final and stays.
+    .then(code => { if (code == null) _failureCodeCache.delete(key); return code; });
+  _failureCodeCache.set(key, promise);
+  while (_failureCodeCache.size > _FAILURE_CODE_CACHE_MAX) _failureCodeCache.delete(_failureCodeCache.keys().next().value);
+  return promise;
+}
+
+async function _resolveFailureCodeUncached(sat, apid, sourceSeqCount, onBoardTimeISO) {
   const exact = await _fetchTm18Packet(sat, apid, sourceSeqCount, onBoardTimeISO);
   if (exact && _findEchoedSeqCount(exact.spacePacket?.rootContainer) === sourceSeqCount) {
     const code = _findFailureCode(exact.spacePacket?.rootContainer);
@@ -432,16 +458,16 @@ function _failureAnalysisHTML(packet) {
   </div>`;
 }
 
-// The expanded detail block a TC row's click reveals — packet.raw is the
-// untouched original fetch result (see _fetchTcPackets), so this needs no
-// network round trip (the one exception, the failure-reason lookup, is
-// deferred separately — see _loadFailureReason).
+// The expanded detail block a TC row's click reveals — packet.args was
+// decoded up front, while the packet's schema echo was still in hand (see
+// tcPackets.js's _lightPacket), so this needs no network round trip (the one
+// exception, the failure-reason lookup, is deferred separately — see
+// _loadFailureReason).
 function _tcArgsDetailHTML(packet) {
   if (!packet) return `<div class="co-tt-note">Packet no longer available</div>`;
   const failHtml = _failureAnalysisHTML(packet);
   const verHtml = _tcVerificationHTML(packet.acks);
-  const args = [];
-  collectArguments(packet.raw?.spacePacket?.rootContainer, args);
+  const args = packet.args ?? [];
   const argsHtml = args.length
     ? `<div class="pa-tc-args-rows">${args.map(a => { const unit = argUnitLabel(a.unit); return `<div class="pa-tc-arg-row"${a.description ? ` title="${a.description}"` : ''}>
     <span class="pa-tc-arg-name">${a.name}</span>
@@ -461,7 +487,7 @@ async function _loadFailureReason(packet, detail) {
   if (!packet || !_currentSat || _tcFailureStage(packet.acks) !== 'completed') return;
   const reasonEl = detail.querySelector('.pa-tc-fail-reason');
   if (!reasonEl) return;
-  const code = await _resolveFailureCode(_currentSat, packet.raw?.apid, packet.raw?.sourceSeqCount, packet.acks.completed.time);
+  const code = await _resolveFailureCode(_currentSat, packet.apid, packet.sourceSeqCount, packet.acks.completed.time);
   if (!detail.isConnected) return;
   reasonEl.textContent = code ?? 'unknown (no TM(1,8) report found)';
 }
@@ -477,7 +503,7 @@ function _hydrateFailurePills(container) {
   container.querySelectorAll('.pa-tc-fail-pill[data-fail-pkt-id]').forEach(async el => {
     const packet = _lastTcPackets?.find(p => p.id === el.dataset.failPktId);
     if (!packet || !_currentSat) return;
-    const code = await _resolveFailureCode(_currentSat, packet.raw?.apid, packet.raw?.sourceSeqCount, packet.acks.completed.time);
+    const code = await _resolveFailureCode(_currentSat, packet.apid, packet.sourceSeqCount, packet.acks.completed.time);
     if (!el.isConnected) return;
     el.textContent = code ?? 'FAILED';
     el.title = code ? `PUS(1,8) failure reason: ${code}` : 'Failed — no TM(1,8) report found for the reason code';
@@ -645,10 +671,22 @@ function _tcPacketsHTML(packets) {
       </div>`;
     }).join('');
 
-  const trunc = packets.length === TC_MAX_LIMIT
-    ? `<div class="pa-tc-trunc">Showing first ${TC_MAX_LIMIT} — this pass may have sent more</div>`
-    : '';
-  return `<div class="pa-tc-rows">${rows}</div>${trunc}`;
+  // Foot of the list: what ISN'T in it. Three distinct states, none of them
+  // the old "Showing first 1000" — which was wrong twice over (the endpoint
+  // truncates newest-first, so those were the LAST 1000, and it said "may
+  // have sent more" about a pass it had already been told did).
+  //   • still walking — the count keeps climbing, say so rather than let a
+  //     half-drawn list read as the whole pass;
+  //   • `.partial` — the walk really did give up (TC_MAX_PACKETS, or a page
+  //     that failed part way, see tcPackets.js); newest-first, so what's
+  //     missing is the OLD end of the pass;
+  //   • neither — the list is the pass, no footer at all.
+  const foot = !_tcWalkDone
+    ? `<div class="pa-tc-trunc pa-tc-trunc-loading">Loading more… ${packets.length} so far</div>`
+    : packets.partial
+      ? `<div class="pa-tc-trunc">Showing the ${packets.length} most recent — this pass sent more than could be fetched (${TC_MAX_PACKETS} packet ceiling)</div>`
+      : '';
+  return `<div class="pa-tc-rows">${rows}</div>${foot}`;
 }
 
 // Procedure HISTORY (which named procedures ran, with status/duration) — a
@@ -838,6 +876,7 @@ let _gen = 0; // guards a slower in-flight render from clobbering a newer select
 // unconditionally on every _render() already makes that unnecessary.
 let _liveEbn0Timer = null;
 let _lastTcPackets = null; // stashed so a row click (detail expand) or a later redraw can find/re-render packets without re-fetching
+let _tcWalkDone    = true; // false while fetchTcPackets is still paging this pass — _tcPacketsHTML's footer says so, since a mid-walk list is a real subset of the pass, not the pass
 let _tcCursor = null;      // stashed so a redraw can re-wire the hover-drives-chart listeners on the new rows
 let _lastFullLogLines = null; // stashed so a later procedure click can jump the log panel without re-fetching
 // True while the mouse is anywhere over the full-log panel — guards
@@ -1012,6 +1051,16 @@ function _ensureEbn0DateTooltip() {
   _ebn0DateTooltipEl.className = 'co-tooltip ebn0-date-tooltip';
   _ebn0DateTooltipEl.style.display = 'none';
   document.body.appendChild(_ebn0DateTooltipEl);
+}
+
+// The "(N)" beside the panel title. Trailing "…" while the walk is still
+// running (the number is a floor, not a total) and "+" if it stopped short
+// — both so the header can never claim a count the list itself contradicts.
+function _updateTcCount(packets) {
+  const el = _body?.querySelector('.pa-tc-count');
+  if (!el) return;
+  if (packets == null) { el.textContent = ''; return; }
+  el.textContent = `(${packets.length}${!_tcWalkDone ? '…' : packets.partial ? '+' : ''})`;
 }
 
 // Re-renders just the TC list from the already-fetched packets (no network) —
@@ -1252,7 +1301,7 @@ async function _render() {
               ${nextFuturePass ? `data-sch-open data-sch-sat-id="${sat.id}" data-sch-pass-start="${nextFuturePass.start.getTime()}"` : ''}
               title="${nextFuturePass ? `Schedule procedures for ${sat.name}'s next pass — ${fmtDateTimeShort(nextFuturePass.start)}, ${nextFuturePass.station ?? '—'}` : 'No upcoming pass to schedule for'}">📅</button>
           </div>
-          <div class="co-tt-header"><span class="co-tt-sat-name" style="color:${sat.color}">${sat.name}</span> ${pass.station ?? '—'}${pass.network ? `<span class="co-tt-network">${pass.network}</span>` : ''}${liveBadge}</div>
+          <div class="co-tt-header"><span class="co-tt-sat-name" style="color:${sat.color}">${satNameSccLinkHTML(sat)}</span> ${pass.station ?? '—'}${pass.network ? `<span class="co-tt-network">${pass.network}</span>` : ''}${liveBadge}</div>
           <div class="co-tt-time-row"><span class="co-tt-time-lbl">DATE</span>${fmtDateTimeShort(pass.start)}</div>
           <div class="co-tt-time-row"><span class="co-tt-time-lbl">DUR</span>${fmtDuration(pass.end - pass.start)}</div>
           <div class="co-tt-time-row"><span class="co-tt-time-lbl">DATA</span><span class="pa-status-dot" data-status-dot="tm" title="Loading…">● TM</span><span class="pa-status-dot" data-status-dot="tc" title="Loading…">● TC</span></div>
@@ -1364,7 +1413,27 @@ async function _render() {
 
   const ebn0Promise      = sat.noradId ? fetchEbn0Series(sat.noradId, pass.start.getTime(), pass.end.getTime(), pass.network) : Promise.resolve(null);
   const tcEbn0Promise    = sat.noradId ? fetchTcEbn0Series(sat.noradId, pass.start.getTime(), pass.end.getTime()) : Promise.resolve(null);
-  const tcPacketsPromise = fetchTcPackets(sat, pass.start.getTime(), pass.end.getTime());
+  // Paints each page as it lands (the skeleton's .pa-tc-slot is already in
+  // the DOM by now) instead of leaving "Loading…" up for the whole walk —
+  // a dense pass is several round trips, and the newest packets, which are
+  // the ones anyone opening this panel right after a pass is looking for,
+  // arrive in the FIRST one. myGen guards a page landing after the user has
+  // moved on to another pass.
+  const tcPacketsPromise = fetchTcPackets(sat, pass.start.getTime(), pass.end.getTime(), {
+    onPage: packets => {
+      if (myGen !== _gen) return;
+      _lastTcPackets = packets;
+      _renderTcList();
+      _updateTcCount(packets);
+    },
+  });
+  _tcWalkDone = false;
+  // Dropped for the duration: rows painted mid-walk would otherwise wire
+  // their hover-drives-the-chart listeners to the PREVIOUS pass's cursor
+  // (this one's chart doesn't exist yet — wireLinkedCursor runs further
+  // down), pointing this pass's timestamps at a detached SVG. The final
+  // _renderTcList below redraws every row once the real cursor is up.
+  _tcCursor = null;
   const tmCounterPromise = sat.noradId ? fetchTmPacketsCounterSeries(sat.noradId, pass.start.getTime(), pass.end.getTime()) : Promise.resolve(null);
   const fullLogPromise   = _fetchFullPassLog(grafanaHost, pass);
 
@@ -1637,11 +1706,6 @@ async function _render() {
   }
   _lastFullLogLines = fullLogLines; // read later by _scrollLogToTime when a procedure link is clicked
 
-  const tcCount = tcPackets == null ? '—' : (tcPackets.length === TC_MAX_LIMIT ? `${TC_MAX_LIMIT}+` : String(tcPackets.length));
-
-  const tcCountEl = _body.querySelector('.pa-tc-count');
-  if (tcCountEl) tcCountEl.textContent = tcPackets == null ? '' : `(${tcCount})`;
-
   // At-a-glance pass health, in .pa-details: TM received (tmPacketsReceived,
   // ebn0.js) and TC acknowledgment (tcPacketsAcked, tcPackets.js) — shared
   // with passTooltip.js's hover-tooltip copy of the same two dots, so both
@@ -1665,5 +1729,10 @@ async function _render() {
   // third entry point into it. _renderTcList wires this each time it draws
   // the rows.
   _lastTcPackets = tcPackets;
+  // The walk is over (this line is past _render's own myGen guard, so a
+  // superseded render can never flip this back on a newer one's behalf) —
+  // the list footer and the "(N)" count stop hedging.
+  _tcWalkDone = true;
   _renderTcList();
+  _updateTcCount(tcPackets);
 }

@@ -248,16 +248,18 @@ document.addEventListener('pda:open-pass', e => {
   ensureView('analyzer').then(m => m?.setSelection(e.detail.sat, e.detail.pass));
 });
 
-// Dispatched by passTooltip.js's own "Schedule procedures" button (future
-// passes only) — same announce-the-intent shape as pda:open-pass above.
+// Dispatched by passTooltip.js's own "Schedule procedures" (future pass) and
+// "See scheduled procedures" (past pass) buttons, and by a click on any pass
+// dot in Fleet — same announce-the-intent shape as pda:open-pass above.
 document.addEventListener('sch:open-pass', e => {
   switchTab('scheduler');
   ensureView('scheduler').then(m => m?.setSchedulerSelection(e.detail.sat, e.detail.pass));
 });
 
-// Dispatched by passTooltip.js's own "View in Fleet" button — same
-// announce-the-intent shape as the two above. Uses the actual tab button's
-// own .click() rather than switchTab() directly: ChadOps.js listens for a
+// Jump straight to a satellite's row in Fleet — same announce-the-intent
+// shape as the two above (no in-app dispatcher right now: the pass tooltip's
+// "View in Fleet" button that used to fire this was removed). Uses the tab
+// button's own .click() rather than switchTab() directly: ChadOps.js listens for a
 // real click on that SAME button to know when to start rendering the Fleet
 // table (see its own start()/stop(), gated on _active) — calling
 // switchTab() here would flip the view visible without ChadOps.js ever

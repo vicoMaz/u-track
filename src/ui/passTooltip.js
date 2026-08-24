@@ -14,7 +14,7 @@ import { sunDirectionECI, isInEclipse } from '../sunVector.js';
 import { fetchPassGsCoords, computePolarPoints, computePolarMarkers, MARKER_COLORS } from './passPolar.js';
 import { fetchScheduledProcedures, scheduledProceduresHTML } from './scheduledProcedures.js';
 import { fetchTmPacketsCounterSeries, tmPacketsReceived } from './ebn0.js';
-import { fetchTcPackets, tcPacketsAcked } from '../tcPackets.js';
+import { fetchTcPacketsProbe, tcPacketsAcked } from '../tcPackets.js';
 import { satSubsystemHost } from '../satSubsystems.js';
 import './grafanaModal.js'; // side-effect import: registers the click-to-popup handler used by the co-tt-link anchors below
 
@@ -139,7 +139,17 @@ function _procedureListHTML(pass, grafanaHost, sat) {
   const analyzerBtn = sat
     ? `<button type="button" class="co-tt-sched-btn" data-pda-microscope data-pda-sat-id="${sat.id}" data-pda-pass-start="${pass.start.getTime()}">🔬 Open with Pass Analyzer</button>`
     : '';
-  return listHtml + analyzerBtn;
+  // Second destination for a past pass, alongside the Analyzer: the Scheduler
+  // itself, which since 076d35d can select a past pass to review what actually
+  // ran on it (arguments included) and replay it onto a later one. The list
+  // above only names the procedures — this is how you get at their arguments.
+  // Same data-sch-open contract the future-pass branch uses; the delegated
+  // listener doesn't care about past/future, and setSchedulerSelection's own
+  // future gate was lifted for exactly this.
+  const schedReviewBtn = sat
+    ? `<button type="button" class="co-tt-sched-btn" data-sch-open data-sch-sat-id="${sat.id}" data-sch-pass-start="${pass.start.getTime()}">📅 See scheduled procedures</button>`
+    : '';
+  return listHtml + analyzerBtn + schedReviewBtn;
 }
 
 // Umbra/sun split over the pass duration — moved here from PassDetailPanel.js
@@ -198,14 +208,7 @@ export function passSimpleTooltipContent(pass, sat) {
     ${dataRow}
     ${eclBar}
     <div class="pass-geometry-slot"></div>`;
-  // Jump to Fleet for this satellite regardless of past/future — unlike the
-  // microscope/schedule buttons above (mutually exclusive on pass.future),
-  // this one's always relevant, so it's outside _procedureListHTML's own
-  // past/future branching. Hidden without a real `sat` (nothing to jump to).
-  const fleetBtn = sat
-    ? `<button type="button" class="co-tt-sched-btn" data-fleet-focus data-fleet-sat-id="${sat.id}">🛰 View in Fleet</button>`
-    : '';
-  return hdr + details + _procedureListHTML(pass, grafanaHost, sat) + fleetBtn;
+  return hdr + details + _procedureListHTML(pass, grafanaHost, sat);
 }
 
 // Global delegated handler (not wired per-caller), registered once as a
@@ -243,18 +246,6 @@ document.addEventListener('click', e => {
   const tooltip = el.closest('.co-tooltip');
   if (tooltip) tooltip.style.display = 'none';
   document.dispatchEvent(new CustomEvent('sch:open-pass', { detail: { sat, pass } }));
-});
-
-// Same shape again, for the "🛰 View in Fleet" button — only needs a
-// satellite ID (no pass to re-resolve), announced via fleet:focus-sat and
-// handled centrally in main.js (switches to the Fleet tab, then asks
-// ChadOps.js to scroll/flash that satellite's row).
-document.addEventListener('click', e => {
-  const el = e.target.closest('[data-fleet-focus]');
-  if (!el) return;
-  const tooltip = el.closest('.co-tooltip');
-  if (tooltip) tooltip.style.display = 'none';
-  document.dispatchEvent(new CustomEvent('fleet:focus-sat', { detail: { satId: el.dataset.fleetSatId } }));
 });
 
 // "Add one in Settings" / similar inline hints (SatInfo.js's MIC-token
@@ -325,8 +316,9 @@ export async function hydrateScheduledProcedures(el, pass, sat) {
 const _statusDotGen = new WeakMap();
 
 // Dwell before the two fetches below. They are the most expensive thing any
-// hover in this app triggers — fetchTcPackets alone measured 10MB/~2.6s for one
-// busy pass — and they hang off plain mouseenter on pass dots that sit
+// hover in this app triggers — even fetchTcPacketsProbe, which asks for one
+// small page rather than the whole pass the analyzer's list walks, is a real
+// request — and they hang off plain mouseenter on pass dots that sit
 // shoulder-to-shoulder: a Fleet row carries one per pass across the whole ±5-day
 // window, so sweeping a mouse across a row used to fire a request per dot
 // crossed, dozens deep, none of which anyone asked to see.
@@ -349,7 +341,11 @@ export async function hydratePassStatusDots(el, pass, sat) {
   const startMs = pass.start.getTime(), endMs = pass.end.getTime();
   const [tmCounter, tcPackets] = await Promise.all([
     sat.noradId ? fetchTmPacketsCounterSeries(sat.noradId, startMs, endMs) : Promise.resolve(null),
-    fetchTcPackets(sat, startMs, endMs),
+    // The PROBE, not the full walk: this dot is a yes/no ("did anything get
+    // acknowledged"), and the newest page answers it — a hover has no business
+    // pulling every page of a 2000-packet pass the way the analyzer's own
+    // list does.
+    fetchTcPacketsProbe(sat, startMs, endMs),
   ]);
   if (_statusDotGen.get(el) !== myGen || el.style.display === 'none') return; // superseded or closed
   const tmDotEl = el.querySelector('.pa-status-dot[data-status-dot="tm"]');

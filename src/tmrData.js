@@ -250,14 +250,26 @@ async function _walkCandidate(sccOrigin, start, end, filter, param, signal) {
 // (the separate delete-contents command) — only the plain download, which
 // has no delete side effect of its own.
 const PAY_DLNK_PACKET_NAME = 'TC_15_9_OBSW_PAY_DLNK_BETWEEN';
-// The endpoint has no server-side name/filter param (confirmed live — name,
-// filter, packetName, spacePacketName are all silently ignored), so every
-// packet in a queried window comes back at full weight (each echoes its
-// whole field/container schema, not just this one's few KB of interest) —
-// paginating in day-sized chunks bounds how much of that gets pulled at
-// once for a potentially multi-day analysis range.
+// /tc-packets DOES take a server-side name filter after all — re-confirmed
+// live (PANDORE sccRo, 2026-08-24): `filter=<packet name>`, exact-match on
+// the full name (a prefix like "TC_15_9" matches nothing, so the BUS variant
+// TC_15_9_OBSW_DLNK_BETWEEN can't leak into this PAY-store scan), repeatable
+// for an OR. Note for whoever tries this elsewhere: an EMPTY filter value is
+// not "no filter", it matches nothing.
+//
+// That is not a mere optimisation here, it is the correctness fix: every
+// packet this endpoint returns echoes its whole field/container schema, and
+// maxLimit truncates NEWEST-FIRST (see tcPackets.js's header). A single real
+// memory-upload pass sends >2000 TCs in two minutes, so an unfiltered
+// day-sized chunk blew past PAY_DLNK_MAX_LIMIT on the strength of that one
+// burst alone and dropped the whole older part of the day — including the
+// PAY_DLNK_BETWEEN commands this scan exists to find, which then read as
+// download coverage that never happened, i.e. phantom gaps on the TMR row.
+// Filtered, a day's worth of these is a handful of packets (5 in a 3-minute
+// window that held ~1200 unfiltered), so the chunking below is now just
+// politeness rather than load-bearing.
 const PAY_DLNK_CHUNK_MS = 24 * 3_600_000;
-const PAY_DLNK_MAX_LIMIT = 2000; // headroom over the observed ~1000 packets/22h density
+const PAY_DLNK_MAX_LIMIT = 2000; // now a ceiling on THIS command alone (a few per day), not on every TC the day happened to contain
 
 function _extractT1T2(rootContainer) {
   let t1 = null, t2 = null;
@@ -288,6 +300,7 @@ async function _fetchPayDownloadRanges(sat, rangeStart, rangeEnd, signal) {
     const params = new URLSearchParams({
       start: new Date(chunkStart).toISOString(),
       end:   new Date(chunkEnd).toISOString(),
+      filter: PAY_DLNK_PACKET_NAME,
       maxLimit: String(PAY_DLNK_MAX_LIMIT),
     });
     let data;
@@ -300,7 +313,7 @@ async function _fetchPayDownloadRanges(sat, rangeStart, rangeEnd, signal) {
       continue;
     }
     for (const p of data) {
-      if (p.spacePacket?.name !== PAY_DLNK_PACKET_NAME) continue;
+      if (p.spacePacket?.name !== PAY_DLNK_PACKET_NAME) continue; // kept as a belt-and-braces check on the server-side filter above
       const range = _extractT1T2(p.spacePacket.rootContainer);
       if (range) ranges.push(range);
     }

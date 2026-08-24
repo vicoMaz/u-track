@@ -19,6 +19,7 @@ import { wireSatActionsIcon } from './satActionsMenu.js';
 import { getAlertWindowDays, setAlertWindowDays } from '../alertWindow.js';
 import { fetchSatGroundEvents } from '../satGroundEvents.js';
 import { fetchSatEventBaseline } from '../satEventBaseline.js';
+import { satSynopticUrl } from './sccLink.js';
 
 // URL builders — subnet routing: .1=SCC, .2=FDS, .3=GNM, .4=MIC, .5=SCC RO (see satSubsystems.js).
 // FDS/GNM/SCC may be overridden as bare IPs OR full URLs (e.g. a hostname+HTTPS
@@ -29,16 +30,9 @@ const _grafanaUrl   = noradId => {
 };
 const _dashboardUrl = ip => ip ? `http://${ip}/` : null;
 const _gnmUrl       = noradId => satSubsystemOrigin(noradId, 'gnm') || null;
-// The satellite name in the Fleet row links to its synoptic view — SCC's
-// own (.1, full read/write) normally, SCC RO's (.5, read-only mirror —
-// same subsystem/port SUBSYSTEMS.sccRo already resolves) instead whenever
-// store.readOnlyVpn says this client's VPN can't reach SCC/FDS/GNM/MIC at
-// all, so the link still resolves to something reachable rather than
-// pointing at a subnet this client can't get to either way.
-const _synopticUrl = noradId => {
-  const origin = satSubsystemOrigin(noradId, store.readOnlyVpn ? 'sccRo' : 'scc');
-  return origin ? `${origin}/synoptic` : null;
-};
+// The satellite name in the Fleet row links to its synoptic view — read-only
+// VPN fallback and all (sccLink.js's satSynopticUrl, shared with the
+// Visualizer gantt strip, the Pass Analyzer and the Scheduler).
 
 // Read a URL override saved by the component links modal; fall back to computed value
 function _satLink(noradId, key, fallback) {
@@ -237,7 +231,7 @@ function _linkBadge(label, url, version) {
 
 const _OUTCOME_CLS = { SUCCESS: 'co-dot-success', FAILURE: 'co-dot-fail', CANCELLED: 'co-dot-cancelled' };
 
-function _passDots(passes) {
+function _passDots(sat, passes) {
   if (!passes?.length) return '<span class="co-nil">—</span>';
   const html = passes.map((p, i) => {
     // Each dot is now a plain CSS-drawn circle (background/border, no glyph
@@ -245,7 +239,19 @@ function _passDots(passes) {
     // reliably to an actual box, not to a ●/○ character's own ink, which
     // browsers don't center within their font box the way you'd expect.
     const cls = p.future ? 'co-dot-future' : (_OUTCOME_CLS[p.outcome] ?? 'co-dot-success');
-    return `<span class="co-dot ${cls}" data-idx="${i}"></span>`;
+    // Clicking a dot is the shortcut for whichever button that same dot's
+    // hover tooltip is already offering — "📅 Schedule procedures" on a
+    // future pass, "🔬 Open in Pass Analyzer" on a past one — so the cell
+    // needs no control of its own bolted under it, and .co-dot's
+    // long-standing cursor:pointer finally means something. Reuses
+    // passTooltip.js's two delegated listeners verbatim (both re-resolve
+    // sat/pass from the store by start time), which is also why nothing here
+    // needs re-wiring when a row is rebuilt on the next ping cycle.
+    const startMs = p.start.getTime();
+    const nav = p.future
+      ? `data-sch-open data-sch-sat-id="${sat.id}" data-sch-pass-start="${startMs}"`
+      : `data-pda-microscope data-pda-sat-id="${sat.id}" data-pda-pass-start="${startMs}"`;
+    return `<span class="co-dot ${cls}" data-idx="${i}" ${nav}></span>`;
   }).join('');
   return `<div class="co-dots-grid">${html}</div>`;
 }
@@ -660,12 +666,12 @@ function _rowHTML(sat, now, eclipse) {
     : `<button type="button" class="co-track-btn" data-sat-id="${sat.id}" title="Track ${sat.name} in the Visualizer">${trackIcon}</button>`;
 
   // Links to SCC's synoptic view (SCC RO's instead under a read-only VPN —
-  // see _synopticUrl) — plain text, no dead link, when neither subsystem's
+  // see satSynopticUrl) — plain text, no dead link, when neither subsystem's
   // IP is configured for this satellite at all. The ↗ is inline (not just
   // the title tooltip) so this reads as "leaves the app" at a glance next to
   // the in-app track button just to its left — same glyph .co-link uses for
   // the same reason elsewhere in this row.
-  const synopticUrl = _synopticUrl(sat.noradId);
+  const synopticUrl = satSynopticUrl(sat.noradId);
   const nameHTML = synopticUrl
     ? `<a class="co-sat-name-link" href="${synopticUrl}" target="_blank" rel="noopener" title="Open ${sat.name}'s synoptic view">${sat.name}<span class="co-sat-name-ext">↗</span></a>`
     : sat.name;
@@ -682,7 +688,7 @@ function _rowHTML(sat, now, eclipse) {
     <td class="co-batt-cell">${battCell}</td>
     <td class="co-rw-cell">${_rwCell(tm?.rw)}</td>
     <td class="co-gnss-cell">${_gnssCell(store.satGnss[sat.id], store.satGnssMitigation[sat.id])}</td>
-    <td class="co-passes-cell" data-sat-id="${sat.id}">${_passDots(store.satPasses[sat.id])}</td>
+    <td class="co-passes-cell" data-sat-id="${sat.id}">${_passDots(sat, store.satPasses[sat.id])}</td>
     <td>${orbitCell}</td>
     <td class="co-alerts-cell">${_alertsCell(store.satGroundEvents[sat.id], tm?.events, store.satEventBaseline[sat.id], tm?.uptime?.value)}</td>
     <td class="co-mission-cell">${_missionModeCell(store.satMissionMode[sat.id])}</td>
@@ -690,13 +696,15 @@ function _rowHTML(sat, now, eclipse) {
   </tr>`;
 }
 
-// Entry point for the shared pass tooltip's "View in Fleet" button
-// (passTooltip.js, dispatched as fleet:focus-sat, wired centrally in
-// main.js) — scrolls that satellite's row into view and briefly flashes it,
-// same "jump with context, don't just switch tabs blind" shape as
-// pda:open-pass/sch:open-pass. The row must already be in the DOM (main.js
-// clicks the Fleet tab button itself first, which runs initChadOps's own
-// start()/render() synchronously) before this runs.
+// Jump-to-a-satellite entry point, reached via the fleet:focus-sat event
+// (wired centrally in main.js) — scrolls that satellite's row into view and
+// briefly flashes it, same "jump with context, don't just switch tabs blind"
+// shape as pda:open-pass/sch:open-pass. The row must already be in the DOM
+// (main.js clicks the Fleet tab button itself first, which runs initChadOps's
+// own start()/render() synchronously) before this runs. Nothing in the app
+// dispatches fleet:focus-sat today — the pass tooltip's "View in Fleet"
+// button that used to was removed — so this is currently the receiving half
+// of an unused path, kept intact for the next caller that wants it.
 export function focusSatRow(satId) {
   const row = document.querySelector(`.co-row[data-sat-id="${satId}"]`);
   if (!row) return;
@@ -766,6 +774,7 @@ export function initChadOps() {
   const LEGEND_HTML = `
     <div class="co-legend-title">Pass horizon · ±7 days</div>
     <div class="co-legend-sub">Each dot is one pass. Grid reads left→right, oldest to newest. Refreshed every ping cycle.</div>
+    <div class="co-legend-sub">Click a dot to open that pass — upcoming → Scheduler, past → Pass Analyzer.</div>
     <div class="co-legend-title co-legend-gap">Past</div>
     <div class="co-legend-row"><span class="co-dot co-dot-success"></span> Success</div>
     <div class="co-legend-row"><span class="co-dot co-dot-fail"></span> Failure</div>
